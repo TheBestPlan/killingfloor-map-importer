@@ -34,7 +34,7 @@ Las compilaciones autónomas listas están en la página de [Releases](https://g
 
 - **Windows** — `…-setup.exe` (instalador) o `…-portable.exe` (sin instalar).
 - **macOS** — `…-mac-x64.dmg` (Intel) o `…-mac-arm64.dmg` (Apple Silicon).
-- **Linux** — `…-linux-x64.AppImage` (funciona en cualquier sitio) o `…-linux-x64.deb`.
+- **Linux** — `…-linux-x86_64.AppImage` (funciona en cualquier sitio) o `…-linux-amd64.deb`.
 
 Arrastra archivos `.bsp` a la ventana, elige la carpeta de salida y la de Counter-Strike, pulsa Convert. Cada mapa se convierte en un proceso hijo, así que un fallo o un mapa enorme no se lleva la ventana por delante. Las compilaciones no están firmadas, así que el sistema puede avisar al primer arranque (Windows SmartScreen → *Más información → Ejecutar de todas formas*; macOS → clic derecho → *Abrir*).
 

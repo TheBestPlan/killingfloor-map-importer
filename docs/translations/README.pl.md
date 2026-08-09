@@ -34,7 +34,7 @@ Gotowe, samodzielne wydania są na stronie [Releases](https://github.com/geekrai
 
 - **Windows** — `…-setup.exe` (instalator) albo `…-portable.exe` (bez instalacji).
 - **macOS** — `…-mac-x64.dmg` (Intel) albo `…-mac-arm64.dmg` (Apple Silicon).
-- **Linux** — `…-linux-x64.AppImage` (uruchamiane wszędzie) albo `…-linux-x64.deb`.
+- **Linux** — `…-linux-x86_64.AppImage` (uruchamiane wszędzie) albo `…-linux-amd64.deb`.
 
 Przeciągnij pliki `.bsp` na okno, wybierz folder wyjściowy i folder Counter-Strike'a, naciśnij Convert. Każda mapa jest konwertowana w procesie potomnym, więc awaria albo ogromna mapa nie pociągnie okna za sobą. Wydania są niepodpisane, więc system może ostrzec przy pierwszym uruchomieniu (Windows SmartScreen → *Więcej informacji → Uruchom mimo to*; macOS → prawy przycisk → *Otwórz*).
 

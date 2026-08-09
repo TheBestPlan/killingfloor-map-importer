@@ -34,7 +34,7 @@
 
 - **Windows** — `…-setup.exe`（安装版）或 `…-portable.exe`（免安装）。
 - **macOS** — `…-mac-x64.dmg`（Intel）或 `…-mac-arm64.dmg`（Apple Silicon）。
-- **Linux** — `…-linux-x64.AppImage`（哪都能跑）或 `…-linux-x64.deb`。
+- **Linux** — `…-linux-x86_64.AppImage`（哪都能跑）或 `…-linux-amd64.deb`。
 
 把 `.bsp` 拖进窗口，选好输出目录和 Counter-Strike 目录，按 Convert。每张地图在子进程里转换，所以崩溃或者超大地图不会把窗口一起带走。安装包未签名，首次启动时系统可能会警告（Windows SmartScreen → *更多信息 → 仍要运行*；macOS → 右键 → *打开*）。
 

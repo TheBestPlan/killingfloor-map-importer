@@ -34,7 +34,7 @@ As compilações autónomas prontas estão na página [Releases](https://github.
 
 - **Windows** — `…-setup.exe` (instalador) ou `…-portable.exe` (sem instalar).
 - **macOS** — `…-mac-x64.dmg` (Intel) ou `…-mac-arm64.dmg` (Apple Silicon).
-- **Linux** — `…-linux-x64.AppImage` (corre em qualquer lado) ou `…-linux-x64.deb`.
+- **Linux** — `…-linux-x86_64.AppImage` (corre em qualquer lado) ou `…-linux-amd64.deb`.
 
 Arrasta ficheiros `.bsp` para a janela, escolhe a pasta de saída e a pasta do Counter-Strike, carrega em Convert. Cada mapa é convertido num processo filho, por isso uma falha ou um mapa enorme não leva a janela com ele. As compilações não são assinadas, por isso o sistema pode avisar no primeiro arranque (Windows SmartScreen → *Mais informações → Executar mesmo assim*; macOS → clique direito → *Abrir*).
 

@@ -34,7 +34,7 @@ Prebuilt, self-contained apps are on the [Releases](https://github.com/geekraini
 
 - **Windows** — `…-setup.exe` (installer) or `…-portable.exe` (run without installing).
 - **macOS** — `…-mac-x64.dmg` (Intel) or `…-mac-arm64.dmg` (Apple Silicon).
-- **Linux** — `…-linux-x64.AppImage` (run anywhere) or `…-linux-x64.deb`.
+- **Linux** — `…-linux-x86_64.AppImage` (run anywhere) or `…-linux-amd64.deb`.
 
 Drop `.bsp` files onto the window, pick the output folder and the Counter-Strike folder, press Convert. Each map is converted in a child process, so a crash or a huge map cannot take the window down with it. The builds are unsigned, so the OS may warn on first launch (Windows SmartScreen → *More info → Run anyway*; macOS → right-click → *Open*).
 

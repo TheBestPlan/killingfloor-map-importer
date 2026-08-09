@@ -34,7 +34,7 @@
 
 - **Windows** — `…-setup.exe`（インストーラ）または `…-portable.exe`（インストール不要）。
 - **macOS** — `…-mac-x64.dmg`（Intel）または `…-mac-arm64.dmg`（Apple Silicon）。
-- **Linux** — `…-linux-x64.AppImage`（どこでも動く）または `…-linux-x64.deb`。
+- **Linux** — `…-linux-x86_64.AppImage`（どこでも動く）または `…-linux-amd64.deb`。
 
 `.bsp` をウィンドウにドロップし、出力フォルダと Counter-Strike のフォルダを選んで Convert を押します。マップごとに子プロセスで変換するので、クラッシュや巨大マップでウィンドウごと落ちることはありません。ビルドは未署名なので、初回起動時に OS が警告することがあります（Windows SmartScreen → *詳細情報 → 実行*、macOS → 右クリック → *開く*）。
 

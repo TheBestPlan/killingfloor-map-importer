@@ -34,7 +34,7 @@ Les builds autonomes prêts à l'emploi sont sur la page [Releases](https://gith
 
 - **Windows** — `…-setup.exe` (installeur) ou `…-portable.exe` (sans installation).
 - **macOS** — `…-mac-x64.dmg` (Intel) ou `…-mac-arm64.dmg` (Apple Silicon).
-- **Linux** — `…-linux-x64.AppImage` (s'exécute partout) ou `…-linux-x64.deb`.
+- **Linux** — `…-linux-x86_64.AppImage` (s'exécute partout) ou `…-linux-amd64.deb`.
 
 Glisse des fichiers `.bsp` sur la fenêtre, choisis le dossier de sortie et le dossier Counter-Strike, appuie sur Convert. Chaque carte est convertie dans un processus enfant, donc un plantage ou une carte énorme n'emporte pas la fenêtre avec elle. Les builds ne sont pas signés, le système peut donc avertir au premier lancement (Windows SmartScreen → *Informations complémentaires → Exécuter quand même* ; macOS → clic droit → *Ouvrir*).
 

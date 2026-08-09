@@ -34,7 +34,7 @@ Paruoštos savarankiškos versijos yra [Releases](https://github.com/geekrainian
 
 - **Windows** — `…-setup.exe` (diegiklis) arba `…-portable.exe` (be diegimo).
 - **macOS** — `…-mac-x64.dmg` (Intel) arba `…-mac-arm64.dmg` (Apple Silicon).
-- **Linux** — `…-linux-x64.AppImage` (veikia bet kur) arba `…-linux-x64.deb`.
+- **Linux** — `…-linux-x86_64.AppImage` (veikia bet kur) arba `…-linux-amd64.deb`.
 
 Nutempk `.bsp` failus į langą, pasirink išvesties aplanką ir Counter-Strike aplanką, spausk Convert. Kiekvienas žemėlapis konvertuojamas vaikiniame procese, tad kritimas ar milžiniškas žemėlapis nenusineš lango kartu. Versijos nepasirašytos, tad pirmą kartą OS gali įspėti (Windows SmartScreen → *More info → Run anyway*; macOS → dešinys pelės klavišas → *Open*).
 
