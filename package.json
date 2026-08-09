@@ -43,7 +43,8 @@
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -64,7 +65,8 @@
           ]
         }
       ],
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png"
     },
     "linux": {
       "target": [
@@ -72,6 +74,7 @@
         "deb"
       ],
       "category": "Game",
+      "icon": "build/icon.png",
       "maintainer": "Geekrainian"
     },
     "publish": [

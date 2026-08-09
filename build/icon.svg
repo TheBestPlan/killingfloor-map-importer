@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    
+    <radialGradient id="imp-20_bg" cx="50%" cy="42%" r="75%">
+      <stop offset="0%" stop-color="#2b100b"/><stop offset="52%" stop-color="#150807"/><stop offset="100%" stop-color="#070403"/>
+    </radialGradient>
+    <radialGradient id="imp-20_halo" cx="50%" cy="47%" r="46%">
+      <stop offset="0%" stop-color="#ff3a12" stop-opacity="0.34"/><stop offset="100%" stop-color="#ff3a12" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="imp-20_sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10"/><stop offset="45%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="imp-20_clip"><rect x="0" y="0" width="1024" height="1024" rx="150"/></clipPath>
+    <radialGradient id="imp-20_redR" cx="430" cy="360" r="660" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ff8250"/><stop offset="48%" stop-color="#d63a1e"/><stop offset="100%" stop-color="#8a1610"/>
+    </radialGradient>
+    <linearGradient id="imp-20_redL" x1="180" y1="80" x2="620" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ff7a45"/><stop offset="55%" stop-color="#c9301c"/><stop offset="100%" stop-color="#7d130e"/>
+    </linearGradient>
+    <filter id="imp-20_glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="26" result="b"/>
+      <feFlood flood-color="#ff3d16" flood-opacity="0.8"/>
+      <feComposite in2="b" operator="in" result="halo"/>
+      <feMerge><feMergeNode in="halo"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g clip-path="url(#imp-20_clip)">
+    <rect width="1024" height="1024" fill="url(#imp-20_bg)"/>
+    
+    <rect width="1024" height="1024" fill="url(#imp-20_halo)"/>
+    <rect width="1024" height="1024" fill="url(#imp-20_sheen)"/>
+  </g>
+  <g clip-path="url(#imp-20_clip)" filter="url(#imp-20_glow)">
+    <polygon points="806.4,682.0 512.0,852.0 217.6,682.0 217.6,342.0 512.0,172.0 806.4,342.0" fill="none" stroke="url(#imp-20_redR)" stroke-width="40" stroke-linejoin="round"/>
+    <text x="512" y="566" text-anchor="middle" font-family="Impact, 'Arial Narrow', 'Haettenschweiler', sans-serif" font-size="216" letter-spacing="6" fill="url(#imp-20_redR)">ROM</text>
+    <rect x="392" y="616" width="240" height="18" rx="9" fill="url(#imp-20_redR)" opacity="0.65"/></g>
+  <g clip-path="url(#imp-20_clip)">
+    <rect x="7" y="7" width="1010" height="1010" rx="144" fill="none" stroke="#000" stroke-opacity="0.55" stroke-width="14"/>
+    <rect x="17" y="17" width="990" height="990" rx="136" fill="none" stroke="#ff8a5c" stroke-opacity="0.13" stroke-width="4"/>
+  </g>
+</svg>
