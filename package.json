@@ -29,7 +29,7 @@
   "build": {
     "appId": "com.geekrainian.killingfloormapimporter",
     "productName": "Killing Floor Map Importer",
-    "artifactName": "Killing-Floor-Map-Importer-${version}-${os}-${arch}.${ext}",
+    "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -50,10 +50,10 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Killing-Floor-Map-Importer-${version}-${os}-${arch}-setup.${ext}"
+      "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}-setup.${ext}"
     },
     "portable": {
-      "artifactName": "Killing-Floor-Map-Importer-${version}-${os}-${arch}-portable.${ext}"
+      "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}-portable.${ext}"
     },
     "mac": {
       "target": [
