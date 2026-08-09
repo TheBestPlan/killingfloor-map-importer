@@ -237,4 +237,8 @@ class Bsp {
 
 function load(file) { return new Bsp(require("fs").readFileSync(file)); }
 
-module.exports = { Bsp, load, LUMP, CONTENTS, TEX_SPECIAL, classifyTexture, parseEntities, num3 };
+// What a finished map says it came from. Every source game this converter grows to read names
+// itself here, so nothing downstream has to know which reader ran.
+const GAME = "Counter-Strike 1.6";
+
+module.exports = { Bsp, load, GAME, LUMP, CONTENTS, TEX_SPECIAL, classifyTexture, parseEntities, num3 };

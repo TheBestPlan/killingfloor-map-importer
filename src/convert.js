@@ -30,6 +30,12 @@ const dxt = require("./unreal/dxt");
 // so it reads at the brightness Counter-Strike shows.
 const SKY_GAIN = 1 / 2.4;
 
+// Signed into every map's LevelSummary. Read from the manifest so a rename or a move of the
+// repository cannot leave a stale URL baked into finished .rom files.
+const manifest = require("../package.json");
+const TOOL_NAME = manifest.productName;
+const TOOL_URL = manifest.repository.url.replace(/^git\+/, "").replace(/\.git$/, "");
+
 const DEFAULTS = {
   // 2.0 is what the shipped KF-CS-* ports measured at (cs_estate); 1.9 reads slightly closer to
   // the original in play, so that is the default. --scale overrides.
@@ -264,6 +270,25 @@ function convert(opts) {
   const ACTOR_ED = RF.EDITOR_ONLY | RF.HasStack;
   const holder = {};
 
+  // Where the map came from and when. These fields live on BOTH objects in every shipped map, and
+  // the two are read by different things: KFEd's Level Properties shows the copy on LevelInfo,
+  // while the menus read the standalone LevelSummary without loading the level. Writing only one
+  // leaves the other at "Untitled / Anonymous". Description carries the conversion time - a map
+  // rebuilt after a converter fix is otherwise indistinguishable from the old one.
+  const pad = (n) => String(n).padStart(2, "0");
+  const t = new Date(t0);
+  const stamp = t.getFullYear() + "." + pad(t.getMonth() + 1) + "." + pad(t.getDate()) +
+    " " + pad(t.getHours()) + ":" + pad(t.getMinutes());
+  const writeCredits = (pr) => {
+    pr.str("Title", baseName + " (" + bspReader.GAME + ")");
+    pr.str("Author", TOOL_NAME);
+    pr.str("Description", stamp);
+    pr.str("DecoTextName", TOOL_URL);
+    pr.int("IdealPlayerCountMin", 1);
+    pr.int("IdealPlayerCountMax", 6);
+    pr.str("ExtraInfo", TOOL_URL);
+  };
+
   const levelInfoRef = pkg.addExport({
     classRef: refs.LevelInfo, name: "LevelInfo0", flags: ACTOR,
     serialize: (p) => {
@@ -271,6 +296,7 @@ function convert(opts) {
       writeStateFrame(w, refs.LevelInfo);
       const pr = p.props(w);
       pr.float("TimeSeconds", 0);
+      writeCredits(pr);
       pr.object("Summary", holder.summaryRef);
       pr.str("DefaultGameType", "KFmod.KFGameType");
       // Engine.LevelInfo.KillZ defaults to 0: anything below the origin dies the instant it spawns,
@@ -713,10 +739,7 @@ function convert(opts) {
     serialize: (p) => {
       const w = new Writer(256);
       const pr = p.props(w);
-      pr.str("Title", baseName + " (converted from Counter-Strike 1.6)");
-      pr.str("Author", "cs16-to-kf converter");
-      pr.int("IdealPlayerCountMin", 1);
-      pr.int("IdealPlayerCountMax", 6);
+      writeCredits(pr);
       pr.end();
       return w;
     },
