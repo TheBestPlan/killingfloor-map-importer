@@ -616,6 +616,31 @@ Counter-Strike has no env_model. Scenery models are `cycler_sprite` (also monste
 whose `model` names a `.mdl` instead of a `.spr` - de_winter_austria places 61 that way, including
 the truck. Filter the sprite path on the extension or they all silently vanish.
 
+### 5.31a A cycler_sprite draws its model a QUARTER TURN past the yaw it declares
+The truck on de_winter_austria carries `angles "0 90 0"`, and reproducing that yaw put it across
+the road instead of along it - its headlight glows, two `env_glow` sprites the mapper placed by
+hand, ended up 90 degrees away from the headlights.
+
+The mapper leaves a second record of the true orientation: the AAATRIGGER box he built around the
+prop so the player cannot walk through it. That box is the model as the running game draws it, so
+comparing its footprint with the model's own answers the question - modulo 180, which is exactly
+the ambiguity in play. Measured with `scripts/propyaw.js`, on three models with different long
+axes (truck 109x281, table 102x46, austbochki 42x84) at yaws of 0, +-90 and 180: **7 of 7 are drawn
+a quarter turn past the declared yaw, 0 at the yaw itself**. A model authored the wrong way round
+cannot explain that - the offset holds across models whose own long axis differs.
+
+The remaining 180 comes from the truck's glows: its front is local +Y (the hood is the low section,
+`maxZ` 49 against 120 over the cab and the tarp), the glows sit at world `(+-47, -130)` from the
+origin at hood height, so local +Y must end up pointing at world -Y. Rendered yaw = declared + 90,
+not declared - 90.
+
+So the prop rotation is `-(yaw + 90)` in Unreal: the `+90` is the engine's, the negation is the Y
+mirror (5.7a). Pitch stays a straight copy: a mirror across Y leaves a rotation about Y alone, and
+the two remaining inversions cancel - GoldSrc's studio renderer flips pitch itself (`angles[PITCH]
+= -angles[PITCH]`) and Unreal's pitch raises the nose where Quake's lowers it. Roll is left alone:
+6 of the 1456 props in the corpus set one, and none of them sits next to anything that would
+measure it.
+
 ### 5.32 "Largest Model wins" stops finding the world model
 `findWorldModel` picked the biggest `Model` export. That is right for a shipped map, but this
 converter's world model is deliberately one node - so the first water volume's box brush outgrew it
