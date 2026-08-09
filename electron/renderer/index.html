@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Killing Floor Map Importer</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2a2f3a; --text: #d7dbe3; --dim: #8a92a3;
+    --accent: #d24b34; --ok: #4caf6d; --bad: #e05252; --warn: #d8a13a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+  header span { color: var(--dim); font-size: 12px; }
+  main { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 52px); }
+  .side { border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; }
+  .right { display: flex; flex-direction: column; min-width: 0; }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin: 0 0 14px; }
+  legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: 0 6px; }
+  label { display: block; margin: 8px 0 3px; color: var(--dim); font-size: 12px; }
+  input[type=text], input[type=number] {
+    width: 100%; background: #0f1115; border: 1px solid var(--line); color: var(--text);
+    padding: 6px 8px; border-radius: 4px; font: inherit;
+  }
+  button {
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    padding: 7px 12px; border-radius: 4px; cursor: pointer; font: inherit;
+  }
+  button:hover { border-color: #3c4354; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; padding: 10px; }
+  button.primary:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row input { flex: 1; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 7px 0; color: var(--text); }
+  .drop {
+    border: 1px dashed var(--line); border-radius: 6px; padding: 18px; text-align: center;
+    color: var(--dim); cursor: pointer; margin-bottom: 10px;
+  }
+  .drop.hot { border-color: var(--accent); color: var(--text); }
+  ul.files { list-style: none; margin: 0 0 10px; padding: 0; max-height: 170px; overflow-y: auto; }
+  ul.files li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  ul.files li .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.files li .s { color: var(--dim); font-size: 11px; flex: none; }
+  .s.ok { color: var(--ok); } .s.bad { color: var(--bad); } .s.run { color: var(--warn); }
+  #log {
+    flex: 1; margin: 0; padding: 12px 16px; overflow-y: auto; white-space: pre-wrap;
+    font: 12px/1.55 Consolas, "Cascadia Mono", monospace; color: #b9c0cd;
+  }
+  #log .ok { color: var(--ok); } #log .bad { color: var(--bad); } #log .hdr { color: #fff; font-weight: 600; }
+  .bar { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; color: var(--dim); }
+  .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Killing Floor Map Importer</h1>
+  <span>Counter-Strike 1.6 &middot; GoldSrc BSP v30 &rarr; Unreal Engine 2.5 .rom</span>
+</header>
+<main>
+  <div class="side">
+    <div class="drop" id="drop">Drop <b>.bsp</b> files here<br>or click to browse</div>
+    <ul class="files" id="files"></ul>
+
+    <fieldset>
+      <legend>Output</legend>
+      <label>Folder for the .rom files</label>
+      <div class="row"><input type="text" id="outDir" placeholder="next to the .bsp"><button id="pickOut">…</button></div>
+      <div class="hint">Point this at KillingFloor\Maps to test straight away.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Resources</legend>
+      <label>Counter-Strike 1.6 client folder</label>
+      <div class="row"><input type="text" id="csDir" placeholder="…\Counter-Strike 1.6 (folder with cstrike\)"><button id="pickCs">…</button></div>
+      <div class="hint">Where the stock .wad files and the gfx\env skyboxes live. A downloaded map
+        ships as the .bsp alone and needs them, otherwise its textures come out magenta and it has no sky.</div>
+      <label>Extra folders to search</label>
+      <div class="row"><input type="text" id="wadDir" placeholder="…\some map pack\cstrike"><button id="pickWad">+</button></div>
+      <ul class="files" id="wads"></ul>
+      <div class="hint">The map's own folder and the two above it are searched automatically.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Conversion</legend>
+      <label>Scale (Half-Life units &rarr; Unreal units)</label>
+      <input type="number" id="scale" step="0.05" min="0.1">
+      <div class="hint">1.9 reads closest to the original; the shipped KF-CS-* ports used 2.</div>
+      <label>Lightmap luxel size (Unreal units)</label>
+      <input type="number" id="lms" step="1" min="4">
+      <div class="hint">32 lines the luxels up 1:1 with GoldSrc at scale 2.</div>
+      <div class="check"><input type="checkbox" id="spawns"><span>Convert player starts</span></div>
+      <div class="check"><input type="checkbox" id="ase"><span>Also write .ase / .t3d (backend B)</span></div>
+    </fieldset>
+
+    <button class="primary" id="go">Convert</button>
+  </div>
+
+  <div class="right">
+    <div id="log"><span class="hdr">Ready.</span>
+Drop one or more Counter-Strike 1.6 .bsp files on the left, pick an output folder, press Convert.
+Every produced .rom is read back and checked before it is reported as done.</div>
+    <div class="bar"><span id="status">idle</span><span style="flex:1"></span><button id="reveal" disabled>Show last output</button></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let files = [];        // { path, name, state }
+let settings = null;
+let lastOut = null;
+
+function renderFiles() {
+  $("files").innerHTML = files.map((f, i) =>
+    `<li><span class="n" title="${f.path}">${f.name}</span><span class="s ${f.cls || ""}">${f.state || "queued"}</span></li>`).join("");
+  $("go").disabled = !files.length || busy;
+}
+function renderWads() {
+  $("wads").innerHTML = (settings.wadDirs || []).map((d, i) =>
+    `<li><span class="n" title="${d}">${d}</span><span class="s" data-rm="${i}" style="cursor:pointer">remove</span></li>`).join("");
+  $("wads").querySelectorAll("[data-rm]").forEach((el) => el.onclick = () => {
+    settings.wadDirs.splice(+el.dataset.rm, 1); save(); renderWads();
+  });
+}
+function log(text, cls) {
+  const el = $("log");
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text + "\n";
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+function save() {
+  settings.outDir = $("outDir").value.trim();
+  settings.csDir = $("csDir").value.trim();
+  settings.scale = parseFloat($("scale").value) || 2;
+  settings.lightMapScale = parseFloat($("lms").value) || 32;
+  settings.emitAse = $("ase").checked;
+  settings.emitPlayerStarts = $("spawns").checked;
+  window.api.setSettings(settings);
+}
+
+let busy = false;
+
+(async function init() {
+  settings = await window.api.getSettings();
+  $("outDir").value = settings.outDir || "";
+  $("csDir").value = settings.csDir || "";
+  $("scale").value = settings.scale;
+  $("lms").value = settings.lightMapScale;
+  $("ase").checked = !!settings.emitAse;
+  $("spawns").checked = settings.emitPlayerStarts !== false;
+  renderWads(); renderFiles();
+  for (const el of ["outDir", "csDir", "scale", "lms"]) $(el).addEventListener("change", save);
+  for (const el of ["ase", "spawns"]) $(el).addEventListener("change", save);
+})();
+
+function addFiles(paths) {
+  for (const p of paths) {
+    if (!/\.bsp$/i.test(p)) continue;
+    if (files.some((f) => f.path === p)) continue;
+    files.push({ path: p, name: p.split(/[\\/]/).pop(), state: "queued" });
+  }
+  renderFiles();
+}
+
+$("drop").onclick = async () => addFiles(await window.api.pickBsp());
+$("drop").ondragover = (e) => { e.preventDefault(); $("drop").classList.add("hot"); };
+$("drop").ondragleave = () => $("drop").classList.remove("hot");
+$("drop").ondrop = (e) => {
+  e.preventDefault(); $("drop").classList.remove("hot");
+  addFiles([...e.dataTransfer.files].map((f) => f.path));
+};
+document.body.ondragover = (e) => e.preventDefault();
+document.body.ondrop = (e) => { e.preventDefault(); addFiles([...e.dataTransfer.files].map((f) => f.path)); };
+
+$("pickOut").onclick = async () => { const d = await window.api.pickDir("Output folder"); if (d) { $("outDir").value = d; save(); } };
+$("pickCs").onclick = async () => { const d = await window.api.pickDir("Counter-Strike 1.6 folder"); if (d) { $("csDir").value = d; save(); } };
+$("pickWad").onclick = async () => {
+  const typed = $("wadDir").value.trim();
+  const d = typed || await window.api.pickDir("Folder containing .wad files");
+  if (d) { settings.wadDirs = settings.wadDirs || []; if (!settings.wadDirs.includes(d)) settings.wadDirs.push(d); $("wadDir").value = ""; save(); renderWads(); }
+};
+$("reveal").onclick = () => lastOut && window.api.reveal(lastOut);
+
+window.api.onProgress((m) => log("  " + m.text, m.type === "err" ? "bad" : (/^\s*ok\s/.test(m.text) ? "ok" : (/FAIL|ERROR/.test(m.text) ? "bad" : ""))));
+
+$("go").onclick = async () => {
+  save();
+  busy = true; renderFiles();
+  let okCount = 0;
+  for (const f of files) {
+    f.state = "converting"; f.cls = "run"; renderFiles();
+    $("status").textContent = "converting " + f.name;
+    log("");
+    log("== " + f.name, "hdr");
+    const res = await window.api.convert({
+      bspFile: f.path,
+      outDir: settings.outDir || null, csDir: settings.csDir || null,
+      scale: settings.scale, lightMapScale: settings.lightMapScale,
+      wadDirs: settings.wadDirs || [], emitAse: settings.emitAse,
+      emitPlayerStarts: settings.emitPlayerStarts,
+    });
+    if (res.ok) {
+      okCount++;
+      f.state = "done"; f.cls = "ok";
+      lastOut = res.out; $("reveal").disabled = false;
+      log("-> " + res.mapName + ".rom  " + (res.size / 1048576).toFixed(2) + " MB, " +
+        res.surfs + " surfaces, " + res.lightMaps + " lightmaps in " + res.atlases + " atlas(es), " +
+        res.textures + " textures" + (res.missingTextures ? " (" + res.missingTextures + " missing)" : ""), "ok");
+    } else {
+      f.state = "failed"; f.cls = "bad";
+      log("-> FAILED: " + (res.error || "verification did not pass"), "bad");
+    }
+    renderFiles();
+  }
+  busy = false; renderFiles();
+  $("status").textContent = okCount + " / " + files.length + " converted";
+};
+</script>
+</body>
+</html>

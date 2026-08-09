@@ -1,0 +1,52 @@
+# Source game content — never commit these. The importer reads maps and textures from your own
+# installs (Counter-Strike 1.6 / Half-Life), and the maps it writes are derived from them.
+*.bsp
+*.wad
+*.spr
+*.mdl
+
+# Killing Floor / Unreal Engine 2.5 packages, including everything the importer produces.
+*.rom
+*.utx
+*.usx
+*.ukx
+*.uax
+*.umx
+*.uz2
+*.u
+*.int
+*.upl
+
+# Intermediate export formats of backend B.
+*.ase
+*.t3d
+
+# Converter and harness output.
+/out/
+/shots/
+/Maps/
+/temp/
+
+# Pre-flattening leftover: the old tool/ install tree (node_modules + npm lockfile).
+/tool/
+
+# Working notes that are not part of the published repo.
+/HANDOFF.md
+/*-this-session-is-being-continued-*.txt
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# node / misc
+node_modules/
+npm-debug.log*
+*.tmp
+
+# electron-builder output
+/dist/

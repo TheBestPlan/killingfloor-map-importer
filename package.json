@@ -1,0 +1,93 @@
+{
+  "name": "killingfloor-map-importer",
+  "productName": "Killing Floor Map Importer",
+  "version": "0.1.0",
+  "description": "Converts maps from other games (today: Counter-Strike 1.6 / GoldSrc BSP v30) into Killing Floor 1 levels (.rom, Unreal Engine 2.5)",
+  "author": "geekrainian (https://github.com/geekrainian)",
+  "license": "GPL-3.0-or-later",
+  "packageManager": "pnpm@11.13.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/geekrainian/killingfloor-map-importer.git"
+  },
+  "funding": [
+    "https://buymeacoffee.com/geekrainian",
+    "https://ko-fi.com/geekrainian",
+    "https://liberapay.com/geekrainian"
+  ],
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "convert": "node src/cli.js",
+    "test": "node test/selfcheck.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "release": "electron-builder --publish always",
+    "bump": "commit-and-tag-version",
+    "prepare": "husky"
+  },
+  "build": {
+    "appId": "com.geekrainian.killingfloormapimporter",
+    "productName": "Killing Floor Map Importer",
+    "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${name}-${version}-${os}-${arch}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${name}-${version}-${os}-${arch}-portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Game",
+      "maintainer": "Geekrainian"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "geekrainian",
+        "repo": "killingfloor-map-importer"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
+    "commit-and-tag-version": "12.7.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3",
+    "husky": "9.1.7"
+  }
+}
