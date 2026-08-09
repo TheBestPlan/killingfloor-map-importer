@@ -19,7 +19,7 @@
   "scripts": {
     "start": "electron .",
     "convert": "node src/cli.js",
-    "test": "node test/selfcheck.js",
+    "test": "node test/selfcheck.js && node test/i18n.test.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "release": "electron-builder --publish always",

@@ -50,74 +50,86 @@
   #log .ok { color: var(--ok); } #log .bad { color: var(--bad); } #log .hdr { color: #fff; font-weight: 600; }
   .bar { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; color: var(--dim); }
   .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
+  header .lang { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; }
+  header .lang select {
+    background: #0f1115; border: 1px solid var(--line); color: var(--text);
+    padding: 4px 6px; border-radius: 4px; font: inherit;
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>Killing Floor Map Importer</h1>
   <span>Counter-Strike 1.6 &middot; GoldSrc BSP v30 &rarr; Unreal Engine 2.5 .rom</span>
+  <label class="lang"><span data-i18n="ui.language">Language</span><select id="lang"></select></label>
 </header>
 <main>
   <div class="side">
-    <div class="drop" id="drop">Drop <b>.bsp</b> files here<br>or click to browse</div>
+    <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
     <ul class="files" id="files"></ul>
 
     <fieldset>
-      <legend>Output</legend>
-      <label>Folder for the .rom files</label>
-      <div class="row"><input type="text" id="outDir" placeholder="next to the .bsp"><button id="pickOut">…</button></div>
-      <div class="hint">Point this at KillingFloor\Maps to test straight away.</div>
+      <legend data-i18n="legend.output">Output</legend>
+      <label data-i18n="label.outDir">Folder for the .rom files</label>
+      <div class="row"><input type="text" id="outDir" data-i18n-ph="ph.outDir" placeholder="next to the .bsp"><button id="pickOut">…</button></div>
+      <div class="hint" data-i18n="hint.outDir">Point this at KillingFloor\Maps to test straight away.</div>
     </fieldset>
 
     <fieldset>
-      <legend>Resources</legend>
-      <label>Counter-Strike 1.6 client folder</label>
-      <div class="row"><input type="text" id="csDir" placeholder="…\Counter-Strike 1.6 (folder with cstrike\)"><button id="pickCs">…</button></div>
-      <div class="hint">Where the stock .wad files and the gfx\env skyboxes live. A downloaded map
+      <legend data-i18n="legend.resources">Resources</legend>
+      <label data-i18n="label.csDir">Counter-Strike 1.6 client folder</label>
+      <div class="row"><input type="text" id="csDir" data-i18n-ph="ph.csDir" placeholder="…\Counter-Strike 1.6 (folder with cstrike\)"><button id="pickCs">…</button></div>
+      <div class="hint" data-i18n="hint.csDir">Where the stock .wad files and the gfx\env skyboxes live. A downloaded map
         ships as the .bsp alone and needs them, otherwise its textures come out magenta and it has no sky.</div>
-      <label>Extra folders to search</label>
-      <div class="row"><input type="text" id="wadDir" placeholder="…\some map pack\cstrike"><button id="pickWad">+</button></div>
+      <label data-i18n="label.extraDirs">Extra folders to search</label>
+      <div class="row"><input type="text" id="wadDir" data-i18n-ph="ph.wadDir" placeholder="…\some map pack\cstrike"><button id="pickWad">+</button></div>
       <ul class="files" id="wads"></ul>
-      <div class="hint">The map's own folder and the two above it are searched automatically.</div>
+      <div class="hint" data-i18n="hint.extraDirs">The map's own folder and the two above it are searched automatically.</div>
     </fieldset>
 
     <fieldset>
-      <legend>Conversion</legend>
-      <label>Scale (Half-Life units &rarr; Unreal units)</label>
+      <legend data-i18n="legend.conversion">Conversion</legend>
+      <label data-i18n="label.scale">Scale (Half-Life units &rarr; Unreal units)</label>
       <input type="number" id="scale" step="0.05" min="0.1">
-      <div class="hint">1.9 reads closest to the original; the shipped KF-CS-* ports used 2.</div>
-      <label>Lightmap luxel size (Unreal units)</label>
+      <div class="hint" data-i18n="hint.scale">1.9 reads closest to the original; the shipped KF-CS-* ports used 2.</div>
+      <label data-i18n="label.lms">Lightmap luxel size (Unreal units)</label>
       <input type="number" id="lms" step="1" min="4">
-      <div class="hint">32 lines the luxels up 1:1 with GoldSrc at scale 2.</div>
-      <div class="check"><input type="checkbox" id="spawns"><span>Convert player starts</span></div>
-      <div class="check"><input type="checkbox" id="ase"><span>Also write .ase / .t3d (backend B)</span></div>
+      <div class="hint" data-i18n="hint.lms">32 lines the luxels up 1:1 with GoldSrc at scale 2.</div>
+      <div class="check"><input type="checkbox" id="spawns"><span data-i18n="chk.spawns">Convert player starts</span></div>
+      <div class="check"><input type="checkbox" id="ase"><span data-i18n="chk.ase">Also write .ase / .t3d (backend B)</span></div>
     </fieldset>
 
-    <button class="primary" id="go">Convert</button>
+    <button class="primary" id="go" data-i18n="btn.convert">Convert</button>
   </div>
 
   <div class="right">
-    <div id="log"><span class="hdr">Ready.</span>
+    <!-- the intro sits in its own span: log lines are appended after it, so a language switch
+         rewrites the intro without touching what has already been logged. -->
+    <div id="log"><span id="intro" data-i18n-html="log.intro"><span class="hdr">Ready.</span>
 Drop one or more Counter-Strike 1.6 .bsp files on the left, pick an output folder, press Convert.
-Every produced .rom is read back and checked before it is reported as done.</div>
-    <div class="bar"><span id="status">idle</span><span style="flex:1"></span><button id="reveal" disabled>Show last output</button></div>
+Every produced .rom is read back and checked before it is reported as done.</span></div>
+    <div class="bar"><span id="status" data-i18n="status.idle">idle</span><span style="flex:1"></span><button id="reveal" disabled data-i18n="btn.reveal">Show last output</button></div>
   </div>
 </main>
 
+<script src="i18n.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-let files = [];        // { path, name, state }
+// i18n.js owns the dictionaries; t() reads the active one, apply() repaints the window.
+const I18N = window.KFI18N;
+const t = (k, v) => I18N.t(k, v);
+let files = [];        // { path, name, stateKey }
 let settings = null;
 let lastOut = null;
 
 function renderFiles() {
   $("files").innerHTML = files.map((f, i) =>
-    `<li><span class="n" title="${f.path}">${f.name}</span><span class="s ${f.cls || ""}">${f.state || "queued"}</span></li>`).join("");
+    `<li><span class="n" title="${f.path}">${f.name}</span><span class="s ${f.cls || ""}">${t(f.stateKey || "state.queued")}</span></li>`).join("");
   $("go").disabled = !files.length || busy;
 }
 function renderWads() {
   $("wads").innerHTML = (settings.wadDirs || []).map((d, i) =>
-    `<li><span class="n" title="${d}">${d}</span><span class="s" data-rm="${i}" style="cursor:pointer">remove</span></li>`).join("");
+    `<li><span class="n" title="${d}">${d}</span><span class="s" data-rm="${i}" style="cursor:pointer">${t("act.remove")}</span></li>`).join("");
   $("wads").querySelectorAll("[data-rm]").forEach((el) => el.onclick = () => {
     settings.wadDirs.splice(+el.dataset.rm, 1); save(); renderWads();
   });
@@ -142,8 +154,20 @@ function save() {
 
 let busy = false;
 
+// Language picker: every locale the README is translated into. Switching repaints the window at
+// once and is remembered in settings.json; default is English.
+I18N.LANGS.forEach(([code, label]) => {
+  const o = document.createElement("option");
+  o.value = code; o.textContent = label;
+  $("lang").appendChild(o);
+});
+$("lang").addEventListener("change", () => { I18N.apply($("lang").value); settings.lang = $("lang").value; save(); });
+I18N.onChange(() => { renderFiles(); if (settings) renderWads(); });   // lists are rebuilt from state, not from the DOM
+
 (async function init() {
   settings = await window.api.getSettings();
+  $("lang").value = settings.lang || "en";
+  I18N.apply($("lang").value);
   $("outDir").value = settings.outDir || "";
   $("csDir").value = settings.csDir || "";
   $("scale").value = settings.scale;
@@ -159,12 +183,12 @@ function addFiles(paths) {
   for (const p of paths) {
     if (!/\.bsp$/i.test(p)) continue;
     if (files.some((f) => f.path === p)) continue;
-    files.push({ path: p, name: p.split(/[\\/]/).pop(), state: "queued" });
+    files.push({ path: p, name: p.split(/[\\/]/).pop(), stateKey: "state.queued" });
   }
   renderFiles();
 }
 
-$("drop").onclick = async () => addFiles(await window.api.pickBsp());
+$("drop").onclick = async () => addFiles(await window.api.pickBsp(t("dlg.pickBsp")));
 $("drop").ondragover = (e) => { e.preventDefault(); $("drop").classList.add("hot"); };
 $("drop").ondragleave = () => $("drop").classList.remove("hot");
 $("drop").ondrop = (e) => {
@@ -174,11 +198,11 @@ $("drop").ondrop = (e) => {
 document.body.ondragover = (e) => e.preventDefault();
 document.body.ondrop = (e) => { e.preventDefault(); addFiles([...e.dataTransfer.files].map((f) => f.path)); };
 
-$("pickOut").onclick = async () => { const d = await window.api.pickDir("Output folder"); if (d) { $("outDir").value = d; save(); } };
-$("pickCs").onclick = async () => { const d = await window.api.pickDir("Counter-Strike 1.6 folder"); if (d) { $("csDir").value = d; save(); } };
+$("pickOut").onclick = async () => { const d = await window.api.pickDir(t("dlg.outDir")); if (d) { $("outDir").value = d; save(); } };
+$("pickCs").onclick = async () => { const d = await window.api.pickDir(t("dlg.csDir")); if (d) { $("csDir").value = d; save(); } };
 $("pickWad").onclick = async () => {
   const typed = $("wadDir").value.trim();
-  const d = typed || await window.api.pickDir("Folder containing .wad files");
+  const d = typed || await window.api.pickDir(t("dlg.wadDir"));
   if (d) { settings.wadDirs = settings.wadDirs || []; if (!settings.wadDirs.includes(d)) settings.wadDirs.push(d); $("wadDir").value = ""; save(); renderWads(); }
 };
 $("reveal").onclick = () => lastOut && window.api.reveal(lastOut);
@@ -190,8 +214,8 @@ $("go").onclick = async () => {
   busy = true; renderFiles();
   let okCount = 0;
   for (const f of files) {
-    f.state = "converting"; f.cls = "run"; renderFiles();
-    $("status").textContent = "converting " + f.name;
+    f.stateKey = "state.converting"; f.cls = "run"; renderFiles();
+    I18N.setText("status", "status.converting", { name: f.name });
     log("");
     log("== " + f.name, "hdr");
     const res = await window.api.convert({
@@ -203,19 +227,21 @@ $("go").onclick = async () => {
     });
     if (res.ok) {
       okCount++;
-      f.state = "done"; f.cls = "ok";
+      f.stateKey = "state.done"; f.cls = "ok";
       lastOut = res.out; $("reveal").disabled = false;
-      log("-> " + res.mapName + ".rom  " + (res.size / 1048576).toFixed(2) + " MB, " +
-        res.surfs + " surfaces, " + res.lightMaps + " lightmaps in " + res.atlases + " atlas(es), " +
-        res.textures + " textures" + (res.missingTextures ? " (" + res.missingTextures + " missing)" : ""), "ok");
+      log(t("log.mapDone", {
+        name: res.mapName, size: (res.size / 1048576).toFixed(2), surfs: res.surfs,
+        lightmaps: res.lightMaps, atlases: res.atlases, textures: res.textures,
+        missing: res.missingTextures ? t("log.missing", { n: res.missingTextures }) : "",
+      }), "ok");
     } else {
-      f.state = "failed"; f.cls = "bad";
-      log("-> FAILED: " + (res.error || "verification did not pass"), "bad");
+      f.stateKey = "state.failed"; f.cls = "bad";
+      log(t("log.failed", { error: res.error || t("err.verify") }), "bad");
     }
     renderFiles();
   }
   busy = false; renderFiles();
-  $("status").textContent = okCount + " / " + files.length + " converted";
+  I18N.setText("status", "status.done", { ok: okCount, total: files.length });
 };
 </script>
 </body>

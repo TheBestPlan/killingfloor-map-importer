@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = {
   lightMapScale: 32,
   emitAse: false,
   emitPlayerStarts: true,
+  lang: "en",          // UI language (Language picker in the header)
 };
 
 function loadSettings() {
@@ -46,9 +47,9 @@ app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(
 ipcMain.handle("settings:get", () => loadSettings());
 ipcMain.handle("settings:set", (e, s) => { saveSettings(s); return s; });
 
-ipcMain.handle("pick:bsp", async () => {
+ipcMain.handle("pick:bsp", async (e, title) => {
   const r = await dialog.showOpenDialog(win, {
-    title: "Pick Counter-Strike 1.6 maps",
+    title: title || "Pick Counter-Strike 1.6 maps",
     filters: [{ name: "GoldSrc BSP", extensions: ["bsp"] }],
     properties: ["openFile", "multiSelections"],
   });
