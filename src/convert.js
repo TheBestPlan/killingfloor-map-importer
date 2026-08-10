@@ -30,6 +30,10 @@ const dxt = require("./unreal/dxt");
 // so it reads at the brightness Counter-Strike shows.
 const SKY_GAIN = 1 / 2.4;
 
+// Converted maps read a little darker than the same map in Counter-Strike, so the zone's ambient -
+// which is what lights the meshes - gets this much on top of the measured shadow level.
+const AMBIENT_GAIN = 1.2;
+
 // Where a player appears. Point entities with nothing to draw: any `model` on them is Hammer's
 // preview, which GoldSrc never renders.
 const isSpawn = (e) => /^info_(player_(start|deathmatch|coop)|vip_start)$/.test(e.classname || "");
@@ -1015,14 +1019,20 @@ function convert(opts) {
     // direct light, which the ambient must not also account for. Averaging lets an open, sunlit map
     // drag the whole level up - cs_italy averages 102 against cs_assault's 75 and came out visibly
     // blown out, while the shadow level of the two is nearly the same (38 vs 38).
+    //
+    // The percentile alone lands the level a little under Counter-Strike: GoldSrc adds a small
+    // ambient of its own on top of the lightmap, and KF's screen overlay takes some back. AMBIENT_GAIN
+    // is the correction, KF_AMBIENT forces a value outright.
     holder.ambient = 96;
     if (meshBuild.stats.lumN) {
       const want = meshBuild.stats.lumN * 0.25;
       let seen = 0, q = 0;
       for (; q < 256 && seen < want; q++) seen += meshBuild.stats.lumHist[q];
-      holder.ambient = Math.max(24, Math.min(120, q));
+      holder.ambient = q;
     }
-    log("ambient: zone brightness " + holder.ambient + " (shadow level: 25th percentile of every GoldSrc luxel)");
+    holder.ambient = +process.env.KF_AMBIENT ||
+      Math.max(24, Math.min(140, Math.round(holder.ambient * AMBIENT_GAIN)));
+    log("ambient: zone brightness " + holder.ambient + " (shadow level: 25th percentile of every GoldSrc luxel, x" + AMBIENT_GAIN + ")");
     if (meshBuild.stats.lumN) {
       const r = meshBuild.stats.lumR / meshBuild.stats.lumN;
       const gch = meshBuild.stats.lumG / meshBuild.stats.lumN;
