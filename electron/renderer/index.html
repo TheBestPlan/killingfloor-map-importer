@@ -191,12 +191,13 @@ function addFiles(paths) {
 $("drop").onclick = async () => addFiles(await window.api.pickBsp(t("dlg.pickBsp")));
 $("drop").ondragover = (e) => { e.preventDefault(); $("drop").classList.add("hot"); };
 $("drop").ondragleave = () => $("drop").classList.remove("hot");
+const droppedPaths = (e) => [...e.dataTransfer.files].map((f) => window.api.droppedPath(f)).filter(Boolean);
 $("drop").ondrop = (e) => {
   e.preventDefault(); $("drop").classList.remove("hot");
-  addFiles([...e.dataTransfer.files].map((f) => f.path));
+  addFiles(droppedPaths(e));
 };
 document.body.ondragover = (e) => e.preventDefault();
-document.body.ondrop = (e) => { e.preventDefault(); addFiles([...e.dataTransfer.files].map((f) => f.path)); };
+document.body.ondrop = (e) => { e.preventDefault(); addFiles(droppedPaths(e)); };
 
 $("pickOut").onclick = async () => { const d = await window.api.pickDir(t("dlg.outDir")); if (d) { $("outDir").value = d; save(); } };
 $("pickCs").onclick = async () => { const d = await window.api.pickDir(t("dlg.csDir")); if (d) { $("csDir").value = d; save(); } };
