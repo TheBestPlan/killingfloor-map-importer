@@ -9,13 +9,17 @@
     --accent: #d24b34; --ok: #4caf6d; --bad: #e05252; --warn: #d8a13a;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
-  header { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; }
+  /* The page itself never scrolls: the sidebar and the log each scroll inside their own box. */
+  body {
+    margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+    height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+  }
+  header { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; flex: none; }
   header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
   header span { color: var(--dim); font-size: 12px; }
-  main { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 52px); }
+  main { display: grid; grid-template-columns: 340px 1fr; flex: 1; min-height: 0; }
   .side { border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; }
-  .right { display: flex; flex-direction: column; min-width: 0; }
+  .right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin: 0 0 14px; }
   legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: 0 6px; }
   label { display: block; margin: 8px 0 3px; color: var(--dim); font-size: 12px; }
@@ -44,11 +48,14 @@
   ul.files li .s { color: var(--dim); font-size: 11px; flex: none; }
   .s.ok { color: var(--ok); } .s.bad { color: var(--bad); } .s.run { color: var(--warn); }
   #log {
-    flex: 1; margin: 0; padding: 12px 16px; overflow-y: auto; white-space: pre-wrap;
+    /* pre, not pre-wrap: long paths and class lists get the horizontal scrollbar instead of
+       breaking mid-line, and both scrollbars belong to this box rather than to the window. */
+    flex: 1; min-height: 0; margin: 0; padding: 12px 16px; overflow: auto; white-space: pre;
     font: 12px/1.55 Consolas, "Cascadia Mono", monospace; color: #b9c0cd;
   }
+  #intro { white-space: pre-wrap; }  /* the greeting is prose - let it wrap, unlike the log lines */
   #log .ok { color: var(--ok); } #log .bad { color: var(--bad); } #log .hdr { color: #fff; font-weight: 600; }
-  .bar { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; color: var(--dim); }
+  .bar { flex: none; padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; color: var(--dim); }
   .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
   header .lang { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; }
   header .lang select {
