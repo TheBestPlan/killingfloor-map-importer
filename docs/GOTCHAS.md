@@ -648,6 +648,29 @@ fan), and the textures may live in a companion `<name>T.mdl`.
 Both need their faces kept OUT of the world's chunks, and kept whole: chunking a door by the spatial
 grid gives two halves that open independently.
 
+### 5.30a Glass is a per-ENTITY alpha in GoldSrc and a MATERIAL in Unreal
+A mapper makes glass by giving the brush entity `rendermode 2` and an alpha in `renderamt` -
+aim_texture_maze has 36 `func_wall`s at `renderamt 110`. The texture itself is opaque, so a
+converter that only carries textures across turns every window into a solid slab.
+
+Unreal has no per-actor alpha for world geometry, and `PF_Translucent` on a surface is NOT the
+answer: measured over the stock maps, **not one BSP surface in KF-Crash, KF-Farm, KF-Bedlam or
+KF-Aperture carries it** (their flags are 0, `PF_Unlit`, `PF_FakeBackdrop`, `PF_Invisible|NotSolid|
+TwoSided`, `PF_Semisolid`). What those maps do carry is materials: KF-Crash points 10 of its
+surfaces at `Shader`s, KF-Aperture 2, KF-Bedlam at a `Combiner`.
+
+So the texture gets a second material - `Engine.Shader` with `Diffuse` = the texture,
+`Opacity` = an `Engine.ConstantColor` whose Color alpha is the entity's `renderamt`,
+`OutputBlending = OB_Translucent` (3) and `TwoSided` - and only the faces of that entity use it.
+One Shader per (texture, alpha) pair; `rendermode 5` is additive, so it takes `OB_Brighten` (5)
+instead. `rendermode 4` is a colour-key cut-out, not translucency, and stays opaque.
+
+Note `Engine.Texture` has NO `Style` property in this engine - the chain is
+Texture -> BitmapMaterial -> RenderedMaterial -> Material and none of them declares one, so the
+`Style = STY_Translucent` this converter writes on water textures is a no-op that the loader skips
+by size. Water reads as water because of `bAlphaTexture` plus the alpha baked into its DXT3 blocks.
+`Style` on an ACTOR (KFGlassMover) is real - that one is `Actor.Style`.
+
 ### 5.31 `.mdl` props are placed by cycler_sprite, not by any model entity
 Counter-Strike has no env_model. Scenery models are `cycler_sprite` (also monster_furniture, cycler)
 whose `model` names a `.mdl` instead of a `.spr` - de_winter_austria places 61 that way, including

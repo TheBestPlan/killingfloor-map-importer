@@ -77,6 +77,9 @@ function buildMeshes(map, opts) {
     jobs.push({
       model: sm, offset: [org[0] || 0, org[1] || 0, org[2] || 0], top: sm.maxs[2],
       ent: separate.get(+mm[1]),
+      // Glass and anything else the mapper drew with a render mode: the faces keep their texture
+      // but wear a translucent material instead of the plain one.
+      mat: opts.materialOf ? opts.materialOf(ent) : null,
     });
   }
 
@@ -144,7 +147,8 @@ function buildMeshes(map, opts) {
 
       const N = map.faceNormal(face);
       const normal = [N[0], -N[1], N[2]];
-      const list = byMaterial.get(tex.ref) || byMaterial.set(tex.ref, []).get(tex.ref);
+      const matRef = (job.mat && job.mat(tex)) || tex.ref;
+      const list = byMaterial.get(matRef) || byMaterial.set(matRef, []).get(matRef);
       if (isWater) stats.water = (stats.water || 0) + 1;
       for (let i = 2; i < pts.length; i++) {
         const fan = [pts[0], pts[i - 1], pts[i]];

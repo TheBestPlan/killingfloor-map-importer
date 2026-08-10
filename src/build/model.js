@@ -112,7 +112,7 @@ function buildModel(map, opts) {
   // --- surfaces ---------------------------------------------------------------------------------
   // `offsetHL` is the brush entity's `origin`: hlcsg stores a brush entity's vertices relative to
   // it, so world position is vertex + origin and the plane distance shifts with it.
-  function makeSurf(face, offsetHL) {
+  function makeSurf(face, offsetHL, matOf) {
     const ti = map.texinfo[face.texinfo];
     const tex = texOf.get(ti.miptex);
     if (!tex) { skip("no texture"); return null; }
@@ -198,7 +198,10 @@ function buildModel(map, opts) {
     // A FakeBackdrop surface has to keep its own material: the hide pass below recognises a hidden
     // node by its material being the mask, and a sky surface with zeroed NumVertices never reaches
     // a render section, so the backdrop is never projected through it.
-    const material = (tex.kind === "sky" && opts.sky === "backdrop") ? tex.ref : (opts.hideMaterialRef || tex.ref);
+    // A brush entity the mapper gave a render mode (glass, mostly) brings its own translucent
+    // material; nothing else about the surface changes.
+    const material = (tex.kind === "sky" && opts.sky === "backdrop") ? tex.ref
+      : (opts.hideMaterialRef || (matOf && matOf(tex)) || tex.ref);
 
     const iSurf = surfs.length;
     surfs.push({
@@ -638,7 +641,7 @@ function buildModel(map, opts) {
         jobs.push({
           model: sm, offset: [org[0] || 0, org[1] || 0, org[2] || 0],
           nonSolid: /illusionary|trigger|ladder|buyzone|bomb_target|hostage_rescue/.test(ent.classname || ""),
-          world: false,
+          world: false, mat: opts.materialOf ? opts.materialOf(ent) : null,
         });
       }
     }
@@ -653,7 +656,7 @@ function buildModel(map, opts) {
         }
         stats.faces++;
         if (opts.faceLimit && surfs.length >= opts.faceLimit) { skip("face limit"); continue; }
-        const info = makeSurf(face, job.offset);
+        const info = makeSurf(face, job.offset, job.mat);
         if (!info) continue;
         if (job.nonSolid) { surfs[info.iSurf].polyFlags |= PF.NotSolid; info.flags |= PF.NotSolid; }
         info._face = face;

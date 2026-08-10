@@ -148,6 +148,11 @@ function convert(opts) {
   const refs = {
     Texture: pkg.importClass("Engine", "Texture"),
     Palette: pkg.importClass("Engine", "Palette"),
+    // Translucency belongs to the material, not to the surface: no stock KF map sets
+    // PF_Translucent on a single BSP surface, they all point the surface at a Shader
+    // (KF-Crash: 10 of them, KF-Aperture: 2).
+    Shader: pkg.importClass("Engine", "Shader"),
+    ConstantColor: pkg.importClass("Engine", "ConstantColor"),
     Model: pkg.importClass("Engine", "Model"),
     Polys: pkg.importClass("Engine", "Polys"),
     Brush: pkg.importClass("Engine", "Brush"),
@@ -212,6 +217,59 @@ function convert(opts) {
   }
   log("textures: " + texByMiptex.size + " used (" + embeddedTex + " embedded, " + wadTex + " from wad, " +
     missingTex + " missing -> placeholder, " + potResized + " resampled to power-of-two)");
+
+  // --- see-through brush entities ---------------------------------------------------------------
+  // GoldSrc has no translucent texture: a mapper makes glass by giving the brush entity
+  // `rendermode 2` and an alpha in `renderamt`, and the engine blends the whole entity at draw
+  // time. Unreal has no such per-actor alpha for world geometry, so the same texture gets a second
+  // material - a Shader that blends it - and only the faces of that entity use it.
+  const shaders = new Map();
+  const shaderFor = (texRef, alpha, additive) => {
+    const key = texRef + "|" + alpha + "|" + (additive ? "a" : "t");
+    if (shaders.has(key)) return shaders.get(key);
+    const n = shaders.size;
+    const opacityRef = pkg.addExport({
+      classRef: refs.ConstantColor, name: "Opacity" + n, flags: refs.flagsGame,
+      serialize: (p) => {
+        const w = new Writer(64);
+        const pr = p.props(w);
+        // Opacity reads the alpha channel; the colour is what a flat white opacity map would be.
+        pr.color("Color", [255, 255, 255, alpha]);
+        pr.end();
+        return w;
+      },
+    });
+    const ref = pkg.addExport({
+      classRef: refs.Shader, name: "Translucent" + n, flags: refs.flagsGame,
+      serialize: (p) => {
+        const w = new Writer(128);
+        const pr = p.props(w);
+        pr.object("Diffuse", texRef);
+        pr.object("Opacity", opacityRef);
+        pr.byte("OutputBlending", additive ? 5 : 3);      // OB_Brighten / OB_Translucent
+        // A pane seen from its back side is still a pane; GoldSrc draws both faces of the brush.
+        pr.bool("TwoSided", true);
+        pr.end();
+        return w;
+      },
+    });
+    shaders.set(key, ref);
+    return ref;
+  };
+  // rendermode: 0 normal, 1 colour, 2 texture, 3 glow, 4 solid (colour key), 5 additive. Only 1/2
+  // (blend by renderamt) and 5 (add) make a brush see-through; 4 is a cut-out and stays opaque.
+  const translucentEnts = new Set();               // both build routes ask, so count the entities
+  const materialOf = (ent) => {
+    const mode = +(ent.rendermode || 0);
+    const amt = ent.renderamt === undefined ? 255 : (parseInt(ent.renderamt, 10) || 0);
+    const additive = mode === 5;
+    if (!additive && !((mode === 1 || mode === 2) && amt < 255)) return null;
+    translucentEnts.add(ent);
+    // Fully transparent glass is invisible glass; keep a floor under it the way GoldSrc's own
+    // minimum does, or a `renderamt 0` pane disappears instead of glinting.
+    const alpha = Math.min(255, Math.max(32, amt));
+    return (tex) => (tex.ref ? shaderFor(tex.ref, alpha, additive) : 0);
+  };
 
   // The real skybox, from the six gfx/env images worldspawn names. Without it the sky brushes wear
   // the 16x16 `sky` placeholder from halflife.wad and read as a blown-out white wall.
@@ -899,7 +957,7 @@ function convert(opts) {
         skyBackdrop2: skyBackdrop && !!holder.skyZoneRef,
         skyMaterialRef: (skySides.up && skySides.up.texRef) || 0,
         skyRoomBox: holder.skyZoneRef ? skyRoomBox : null, skyZoneRef: holder.skyZoneRef,
-        texByMiptex, texByRef, levelRef: built.levelRef, polysRef: worldPolysRef, zoneInfoRef,
+        texByMiptex, texByRef, levelRef: built.levelRef, polysRef: worldPolysRef, zoneInfoRef, materialOf,
         emptyWorld: !!o.emptyWorld, minimalWorld: o.geometry === "mesh" && o.minimalWorld !== false, hideMaterialRef: hideTexRef, lightRefs,
         // On the mesh route the sky is a separate skybox mesh, so the BSP must hide its sky faces
         // too (otherwise the stretched, blown-out projection draws over it). Only the BSP/both
@@ -942,7 +1000,7 @@ function convert(opts) {
     // Doors and breakable glass become actors of their own; everything else merges into the world.
     const special = o.noExtras ? [] : brushEnts.collect(map);
     const separate = new Map(special.map((s, i) => [s.mi, i]));
-    const meshBuild = buildMeshes(map, { scale: o.scale, texByMiptex, separate });
+    const meshBuild = buildMeshes(map, { scale: o.scale, texByMiptex, separate, materialOf });
     // Zone ambient = the 25th PERCENTILE of the map's luxels, not the average.
     //
     // Ambient is the light that exists in shadow; the bright half of a GoldSrc lightmap comes from
