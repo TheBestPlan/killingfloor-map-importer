@@ -30,6 +30,10 @@ const dxt = require("./unreal/dxt");
 // so it reads at the brightness Counter-Strike shows.
 const SKY_GAIN = 1 / 2.4;
 
+// Where a player appears. Point entities with nothing to draw: any `model` on them is Hammer's
+// preview, which GoldSrc never renders.
+const isSpawn = (e) => /^info_(player_(start|deathmatch|coop)|vip_start)$/.test(e.classname || "");
+
 // Signed into every map's LevelSummary. Read from the manifest so a rename or a move of the
 // repository cannot leave a stale URL baked into finished .rom files.
 const manifest = require("../package.json");
@@ -814,7 +818,11 @@ function convert(opts) {
   // sprites above, except their `model` names a .mdl; one StaticMesh per file, one actor per entity.
   const propActors = [];
   {
-    const wanted = o.noExtras ? [] : map.entities.filter((e) => /\.mdl$/i.test(e.model || "") && !/^\*/.test(e.model));
+    // A spawn point's `model` is the editor's preview player - Hammer draws gsg9.mdl where the
+    // player will stand, and the GoldSrc engine ignores the key entirely. Import it and the map
+    // gets a T-posing terrorist frozen on every spawn.
+    const wanted = o.noExtras ? [] : map.entities.filter((e) =>
+      /\.mdl$/i.test(e.model || "") && !/^\*/.test(e.model) && !isSpawn(e));
     const cache = new Map();
     let missing = 0, propTris = 0;
     for (const e of wanted) {
@@ -903,7 +911,7 @@ function convert(opts) {
     const at = spawnAt && spawnAt.slice(0, 3);
     const spawns = at
       ? [{ origin: "0 0 0", _at: at }]
-      : map.entities.filter((e) => e.classname === "info_player_start" || e.classname === "info_player_deathmatch");
+      : map.entities.filter(isSpawn);
     spawns.slice(o.spawnIndex !== undefined ? o.spawnIndex : 0, o.spawnIndex !== undefined ? o.spawnIndex + 1 : (o.spawnLimit || 32)).forEach((e, i) => {
       const org = bspReader.num3(e.origin, [0, 0, 0]);
       const ground = floorUnder(map, org);

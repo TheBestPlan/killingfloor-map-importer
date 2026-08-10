@@ -771,6 +771,15 @@ scale. A KF pawn dropped from there does not reliably land - it sometimes falls 
 was supposed to land on. The converter now ray-casts down onto the GoldSrc faces and places the
 `PlayerStart` 46 units above the floor.
 
+### 6.0b A spawn point's `model` is Hammer's preview player, not a prop
+`info_player_start` / `info_player_deathmatch` often carry
+`model "models/player/gsg9/gsg9.mdl"` - it is how the editor draws a stand-in where the player will
+appear, and GoldSrc never renders it. aim_texture_maze carries 24 of them, gg_toycarpark 34,
+supercrazycars none. Import them with the rest of the `.mdl` props and the map gets a T-posing
+terrorist standing on every spawn - with collision, right where the pawn has to materialise, so
+KFEd's Map Check answers "PlayerStart is not useable" and the player can die the moment the round
+starts. Filter spawn classnames out of the prop pass.
+
 ### 6.1 `LevelInfo.KillZ` defaults to 0
 Anything spawning below the origin dies instantly. GoldSrc maps sit below z = 0 as often as not, so
 the converter writes `KillZ = (lowest geometry) − 2000`.
