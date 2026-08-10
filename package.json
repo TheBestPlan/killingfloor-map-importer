@@ -39,6 +39,9 @@
       "src/**/*",
       "LICENSE"
     ],
+    "electronLanguages": [
+      "en-US"
+    ],
     "win": {
       "target": [
         "nsis",
