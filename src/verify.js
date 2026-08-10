@@ -261,6 +261,68 @@ function verify(file) {
       checked + " textures" + (short_ ? ", " + short_ + " short: " + first : ""));
   }
 
+  // Every actor's tagged property block must terminate, and so must every block nested in a struct.
+  //
+  // The engine reads properties until the name "None", not until the declared size runs out, so a
+  // block that forgets its terminator - including the one INSIDE a struct value - reads on into the
+  // next object and the load dies with "Serial size mismatch: Got 124, Expected 123". The game
+  // never noticed, because the object that had it was RF_NotForClient and only KFEd ever read it.
+  //
+  // The walk covers the property types this writer emits. Shipped maps trip it on content we never
+  // produce (a TerrainInfo's native data, an actor left with bDeleteMe), so it is an invariant for
+  // our own output, not a general reader.
+  {
+    const RF_HAS_STACK = 0x02000000;
+    const SIZE = [1, 2, 4, 12, 16, 0, 0, 0];
+    // Structs the engine serializes as raw bytes instead of a tagged block. Everything else - a
+    // PointRegion, a Scale - carries properties of its own and must terminate like any block.
+    const RAW = new Set(["Vector", "Rotator", "Color", "Plane", "Quat", "Matrix", "Guid", "Box"]);
+
+    // Walks a tagged block and returns the offset just past its None, or -1 if it never found one.
+    const walkBlock = (start, end) => {
+      const r = new R.Rd(pkg.buf, start);
+      for (;;) {
+        if (r.pos >= end) return -1;
+        if (pkg.names[r.cidx()] === "None") return r.pos;
+        const info = pkg.buf[r.pos++];
+        const type = info & 0x0f, sizeCode = (info >> 4) & 0x07;
+        const structName = type === 10 ? pkg.names[r.cidx()] : null;
+        // A Bool carries its value in the tag's high bit and occupies no bytes of its own.
+        let size = type === 3 ? 0 : SIZE[sizeCode];
+        if (sizeCode === 5) size = pkg.buf[r.pos++];
+        else if (sizeCode === 6) { size = pkg.buf.readUInt16LE(r.pos); r.pos += 2; }
+        else if (sizeCode === 7) { size = pkg.buf.readUInt32LE(r.pos); r.pos += 4; }
+        if ((info & 0x80) !== 0 && type !== 3) r.pos++;
+        if (type === 10 && !RAW.has(structName) && walkBlock(r.pos, r.pos + size) !== r.pos + size) return -1;
+        r.pos += size;
+        if (r.pos > end) return -1;
+      }
+    };
+
+    let walked = 0, mismatched = 0, first = "";
+    for (const e of pkg.exports) {
+      if (!(e.objectFlags & RF_HAS_STACK) || !e.serialSize) continue;   // actors always carry properties
+      const end = e.serialOffset + e.serialSize;
+      const r = new R.Rd(pkg.buf, e.serialOffset);
+      let where;
+      try {
+        const node = r.cidx(); r.cidx(); r.skip(12);
+        if (node !== 0) r.cidx();
+        where = walkBlock(r.pos, end);
+      } catch (err) { where = -1; }
+      walked++;
+      // Terminating inside the object is the invariant, not terminating exactly at its end: a few
+      // engine classes (TerrainInfo) write native data after their properties, and shipped maps
+      // rely on that. Never finding the None, or finding it past the object, is the fault.
+      if (where < 0 || where > end) {
+        mismatched++;
+        if (!first) first = e.name + " (" + e.serialSize + " bytes)";
+      }
+    }
+    check("actor property blocks terminate inside the object", mismatched === 0,
+      walked + " actors" + (mismatched ? ", " + mismatched + " broken: " + first : ""));
+  }
+
   return { ok, report: lines.join("\n"), model: m, pkg };
 }
 

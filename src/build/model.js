@@ -22,6 +22,23 @@ const INDEX_NONE = -1;
 const skyMin = (world, S, a) => (a === 1 ? -world.maxs[1] : world.mins[a]) * S;
 const skyMax = (world, S, a) => (a === 1 ? -world.mins[1] : world.maxs[a]) * S;
 
+// The room the whole level lives in. A Killing Floor map is built the other way round from a
+// GoldSrc one: the world starts as solid rock and a mapper subtracts a cube to make space, then
+// puts everything inside it. That cube is the map's foundation - without it the engine calls every
+// point solid, so nothing draws, nothing spawns, and KFEd's Map Check reports every navigation
+// point "imbedded in level geometry". Both the shipped BSP and the CSG brush KFEd rebuilds from
+// come from this one box, so it is computed in one place.
+const BOX_MARGIN = 8192;                            // Unreal units of air around the level
+const BOX_CLAMP = 120000;                           // stay well inside HALF_WORLD_MAX
+function worldBox(map, scale) {
+  const world = map.models[0];
+  const clamp = (v) => Math.max(-BOX_CLAMP, Math.min(BOX_CLAMP, v));
+  return {
+    min: [0, 1, 2].map((a) => clamp(skyMin(world, scale, a) - BOX_MARGIN)),
+    max: [0, 1, 2].map((a) => clamp(skyMax(world, scale, a) + BOX_MARGIN)),
+  };
+}
+
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
@@ -424,6 +441,7 @@ function buildModel(map, opts) {
   //  flat tree is not free: the engine walks it every frame with no PVS to prune it.
   const flat = !opts.emptyWorld && !opts.minimalWorld && opts.treeTranslate !== true;
   let rootNode = INDEX_NONE;
+  let rooms = null;                                  // set by the box route: the convex rooms it carved
   if (opts.emptyWorld) rootNode = INDEX_NONE;
   else if (opts.minimalWorld) {
     // A BOX around the level, not one quad under it.
@@ -445,49 +463,79 @@ function buildModel(map, opts) {
     // the LAST node's front side pointing at the single leaf. This converter used to write [1, 1]
     // and [0, 0] on every node: every side of every plane declared open and landing in the same
     // leaf. The renderer decides what to draw by walking exactly these fields.
-    const M = 8192;                                   // margin around the level, in Unreal units
-    const CLAMP = 120000;                             // stay well inside HALF_WORLD_MAX
-    const lo = [0, 1, 2].map((a) => Math.max(-CLAMP, Math.min(CLAMP, skyMin(world, S, a) - M)));
-    const hi = [0, 1, 2].map((a) => Math.max(-CLAMP, Math.min(CLAMP, skyMax(world, S, a) + M)));
-    // axis, sign, and the four corners of that side of the box
-    const sides = [
-      { n: [0, 0, 1], d: lo[2], ring: [[lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]]] },
-      { n: [0, 0, -1], d: -hi[2], ring: [[lo[0], hi[1], hi[2]], [hi[0], hi[1], hi[2]], [hi[0], lo[1], hi[2]], [lo[0], lo[1], hi[2]]] },
-      { n: [1, 0, 0], d: lo[0], ring: [[lo[0], lo[1], lo[2]], [lo[0], hi[1], lo[2]], [lo[0], hi[1], hi[2]], [lo[0], lo[1], hi[2]]] },
-      { n: [-1, 0, 0], d: -hi[0], ring: [[hi[0], lo[1], hi[2]], [hi[0], hi[1], hi[2]], [hi[0], hi[1], lo[2]], [hi[0], lo[1], lo[2]]] },
-      { n: [0, 1, 0], d: lo[1], ring: [[lo[0], lo[1], hi[2]], [hi[0], lo[1], hi[2]], [hi[0], lo[1], lo[2]], [lo[0], lo[1], lo[2]]] },
-      { n: [0, -1, 0], d: -hi[1], ring: [[lo[0], hi[1], lo[2]], [hi[0], hi[1], lo[2]], [hi[0], hi[1], hi[2]], [lo[0], hi[1], hi[2]]] },
-    ];
-    const centre = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2);
-    const radius = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2;
+    // The rooms are nested, not siblings: the sky room is carved out of the world room's air, so a
+    // point reaches it only after passing every world plane. Behind any plane of room k lies room
+    // k-1's air, and behind room 0's lies solid rock. That makes one chain of planes whose back
+    // sides terminate at the enclosing room's leaf, which is a real (if crude) BSP for two convex
+    // rooms - and the shape KFEd itself writes for two subtracts.
+    rooms = [{
+      box: opts.worldBox || worldBox(map, S), zone: 1, leaf: 0,
+      // Killing Floor's own sky: the room's walls carry PF_FakeBackdrop and the engine draws the
+      // sky zone's contents through them, at infinity, with no parallax. Without a backdrop they
+      // are just the invisible shell that keeps the tree in front of the camera whichever way it
+      // looks (see 2.12 - a single quad below the level is not).
+      flags: opts.skyBackdrop2 ? (PF.FakeBackdrop | PF.Unlit | PF.NotSolid) : (PF.Invisible | PF.NotSolid),
+      material: (opts.skyBackdrop2 && opts.skyMaterialRef) || opts.hideMaterialRef || 0,
+    }];
+    if (opts.skyRoomBox) rooms.push({
+      box: opts.skyRoomBox, zone: 2, leaf: 1,
+      flags: PF.Invisible | PF.NotSolid, material: opts.hideMaterialRef || 0,
+    });
+
     const first = nodes.length;
-    sides.forEach((s, i) => {
-      const plane = [s.n[0], s.n[1], s.n[2], s.d];
-      const iSurf = surfs.length;
-      // A real material and lightmap index: the node carries a polygon, so it reaches the section
-      // pass, and both are followed there without a null/-1 check.
-      const up = Math.abs(s.n[2]) > 0.5 ? [1, 0, 0] : [0, 0, 1];
-      surfs.push({
-        material: opts.hideMaterialRef || 0, polyFlags: PF.Invisible | PF.NotSolid,
-        pBase: points.add(s.ring[0]), vNormal: vectors.add(s.n),
-        vTextureU: vectors.add(up), vTextureV: vectors.add(cross(s.n, up)),
-        iLightMap: INDEX_NONE, actor: 0, plane, lightMapScale: LMS,
-      });
-      const iVertPool = verts.length;
-      for (const p of s.ring) verts.push({ pVertex: points.add(p), iSide: INDEX_NONE });
-      nodes.push({
-        plane, zoneMask: [3, 0], nodeFlags: 0,
-        iVertPool, iSurf,
-        iBack: INDEX_NONE, iFront: i < sides.length - 1 ? first + i + 1 : INDEX_NONE, iPlane: INDEX_NONE,
-        iCollisionBound: INDEX_NONE, iRenderBound: INDEX_NONE,
-        sphere: { center: centre, radius },
-        // NumVertices must be a real polygon count, never 0. UModel::LineCheck clips the ray against
-        // the node's polygon and walks Verts(iVertPool .. iVertPool + NumVertices - 1); with 0 that
-        // upper bound is iVertPool - 1, and the read runs off the array. It only faults when a trace
-        // actually reaches this node, which is why the crash was intermittent (~1 in 10) and always
-        // from a trace: Pawn.UpdateEyeHeight -> SingleLineCheck -> UModel::LineCheck.
-        iZone: [0, 1], numVertices: 4, iLeaf: [-1, i === sides.length - 1 ? 0 : -1], keepPolygon: true,
-        iSection: INDEX_NONE, iFirstVertex: 0, iLightMap: INDEX_NONE,
+    const sideCount = 6 * rooms.length;
+    rooms.forEach((room, k) => {
+      const lo = room.box.min, hi = room.box.max;
+      // axis, sign, and the four corners of that side of the box
+      const sides = [
+        { n: [0, 0, 1], d: lo[2], ring: [[lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]]] },
+        { n: [0, 0, -1], d: -hi[2], ring: [[lo[0], hi[1], hi[2]], [hi[0], hi[1], hi[2]], [hi[0], lo[1], hi[2]], [lo[0], lo[1], hi[2]]] },
+        { n: [1, 0, 0], d: lo[0], ring: [[lo[0], lo[1], lo[2]], [lo[0], hi[1], lo[2]], [lo[0], hi[1], hi[2]], [lo[0], lo[1], hi[2]]] },
+        { n: [-1, 0, 0], d: -hi[0], ring: [[hi[0], lo[1], hi[2]], [hi[0], hi[1], hi[2]], [hi[0], hi[1], lo[2]], [hi[0], lo[1], lo[2]]] },
+        { n: [0, 1, 0], d: lo[1], ring: [[lo[0], lo[1], hi[2]], [hi[0], lo[1], hi[2]], [hi[0], lo[1], lo[2]], [lo[0], lo[1], lo[2]]] },
+        { n: [0, -1, 0], d: -hi[1], ring: [[lo[0], hi[1], lo[2]], [hi[0], hi[1], lo[2]], [hi[0], hi[1], hi[2]], [lo[0], hi[1], hi[2]]] },
+      ];
+      const centre = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2);
+      const radius = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2;
+      const outside = k === 0 ? { zone: 0, leaf: INDEX_NONE } : { zone: rooms[k - 1].zone, leaf: rooms[k - 1].leaf };
+      sides.forEach((s, i) => {
+        const seq = k * 6 + i;                       // position in the whole chain
+        const plane = [s.n[0], s.n[1], s.n[2], s.d];
+        const iSurf = surfs.length;
+        // A real material and lightmap index: the node carries a polygon, so it reaches the section
+        // pass, and both are followed there without a null/-1 check.
+        const up = Math.abs(s.n[2]) > 0.5 ? [1, 0, 0] : [0, 0, 1];
+        surfs.push({
+          material: room.material, polyFlags: room.flags,
+          pBase: points.add(s.ring[0]), vNormal: vectors.add(s.n),
+          vTextureU: vectors.add(up), vTextureV: vectors.add(cross(s.n, up)),
+          iLightMap: INDEX_NONE, actor: 0, plane, lightMapScale: LMS,
+        });
+        const iVertPool = verts.length;
+        for (const p of s.ring) verts.push({ pVertex: points.add(p), iSide: INDEX_NONE });
+        const last = seq === sideCount - 1;
+        nodes.push({
+          plane, zoneMask: [3, 0], nodeFlags: 0,
+          iVertPool, iSurf,
+          iBack: INDEX_NONE, iFront: last ? INDEX_NONE : first + seq + 1, iPlane: INDEX_NONE,
+          iCollisionBound: INDEX_NONE, iRenderBound: INDEX_NONE,
+          sphere: { center: centre, radius },
+          // NumVertices must be a real polygon count, never 0. UModel::LineCheck clips the ray against
+          // the node's polygon and walks Verts(iVertPool .. iVertPool + NumVertices - 1); with 0 that
+          // upper bound is iVertPool - 1, and the read runs off the array. It only faults when a trace
+          // actually reaches this node, which is why the crash was intermittent (~1 in 10) and always
+          // from a trace: Pawn.UpdateEyeHeight -> SingleLineCheck -> UModel::LineCheck.
+          // EVERY node names the leaf on each of its sides, not just the last one in the chain.
+          // The hand-built room in skybox-how-to/Sky_CS.rom hangs its single leaf off the last node
+          // alone, and copying that makes the level vanish by view angle: a static mesh is reached
+          // through the leaf of a node the walk actually visits, so a leaf that hangs off one node
+          // in one corner is found only when the camera looks at that corner. In a real BSP the
+          // geometry IS the tree and one leaf at the end costs nothing; here the geometry is actors.
+          // This is a separate cause from 2.12 and survives it - both had to be fixed.
+          iZone: [outside.zone, room.zone], numVertices: 4,
+          iLeaf: [outside.leaf, room.leaf], keepPolygon: true,
+          iSection: INDEX_NONE, iFirstVertex: 0, iLightMap: INDEX_NONE,
+        });
       });
     });
     rootNode = first;
@@ -783,11 +831,14 @@ function buildModel(map, opts) {
   //   - ULevel::SpawnActor refuses to place the pawn: "Couldn't spawn player ...";
   //   - KFEd's Map Check reports "Navigation point imbedded in level geometry" for every spawn.
   //
-  // NOT for the enclosing box: that one IS a real convex room, and a room says the outside of its
+  // NOT for the box route: those rooms ARE real convex rooms, and a room says the outside of its
   // walls is solid. skybox-how-to/Sky_CS.rom - a room built by hand in the editor - carries
   // iZone [0, 1] on every one of its six nodes, and forcing [1, 1] over it destroys the only
-  // information the traversal has about which side of a wall the viewer is on.
-  for (const n of nodes) { n.iZone = [1, 1]; }
+  // information the traversal has about which side of a wall the viewer is on. It also destroys the
+  // sky: a second zone cannot exist if every node claims zone 1 on both sides. So the box route
+  // keeps its own zoning ONLY when it was asked to build a sky zone - see the leaf pass below for
+  // why that shape is still not the default.
+  if (!(rooms && rooms.length > 1)) for (const n of nodes) { n.iZone = [1, 1]; }
 
   // No shipped map contains a node with NumVertices == 0, so the renderer is not guaranteed to
   // check before following iSection. Split-only nodes get a valid (empty) slot instead of -1.
@@ -806,7 +857,8 @@ function buildModel(map, opts) {
   // after it, so "lights reaching this leaf" is all of them and "volumetric" is empty.
   const lights = [...(opts.lightRefs || []), 0];
   const VOLUMETRIC = lights.length - 1;
-  const leaves = [{ iZone: 1, iPermeating: 0, iVolumetric: VOLUMETRIC, visibleZones: [0xffffffff, 0xffffffff] }];
+  const leaf = (zone) => ({ iZone: zone, iPermeating: 0, iVolumetric: VOLUMETRIC, visibleZones: [0xffffffff, 0xffffffff] });
+  const leaves = rooms ? rooms.map((r) => leaf(r.zone)) : [leaf(1)];
 
   // Every node's open side terminates at that leaf. The renderer reaches a static-mesh actor
   // through the leaf its Region resolves to, so a tree whose iLeaf is INDEX_NONE everywhere draws
@@ -814,12 +866,14 @@ function buildModel(map, opts) {
   // Same exception: the room already points only its LAST node's open side at the leaf, exactly
   // as the hand-built reference does. Every node claiming leaf 0 on both sides is a flat-tree fix.
   //
-  // Measured the hard way: copying the hand-built room in skybox-how-to/Sky_CS.rom exactly - iZone
-  // [0, 1] and the leaf hung off the LAST node alone - made the world vanish almost always instead
-  // of occasionally. A real BSP can afford one leaf at the end of a chain because its geometry IS
-  // the tree; here the geometry is actors, and an actor is only found when the walk reaches a node
-  // that names its leaf. Every node has to name it.
-  for (const n of nodes) n.iLeaf = [0, 0];
+  // Measured three times now, and the last two are not explained by 2.12 - that bug was already
+  // fixed when they were taken. Any shape where a node does NOT claim leaf 0 on BOTH sides brings
+  // back the frames where the world does not draw: hanging the leaf off the last node of the chain
+  // (the hand-built room's shape), and naming the enclosing room's leaf on the back side. Both are
+  // "correct" for a BSP whose geometry is its own surfaces. This level's geometry is actors, and an
+  // actor is reached through the leaf of a node the walk visits, so the leaf has to be everywhere
+  // the walk can land. Whatever else changes here, that stays.
+  if (!(rooms && rooms.length > 1)) for (const n of nodes) n.iLeaf = [0, 0];
 
   // ZoneMask marks which zones live under a node; the renderer uses it to skip whole subtrees.
   // Computed bottom-up so it is exact rather than "all 64 zones".
@@ -836,10 +890,17 @@ function buildModel(map, opts) {
     };
     for (let i = 0; i < nodes.length; i++) visit(i);
   })();
+  // Zone 0 is the null zone (solid). Zone 1 is the level. A sky room, when there is one, is zone 2
+  // and its ZoneActor is the SkyZoneInfo - that is the whole mechanism behind PF_FakeBackdrop: the
+  // renderer draws the contents of the zone whose ZoneActor is a SkyZoneInfo through every backdrop
+  // surface. A backdrop surface with no such zone to project draws solid white.
   const zones = [
     { zoneActor: 0, connectivity: [1, 0], visibility: [0xffffffff, 0xffffffff], lastRenderTime: 0 },
     { zoneActor: opts.zoneInfoRef || 0, connectivity: [2, 0], visibility: [0xffffffff, 0xffffffff], lastRenderTime: 0 },
   ];
+  if (rooms && rooms.length > 1) {
+    zones.push({ zoneActor: opts.skyZoneRef || 0, connectivity: [4, 0], visibility: [0xffffffff, 0xffffffff], lastRenderTime: 0 });
+  }
 
   // Bounds: the box a node's WHOLE SUBTREE occupies, referenced by iRenderBound.
   //
@@ -896,14 +957,17 @@ function buildModel(map, opts) {
     vectors: vectors.list, points: points.list, nodes, surfs, verts,
     numSharedSides: 0, zones, polys: opts.polysRef || 0,
     bounds, leafHulls, leaves, lights,
-    // RootOutside says what the space OUTSIDE the tree is. A shipped map carves its whole playable
-    // volume out of solid and can leave this 0; this converter's tree is a token box, so with 0 the
-    // engine calls everything beyond it solid - and from a viewpoint it calls solid, the renderer
-    // draws no world at all. KF_ROOT_OUTSIDE=0 puts the old value back.
-    rootOutside: process.env.KF_ROOT_OUTSIDE === "0" ? 0 : 1, linked: 0, sections, lightMaps, lightMapTextures: [],
+    // RootOutside says what the space OUTSIDE the tree is: 0 = solid rock, 1 = open air. Every
+    // shipped map and every hand-built port carries 0, and that is not decoration - it is the
+    // premise the editor's CSG works from. bspBrushCSG filters a subtract brush's polygons through
+    // the world tree, and subtracting air from air produces nothing: Build Geometry composed our
+    // one brush (measured: bspBrushCSG entered once) and came back with an empty model, every time.
+    // KF_ROOT_OUTSIDE forces either value.
+    rootOutside: process.env.KF_ROOT_OUTSIDE !== undefined ? +process.env.KF_ROOT_OUTSIDE : 0,
+    linked: 0, sections, lightMaps, lightMapTextures: [],
   };
 
   return { model, atlasPages: pageRGB, atlasSize: ATLAS, stats };
 }
 
-module.exports = { buildModel, PF, INDEX_NONE };
+module.exports = { buildModel, worldBox, PF, INDEX_NONE };

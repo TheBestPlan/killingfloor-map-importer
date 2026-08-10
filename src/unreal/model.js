@@ -104,11 +104,16 @@ function emptyModel(pkg, polysRef, opts) {
     bbox,
     bsphere: { center: [0, 0, 0], radius: o.bbox ? Math.hypot(...bbox.max) : 0 },
     vectors: [], points: [], nodes: [], surfs: [], verts: [],
-    numSharedSides: 0, zones: [], polys: polysRef || 0,
+    // A brush model with an INVALID bounding box is invisible to the editor's CSG: every shipped
+    // brush, in stock maps and hand-built ports alike, carries a real box with IsValid = 1 and
+    // NumSharedSides = 4 (GOTCHAS 2.13).
+    numSharedSides: o.numSharedSides || 0, zones: [], polys: polysRef || 0,
     bounds: [], leafHulls: [], leaves: [], lights: [],
     // A brush model's shape lives entirely in its Polys - every shipped brush model has zero nodes
     // and rootOutside 1. Leave rootOutside at 0 and the volume encloses nothing.
-    rootOutside: o.rootOutside || 0, linked: 0, sections: [], lightMaps: [], lightMapTextures: [],
+    // Linked = 1 says the polys already carry valid iLink values; the hand-built CS ports set it on
+    // every CSG brush, and with 0 the editor relinks them on load.
+    rootOutside: o.rootOutside || 0, linked: o.linked || 0, sections: [], lightMaps: [], lightMapTextures: [],
   });
 }
 

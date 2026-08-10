@@ -9,7 +9,11 @@ const { Writer, Props } = require("./writer");
 const TAG = 0x9e2a83c2;
 const FILE_VERSION = 128;
 const LICENSEE_VERSION = 29;
-const PKG_FLAGS = 0x21;
+// PKG_AllowDownload, and nothing else. Every shipped Killing Floor map and every hand-built CS port
+// carries exactly 0x00000001; this writer shipped 0x21 for a long time and the extra bit is not one
+// the engine documents. It is also the ONE byte test/repack.js could never reproduce on a shipped
+// map - the difference was known and shrugged off. See GOTCHAS 1.7.
+const PKG_FLAGS = 0x00000001;
 const NAME_FLAGS = 0x00070010;
 
 const RF = {

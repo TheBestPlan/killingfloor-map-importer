@@ -36,6 +36,19 @@ after the array is written, not computed as a length.
 Not an Unreal gotcha, but it silently disabled the default `geometry` mode for a whole debugging
 round: `Object.assign({}, DEFAULTS, {geometry: undefined})` yields `geometry: undefined`.
 
+### 1.7 `packageFlags` is 0x00000001, and the extra bit is not cosmetic
+Every shipped Killing Floor map, and every hand-built CS port, carries exactly `PKG_AllowDownload`:
+
+    KF-Farm, KF-Crash, KF-CS-AIM-Headshot-KFN, KF-CS-33-Comity-KFN   packageFlags 0x00000001
+    this writer, for a long time                                     packageFlags 0x00000021
+
+0x20 is not a flag the engine documents. It was also the single byte `test/repack.js` could never
+reproduce when rebuilding a shipped map - the difference was measured, written down as "one byte
+(packageFlags)", and treated as noise for months. It is the first thing to suspect when the editor
+loads a map and then refuses to do something to it: the whole package is described by this word,
+so a wrong bit disqualifies everything inside it at once, with no error and nothing wrong in any
+individual object.
+
 ---
 
 ## 2. UModel (the world BSP)
@@ -88,12 +101,36 @@ A node with `NumVertices = 0` and an empty `Verts` array reads off the front of 
 A node plane at `z = -1e6` produced a level that loaded, spawned and collided correctly and
 rendered pure black. Keep every plane, vertex and bound inside the world extent.
 
-### 2.8 `RootOutside` and `Linked` are 0 in every shipped map
-Do not "fix" them to 1.
+### 2.8 SOLVED: `RootOutside = 0` is what makes the editor able to rebuild the map at all
+`RootOutside` says what the space OUTSIDE the tree is: **0 = solid rock, 1 = open air**. Every
+shipped map and every hand-built CS port carries 0, and this converter carried 1 for months because
+1 looked like the safe value for a token box.
 
-### 2.9 The `UPrimitive` bounding box of the world model is empty in shipped maps
-`valid = 0`, all zeros; the engine derives it. Filling it in was the only field that differed on the
-byte-exact repack test.
+It is the premise the editor's CSG works from. `bspBrushCSG` subtracts a brush by filtering its
+polygons through the world tree, and **subtracting air from air produces nothing**: Build Geometry
+walked to our brush, entered `bspBrushCSG` exactly once (measured with an in-process call counter),
+and came back with an empty model - no error, no warning, nothing in the log. With 0 the same brush
+carves the room and the editor rebuilds the level correctly.
+
+Two things follow from shipping 0, both measured in the game:
+
+- Everything beyond the room is now solid, so an actor out there sits in zone 0 and the renderer
+  skips it. The skybox cube is parked at 6x the level radius (5.17a) - far outside the level's own
+  bounds - so the room has to be grown to hold it or the sky comes out flat grey.
+- The earlier note that 0 "makes the renderer draw no world at all" was wrong. It was measured while
+  `iRenderBound`, the zone/leaf layout and the sky were all being changed at once (2.12), and the
+  blame landed on the wrong field.
+
+`Linked` is 0 in shipped world models; brush models carry 1. `KF_ROOT_OUTSIDE` forces either value.
+
+### 2.9 The world model's bounding box is empty, a BRUSH model's must not be
+For the world model, `valid = 0` and all zeros is what shipped maps carry; the engine derives it,
+and filling it in was the only field that differed on the byte-exact repack test.
+
+A brush's model is the opposite: every subtract brush in KF-Farm, KF-Crash, KF-Aperture and the
+hand-built CS ports carries a real box with `IsValid = 1`, a real bounding-sphere radius and
+`NumSharedSides = 4`. Ours shipped zeros with `valid = 0` - a brush that declares it occupies
+nowhere - and anything that culls by bounds drops it silently.
 
 ### 2.10 UModel::LineCheck walks Verts for every node it visits
 A node with `NumVertices = 0` makes that walk address `Verts(iVertPool - 1)`. It only faults when
@@ -831,6 +868,92 @@ state (a viewport labelled "Texture Use" draws wireframe by design), so "it look
 mode, not the map. Killing KFEd with `Stop-Process` corrupts `unrealed.ini`; the symptom is a
 white viewport on EVERY map including stock ones, and the fix is to restore it from
 `DefUnrealEd.ini`.
+
+### 7.10a READ THE LOGS FIRST - `System/Editor.log` and `System/KillingFloor.log`
+Both the editor and the game write a running log next to the executable, and both say plainly what
+a screenshot can only hint at. Check them BEFORE theorising about a symptom, and check them again
+after every attempt:
+
+- `System/Editor.log` - every KFEd command and what it did. `Cmd: MAP LOAD FILE=...` marks a map
+  being opened, `Cmd: MAP REBUILD` / `Cmd: BSP REBUILD` a Build Geometry, `Cmd: LIGHT APPLY` a
+  lighting build, `Cmd: PATHS DEFINE` a paths build. The lines that matter for a converted map:
+  `BspValidateBrush linked N of M polys` (the BUILDER brush, Actors(1) - `0 of 0` means it ships
+  empty, which no shipped map does) and `bspBuild built N convex polys into M nodes` (what the
+  rebuild actually composed - `0 convex polys into 0 nodes` means not one brush qualified). A
+  working map on the same install reads `bspBuild built 402 convex polys into 504 nodes`, so the
+  number is also the proof that Build works at all here (7.0).
+- `System/KillingFloor.log` - the same for the game; `Critical:` lines are what `test/render-test.ps1`
+  rules on.
+
+The log is rewritten per session, so read it right after the run that is being diagnosed. Three
+rounds of guessing at brush fields were spent before this file was opened; it answered in one line.
+
+### 7.10b KFEd overwrites the map you are testing, and the log does not always say so
+A Build that fails leaves the level broken IN MEMORY; saving then writes that over the `.rom`. On a
+converted map the tell is the world model collapsing to 72 bytes - `0 nodes, 0 surfs, 0 zones,
+0 leaves` - while every `--verify` invariant still passes, because an empty model violates none of
+them. The file also shrinks (13.42 MB -> 13.28 MB on cs_assault).
+
+`Editor.log` is rewritten per launch, so a save from an earlier KFEd session leaves no trace at all:
+two maps had been silently replaced this way and several rounds of "still broken after your fix"
+were measured against a file the editor had already mangled.
+
+Before reading anything into an editor result, check the map on disk is still the converter's:
+
+    node -e "const R=require('./src/unreal/read');const p=R.load(F);
+             const m=R.readModel(p,R.findWorldModel(p));console.log(m.nodes.length)"
+
+and rebuild it if not. Tell the user to save experiments under a NEW name, never over the map.
+
+### 7.10c What KFEd's Build Geometry actually does, decompiled
+Guessing at this cost days. The code is in `System/Editor.dll` and `System/Engine.dll` and can be
+read directly - `pefile` + `capstone` are enough, and the log format strings are the anchors that
+locate the functions ("Rebuilding geometry", "bspBuild built %i convex polys into %i nodes").
+
+Build Geometry issues `Cmd: MAP REBUILD`. Its handler (Editor.dll `0x1024e240` at the shipped image
+base) resets the transaction buffer with "rebuilding map", clears a bit on the LevelInfo, calls
+`AActor::ClearRenderData` on every actor, then `UEditorEngine::csgRebuild(Level)` (`0x10231620`):
+
+    GWarn->BeginSlowTask("Rebuilding geometry")
+    Level->Model->EmptyModel(1,1)
+    for( actor : TStaticBrushIterator(Level) )          // 0x10230550
+        if( bOnlyVisible && actor->IsHiddenEd() ) continue
+        if( actor == Level->Brush() ) continue          // Level->Brush() IS Actors(1)
+        if( (PolyFlags & PF_Semisolid) && CsgOper==CSG_Add && !(PolyFlags & 0x4000000) ) continue
+        bspBrushCSG( actor, Level->Model, PolyFlags, CsgOper, 0, 1, 1 )
+
+The iterator yields only actors that pass `AActor::IsStaticBrush()` (Engine.dll `0x103250e0`):
+
+    Brush != NULL  &&  IsABrush()  &&  bStatic  &&  !IsAVolume()
+
+`Brush` is the UModel at actor offset `+0x25C`; `bStatic` is bit `0x200` of the first bool word at
+`+0x6C` (the tenth bool declared in `Actor.uc`). The virtuals are vtable `+0x1A4` = `ABrush::IsABrush`
+and `+0x1AC` = `AActor::IsAVolume`, read out of `??_7ABrush@@6B@`.
+
+`bOnlyVisible` is `GRebuildTools.GetCurrent()->[+0x10] & 0x10`, which comes from `unrealed.ini`
+`[Rebuild Configs] Config0=Default,15,2,79,70,7`; the FString name occupies the first 12 bytes, so
+`+0x10` is the SECOND number and the bit is clear - the visibility gate is off by default.
+
+`bspBrushCSG` (`0x1022c4d0`) returns immediately when the brush's `Brush` model is NULL, before it
+logs anything.
+
+Reading the code was not enough on its own - every field it tests looked correct in our `.rom`. What
+settled it was watching the running editor:
+
+- `DebugActiveProcess` is refused on this machine (ERROR_INVALID_PARAMETER), so the editor was read
+  with `OpenProcess` + `ReadProcessMemory` instead. `?GEditor@@3PAVUEditorEngine@@A` is exported by
+  `Editor.dll`; from it, `GEditor+0x114` is the `ULevel`, `Level+0x30/0x34` the actor array,
+  `Level+0x90` the world model. An actor is an `ABrush` when its vtable equals `??_7ABrush@@6B@`.
+- Call counts came from detours: allocate RWX memory in the target, write `inc [counter]` plus the
+  original prologue bytes plus a jump back, and patch the function's first bytes to jump there.
+  Take the prologue length from a disassembler - counting bytes by eye cut `mov eax,[esi+0x25c]` in
+  half and took KFEd down with a GPF.
+- The numbers: `IsStaticBrush` 2258 calls, `bspBrushCSG` **1** call on our map and 9 on the
+  hand-built port. The brush was never being skipped; the CSG simply had nothing to cut. See 2.8.
+
+`UModel` in memory, useful for this kind of check: `+0x58` `Polys*`, then TTransArrays of 16 bytes
+(Data, Num, Max, Owner-is-the-model) - `+0x5C` Nodes, `+0x6C` Verts, `+0x7C` Vectors, `+0x8C`
+Points, `+0x9C` Surfs - and `+0x10C` RootOutside.
 
 ### 7.11 The harness is beside the converter, not inside it
 `harness/play.ps1` (launch, drive, shoot, convert, report), `harness/bmp2png.js` (BMP reader + PNG

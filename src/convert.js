@@ -14,7 +14,7 @@ const { writeModel, emptyModel, emptyPolys } = require("./unreal/model");
 const { writePolys, boxPolys, boxBrushModel } = require("./unreal/polys");
 const { addTexture, addRgbTexture, sanitizeName } = require("./unreal/texture");
 const { loadSkybox, SIDES } = require("./goldsrc/skybox");
-const { buildModel } = require("./build/model");
+const { buildModel, worldBox } = require("./build/model");
 const { buildMeshes } = require("./build/mesh");
 const { buildSkyboxMesh, faceCorners } = require("./build/skyboxmesh");
 const { orientSkybox } = require("./build/skyboxorient");
@@ -115,6 +115,13 @@ function convert(opts) {
   const log = o.log || (() => { });
   const t0 = Date.now();
 
+  // --bare: the level scaffolding and nothing else - LevelInfo, the builder brush, the world's
+  // subtract brush, the physics volume, the zone, the spawns, the world model. No meshes, no
+  // textures, no lights, no props. It exists to bisect KFEd's Build Geometry, which composes every
+  // brush of a shipped map and not one of ours (GOTCHAS 7.10a): strip until it starts composing,
+  // then add back. A converted map is not playable in this mode.
+  if (o.bare) { o.noExtras = true; o.noLight = true; o.noSky = true; o.brushEntities = false; }
+
   const map = bspReader.load(o.bspFile);
   const baseName = path.basename(o.bspFile).replace(/\.bsp$/i, "");
   const mapName = o.mapName || ("KF-" + sanitizeName(baseName));
@@ -187,7 +194,7 @@ function convert(opts) {
     else { src = wads.get(mt.name); if (src && src.mips) wadTex++; else src = null; }
     if (!src || !src.mips) { src = placeholderMiptex(mt.name); missingTex++; }
     const kind = mt.kind;
-    if (kind === "tool") { texByMiptex.set(idx, { ref: 0, kind, name: mt.name, width: mt.width, height: mt.height }); continue; }
+    if (kind === "tool" || o.bare) { texByMiptex.set(idx, { ref: 0, kind, name: mt.name, width: mt.width, height: mt.height }); continue; }
     if (o.stockTexture) {
       texByMiptex.set(idx, { ref: stockTexRef, kind, name: mt.name, width: 256, height: 256, uScale: 256 / mt.width, vScale: 256 / mt.height });
       texByRef.set(stockTexRef, { width: 256, height: 256 });
@@ -270,6 +277,13 @@ function convert(opts) {
   const ACTOR_ED = RF.EDITOR_ONLY | RF.HasStack;
   const holder = {};
 
+  // KFEd names an object after its class plus a running number - StaticMeshActor11, KFUseTrigger0 -
+  // and so does every shipped map. Invented names (GeoMesh11, DoorTrigger3) say nothing the class
+  // does not and break the editor's own ordering. Asset objects keep descriptive names, the way a
+  // mapper names an imported mesh; only actors and their per-instance helpers are numbered.
+  const nameCount = new Map();
+  const named = (cls) => { const n = nameCount.get(cls) || 0; nameCount.set(cls, n + 1); return cls + n; };
+
   // Where the map came from and when. These fields live on BOTH objects in every shipped map, and
   // the two are read by different things: KFEd's Level Properties shows the copy on LevelInfo,
   // while the menus read the standalone LevelSummary without loading the level. Writing only one
@@ -304,7 +318,9 @@ function convert(opts) {
       if (holder.killZ !== undefined) pr.float("KillZ", holder.killZ);
       if (holder.starts && holder.starts.length) pr.object("NavigationPointList", holder.starts[0]);
       // Same three as ZoneInfo0, for when the HUD reads the LevelInfo instead - see there for why.
-      {
+      // --bare drops every KF-specific field here: the hand-built ports carry none of them, and the
+      // point of that mode is to leave only what a working map is known to need.
+      if (!o.bare) {
         const fog = holder.fogColor || [76, 76, 76];
         pr.bool("bDistanceFog", true);
         pr.bool("bClearToFogColor", true);
@@ -318,26 +334,48 @@ function convert(opts) {
       // (HUDKillingFloor.DrawHud) between the world render and the first-person weapon, so bloom
       // lands on the world alone - which is the shape of the white flash. The engine defaults are
       // BloomRatio 0.5 / min 0 / max 0.5 and every shipped level overrides them; ours set none.
-      pr.float("BloomRatio", 1);
-      pr.float("BloomRatioMinimum", 0.2);
-      pr.float("BloomRatioMaximum", 0.5);
-      pr.float("BloomContrast", 1);
-      pr.float("BloomBlurMult", 1);
+      if (!o.bare) {
+        pr.float("BloomRatio", 1);
+        pr.float("BloomRatioMinimum", 0.2);
+        pr.float("BloomRatioMaximum", 0.5);
+        pr.float("BloomContrast", 1);
+        pr.float("BloomBlurMult", 1);
+      }
       pr.actorCommon(levelInfoRef, holder.physVolRef, "LevelInfo");
       pr.end();
       return w;
     },
   });
 
-  const brushPolysRef = pkg.addExport({ classRef: refs.Polys, name: "BrushPolys", flags: RF.EDITOR_ONLY, serialize: (p) => emptyPolys(p) });
-  const brushModelRef = pkg.addExport({ classRef: refs.Model, name: "BrushModel", flags: RF.EDITOR_ONLY, serialize: (p) => emptyModel(p, brushPolysRef) });
+  // The red builder brush, Actors(1). It is not level geometry, but it is not scratch either: the
+  // editor treats it as the working brush and validates it on load, and every shipped map carries a
+  // real 256-unit cube in it - the shape CubeBuilder leaves behind. Ours shipped an EMPTY one, and
+  // the editor said so on every load ("BspValidateBrush linked 0 of 0 polys") right before a
+  // rebuild that composed nothing: "bspBuild built 0 convex polys into 0 nodes". Shipped builder
+  // brushes also carry no CsgOper at all, so it stays at the class default (CSG_Active).
+  const BUILDER = 256;
+  const builderPolys = boxPolys([-BUILDER, -BUILDER, -BUILDER], [BUILDER, BUILDER, BUILDER]);
+  const brushPolysRef = pkg.addExport({
+    classRef: refs.Polys, name: "BrushPolys", flags: RF.EDITOR_ONLY,
+    serialize: (p) => writePolys(p, builderPolys.map((poly, i) => Object.assign(poly, { texture: hideTexRef, iLink: i }))),
+  });
+  const brushModelRef = pkg.addExport({
+    classRef: refs.Model, name: "BrushModel", flags: RF.EDITOR_ONLY,
+    serialize: (p) => emptyModel(p, brushPolysRef, {
+      rootOutside: 1, linked: 1, numSharedSides: 4,
+      bbox: { min: [-BUILDER, -BUILDER, -BUILDER], max: [BUILDER, BUILDER, BUILDER], valid: 1 },
+    }),
+  });
   const brushRef = pkg.addExport({
-    classRef: refs.Brush, name: "Brush", flags: ACTOR_ED,
+    // Named like any other actor. It used to be called literally "Brush", which is the name the
+    // editor gives the BUILDER BRUSH'S MODEL - in the hand-built ports the only object called
+    // "Brush" is a UModel, and in the stock maps there is none at all. An actor squatting on that
+    // name is the one structural difference left between our maps and theirs.
+    classRef: refs.Brush, name: named("Brush"), flags: ACTOR_ED,
     serialize: (p) => {
       const w = new Writer(192);
       writeStateFrame(w, refs.Brush);
       const pr = p.props(w);
-      pr.byte("CsgOper", 2);                      // CSG_Subtract, as the red builder brush ships
       pr.actorCommon(levelInfoRef, holder.physVolRef, "Brush");
       pr.vector("Location", [0, 0, 0]);
       pr.object("Brush", brushModelRef);
@@ -345,6 +383,110 @@ function convert(opts) {
       return w;
     },
   });
+
+  // The subtract that makes the level a place instead of solid rock. The BSP this converter ships
+  // already IS this box, but the box was never backed by a brush, so KFEd had nothing to rebuild
+  // from: Build Geometry threw the world away and Map Check reported every spawn "imbedded in
+  // level geometry". One CSG_Subtract brush over the same box makes a rebuild reproduce what was
+  // shipped. Brush polys are in brush-local space; Location carries the box where it belongs.
+  const box = worldBox(map, o.scale);
+
+  // The skybox cube has to live INSIDE that room. RootOutside is 0, so everything beyond the room
+  // is solid rock and an actor out there is in zone 0 - the renderer skips it and the sky comes out
+  // flat grey. The cube sits at 6x the level radius to kill parallax (see the skybox block below),
+  // which is far outside the level's own bounds, so the room is grown to hold it.
+  const skyCubeCentre = [0, 1, 2].map((a) => (skyExtent[0][a] + skyExtent[1][a]) / 2);
+  const skyCubeHalf = (() => {
+    const h = [0, 1, 2].map((a) => (skyExtent[1][a] - skyExtent[0][a]) / 2);
+    return +process.env.KF_SKY_R || Math.max(12000, Math.min(30000, Math.hypot(h[0], h[1], h[2]) * 6));
+  })();
+  if (!o.noSky) {
+    const room = 512;                                  // air between the cube and the room's walls
+    for (const a of [0, 1, 2]) {
+      box.min[a] = Math.min(box.min[a], skyCubeCentre[a] - skyCubeHalf - room);
+      box.max[a] = Math.max(box.max[a], skyCubeCentre[a] + skyCubeHalf + room);
+    }
+  }
+
+  const csgBrushes = [];
+  const subtractBox = (b, face) => {
+    const half = [0, 1, 2].map((a) => (b.max[a] - b.min[a]) / 2);
+    const centre = [0, 1, 2].map((a) => (b.max[a] + b.min[a]) / 2);
+    const skin = face || { texture: hideTexRef, polyFlags: 0 };
+    // Everything here is matched field for field against the subtract brushes in KF-Crash, KF-Farm
+    // and KF-Aperture, because the editor is the only thing that reads it and it is unforgiving:
+    //   - each poly carries its own iLink and a real texture (a NULL material is a Map Check error);
+    //   - the brush's Model holds NO BSP, only the Polys. Shipped brush models are 0 nodes /
+    //     0 surfs / rootOutside 1 - the editor builds the brush's tree itself, and handing it a
+    //     stale one of ours is how the first attempt at this left the rebuilt world solid.
+    //     boxBrushModel is the opposite case, a Volume, whose shape IS its BSP.
+    //   - MainScale and PostScale are written explicitly, exactly as every shipped brush does.
+    const polysRef = pkg.addExport({
+      classRef: refs.Polys, name: named("Polys"), flags: RF.EDITOR_ONLY,
+      serialize: (p) => writePolys(p, boxPolys(half.map((v) => -v), half).map((poly, i) =>
+        Object.assign(poly, { texture: skin.texture, polyFlags: skin.polyFlags, iLink: i }))),
+    });
+    const modelRef = pkg.addExport({
+      classRef: refs.Model, name: named("Model"), flags: RF.EDITOR_ONLY,
+      serialize: (p) => emptyModel(p, polysRef, {
+        rootOutside: 1, linked: 1, numSharedSides: 4,
+        bbox: { min: half.map((v) => -v), max: half, valid: 1 },
+      }),
+    });
+    csgBrushes.push(pkg.addExport({
+      classRef: refs.Brush, name: named("Brush"), flags: ACTOR_ED,
+      serialize: (p) => {
+        const w = new Writer(256);
+        writeStateFrame(w, refs.Brush);
+        const pr = p.props(w);
+        pr.byte("CsgOper", 2);                      // CSG_Subtract
+        // csgRebuild walks the level with a TStaticBrushIterator, which skips everything that fails
+        // AActor::IsStaticBrush() - decompiled from Engine.dll: Brush != NULL && IsABrush() &&
+        // bStatic && !IsAVolume(). Brush.uc defaults bStatic to True, so this should be redundant;
+        // it is written because bStatic is the only one of the four this converter cannot verify by
+        // reading its own output, and a brush the iterator skips is composed by nothing.
+        pr.bool("bStatic", true);
+        // end() writes the None that terminates the struct's own tagged block. The engine reads a
+        // struct's properties until it finds that name, not until the declared size runs out, so
+        // leaving it off makes it read past the struct and the whole object comes up one byte long:
+        // "Brush myLevel.Brush0: Serial size mismatch: Got 124, Expected 123".
+        const identity = (ip) => { ip.vector("Scale", [1, 1, 1]); ip.float("SheerRate", 0); ip.byte("SheerAxis", 5); ip.end(); };
+        pr.structBlock("MainScale", "Scale", identity);
+        pr.structBlock("PostScale", "Scale", identity);
+        // Zone is a ZoneInfo, and the hand-built CS ports point it at the level's ZoneInfo0, not at
+        // the LevelInfo the way actorCommon defaults to. ZoneNumber 1 is the level's zone.
+        pr.actorCommon(levelInfoRef, holder.physVolRef, "Brush", 1, holder.zoneInfoRef);
+        pr.vector("Location", centre);
+        pr.object("Brush", modelRef);
+        pr.end();
+        return w;
+      },
+    }));
+  };
+  // The room's six walls carry the sky texture and PF_FakeBackdrop - measured on the hand-built CS
+  // ports (KF-CS-AIM-Headshot-KFN's Brush8: six polys, flags 0x80, texture SkyTex), and the same
+  // thing the mapper's screenshot shows with "Fake Backdrop" ticked. The brush is editor-only, so
+  // this decides what KFEd draws on the walls, not what the game does.
+  subtractBox(box, { texture: (skySides.up && skySides.up.texRef) || hideTexRef, polyFlags: 0x80 });
+
+  // The sky room: a second, small carve in the air the world box leaves around the level. What is
+  // inside it - the skybox mesh and a SkyZoneInfo - is what the engine draws through every
+  // PF_FakeBackdrop surface, at infinity and with no parallax. It has to be nested inside the world
+  // box rather than parked off in the void: the tree that reaches it is a chain of the world's own
+  // planes, so a point beyond them is solid rock and the walk never gets there.
+  const SKY_ROOM_HALF = 3000;
+  const skyRoomCentre = [0, 1, 2].map((a) => box.min[a] + SKY_ROOM_HALF + 512);
+  const skyRoomBox = {
+    min: skyRoomCentre.map((v) => v - SKY_ROOM_HALF),
+    max: skyRoomCentre.map((v) => v + SKY_ROOM_HALF),
+  };
+  // OPT-IN, and off by default: the canonical KF sky needs the world's walls to be PF_FakeBackdrop
+  // and the sky room to be its own zone, which means the box route can no longer flatten every
+  // node's zone and leaf. Shipping that flattening is the only shape measured to render reliably;
+  // every attempt at the zoned shape so far brings back the frames where the world does not draw
+  // (GOTCHAS 2.12 for the symptom). KF_SKY_ZONE=1 builds it anyway, to keep working on it.
+  const skyBackdrop = !o.noSky && !!process.env.KF_SKY_ZONE;
+  if (skyBackdrop) subtractBox(skyRoomBox);
 
   const worldPolysRef = pkg.addExport({ classRef: refs.Polys, name: "WorldPolys", flags: RF.GAME, serialize: (p) => emptyPolys(p) });
   const physVolRef = pkg.addExport({
@@ -363,7 +505,7 @@ function convert(opts) {
 
   // Zone 1 needs a real ZoneInfo actor. Every shipped map has one, and without it the renderer
   // draws the BSP but skips every actor in the zone - including all of the level's static meshes.
-  const zoneInfoRef = pkg.addExport({
+  const zoneInfoRef = holder.zoneInfoRef = pkg.addExport({
     classRef: refs.ZoneInfo, name: "ZoneInfo0", flags: ACTOR,
     serialize: (p) => {
       const w = new Writer(192);
@@ -431,7 +573,7 @@ function convert(opts) {
       const min = Math.min(rgb[0], rgb[1], rgb[2]);
       const hue = hueOf(rgb, maxc, min);
       const ref = pkg.addExport({
-        classRef: refs.Light, name: "Light" + lightRefs.length, flags: ACTOR,
+        classRef: refs.Light, name: named("Light"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(224);
           writeStateFrame(w, refs.Light);
@@ -469,7 +611,7 @@ function convert(opts) {
     const yawDeg = parseFloat((e.angles || "0 0 0").split(/\s+/)[1]) || 0;
     const rot = [Math.round((pitchDeg / 360) * 65536), Math.round((-yawDeg / 360) * 65536), 0];
     sunRefs.push(pkg.addExport({
-      classRef: refs.Light, name: "Sunlight" + sunRefs.length, flags: ACTOR,
+      classRef: refs.Light, name: named("Light"), flags: ACTOR,
       serialize: (p) => {
         const w = new Writer(256);
         writeStateFrame(w, refs.Light);
@@ -514,15 +656,15 @@ function convert(opts) {
     const half = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
     const idx = waterVols.length;
     const polysRef = pkg.addExport({
-      classRef: refs.Polys, name: "WaterPolys" + idx, flags: RF.GAME,
+      classRef: refs.Polys, name: named("Polys"), flags: RF.GAME,
       serialize: (p) => writePolys(p, boxPolys(half.map((v) => -v), half)),
     });
     const modelRef = pkg.addExport({
-      classRef: refs.Model, name: "WaterBrush" + idx, flags: RF.GAME,
+      classRef: refs.Model, name: named("Model"), flags: RF.GAME,
       serialize: (p) => writeModel(p, Object.assign(boxBrushModel(half.map((v) => -v), half), { polys: polysRef })),
     });
     waterVols.push(pkg.addExport({
-      classRef: refs.PhysicsVolume, name: "WaterVolume" + idx, flags: ACTOR,
+      classRef: refs.PhysicsVolume, name: named("PhysicsVolume"), flags: ACTOR,
       serialize: (p) => {
         const w = new Writer(320);
         writeStateFrame(w, refs.PhysicsVolume);
@@ -586,7 +728,7 @@ function convert(opts) {
       const drawScale = (parseFloat(e.scale) || 1) * o.scale * hit.unit;
       const glow = e.renderamt === undefined ? 1 : Math.max(0.05, (parseFloat(e.renderamt) || 255) / 255);
       spriteActors.push(pkg.addExport({
-        classRef: refs.Effects, name: "Sprite" + spriteActors.length, flags: ACTOR,
+        classRef: refs.Effects, name: named("Effects"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(256);
           writeStateFrame(w, refs.Effects);
@@ -645,7 +787,7 @@ function convert(opts) {
             serialize: (p) => buildMeshExport(p, built),
           }),
           instRef: pkg.addExport({
-            classRef: refs.StaticMeshInstance, name: "propLight" + cache.size,
+            classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"),
             flags: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
             serialize: (p) => buildMeshInstance(p, built),
           }),
@@ -664,7 +806,7 @@ function convert(opts) {
       const deg = (d) => Math.round(((d || 0) / 360) * 65536);
       const rot = [deg(isFinite(ang[0]) ? ang[0] : 0), deg(-((yawDeg || 0) + 90)), deg(isFinite(ang[2]) ? ang[2] : 0)];
       propActors.push(pkg.addExport({
-        classRef: refs.StaticMeshActor, name: "Prop" + propActors.length, flags: ACTOR,
+        classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(288);
           writeStateFrame(w, refs.StaticMeshActor);
@@ -717,7 +859,7 @@ function convert(opts) {
       }
       const yaw = e._at && spawnAt && spawnAt.length > 3 ? Math.round((spawnAt[3] / 360) * 65536) & 0xffff : angleToYaw(e);
       starts.push(pkg.addExport({
-        classRef: refs.PlayerStart, name: "PlayerStart" + i, flags: ACTOR,
+        classRef: refs.PlayerStart, name: named("PlayerStart"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(160);
           writeStateFrame(w, refs.PlayerStart);
@@ -752,7 +894,11 @@ function convert(opts) {
     classRef: refs.Model, name: "WorldModel", flags: RF.GAME,
     serialize: (p) => {
       const r = buildModel(map, {
-        scale: o.scale, lightMapScale: o.lightMapScale,
+        scale: o.scale, lightMapScale: o.lightMapScale, worldBox: box,
+        // The world's walls become the sky, and the sky room is what shows through them.
+        skyBackdrop2: skyBackdrop && !!holder.skyZoneRef,
+        skyMaterialRef: (skySides.up && skySides.up.texRef) || 0,
+        skyRoomBox: holder.skyZoneRef ? skyRoomBox : null, skyZoneRef: holder.skyZoneRef,
         texByMiptex, texByRef, levelRef: built.levelRef, polysRef: worldPolysRef, zoneInfoRef,
         emptyWorld: !!o.emptyWorld, minimalWorld: o.geometry === "mesh" && o.minimalWorld !== false, hideMaterialRef: hideTexRef, lightRefs,
         // On the mesh route the sky is a separate skybox mesh, so the BSP must hide its sky faces
@@ -792,7 +938,7 @@ function convert(opts) {
   // whose content is only BSP looks empty there. In the game these currently render unlit (black),
   // which is why the BSP stays visible unless --geometry mesh is asked for. See ../docs/GOTCHAS.md.
   const meshActors = [];
-  if (o.geometry !== "bsp") {
+  if (o.geometry !== "bsp" && !o.bare) {
     // Doors and breakable glass become actors of their own; everything else merges into the world.
     const special = o.noExtras ? [] : brushEnts.collect(map);
     const separate = new Map(special.map((s, i) => [s.mi, i]));
@@ -847,7 +993,7 @@ function convert(opts) {
       // Baked GoldSrc light rides in as the instance's per-vertex colours: that is where KF keeps
       // static-mesh lighting, and a level with no Light actors renders its meshes black without it.
       const instRef = pkg.addExport({
-        classRef: refs.StaticMeshInstance, name: "GeoLight" + i,
+        classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"),
         flags: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
         serialize: (p) => buildMeshInstance(p, mesh),
       });
@@ -865,7 +1011,7 @@ function convert(opts) {
           const half = [0, 1, 2].map((k) => (mesh.bbox.max[k] - mesh.bbox.min[k]) / 2);
           const reach = Math.max(96, Math.hypot(half[0], half[1]) + 48);
           meshActors.push(pkg.addExport({
-            classRef: refs.UseTrigger, name: "DoorTrigger" + mesh.ent, flags: ACTOR,
+            classRef: refs.UseTrigger, name: named("KFUseTrigger"), flags: ACTOR,
             serialize: (p) => {
               const w = new Writer(256);
               writeStateFrame(w, refs.UseTrigger);
@@ -884,7 +1030,7 @@ function convert(opts) {
           }));
         }
         meshActors.push(pkg.addExport({
-          classRef: cls, name: (isDoor ? "Door" : "Glass") + mesh.ent + "_" + i, flags: ACTOR,
+          classRef: cls, name: named(isDoor ? "KFDoorMover" : "KFGlassMover"), flags: ACTOR,
           serialize: (p) => {
             const w = new Writer(384);
             writeStateFrame(w, cls);
@@ -928,7 +1074,7 @@ function convert(opts) {
         return;
       }
       meshActors.push(pkg.addExport({
-        classRef: refs.StaticMeshActor, name: "GeoMesh" + i, flags: ACTOR,
+        classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(256);
           writeStateFrame(w, refs.StaticMeshActor);
@@ -975,28 +1121,41 @@ function convert(opts) {
     meshBuild.meshes.forEach((m, i) => log("  geo" + i + ": " + m.vertices.length + " verts, " +
       (m.indices.length / 3) + " tris, " + m.sections.length + " sections"));
 
-    // The sky, the way Killing Floor builds one: a SMALL room parked away from the level with a
-    // SkyZoneInfo at its centre. The renderer draws that room from the SkyZoneInfo's position using
-    // the player's rotation, through every BSP surface flagged PF_FakeBackdrop - so it sits at
-    // infinity, has no parallax, never intersects anything and is never clipped. Every shipped map
-    // is built this way; the giant cube around the level was not how KF does it.
-    if (o.geometry === "mesh" && Object.keys(skySides).length && process.env.KF_SKY_BACKDROP) {
-      const R = 512;
-      // Well clear of the level, and inside the world extent.
-      const room = [skyExtent[0][0] - 20000, skyExtent[0][1] - 20000, skyExtent[0][2] - 20000];
+    // Killing Floor's own sky: the six images on a SMALL cube inside the sky room, with a
+    // SkyZoneInfo at its centre. The world's walls carry PF_FakeBackdrop, and the renderer draws
+    // this room through them from the SkyZoneInfo's position using the player's rotation - so the
+    // sky sits at infinity, never shifts as the player walks, and cannot be reached or clipped.
+    // KF_SKY_CUBE=1 goes back to the giant cube around the level, which had parallax.
+    if (o.geometry === "mesh" && Object.keys(skySides).length && skyBackdrop) {
+      const R = SKY_ROOM_HALF * 0.8;
       const sky = buildSkyboxMesh([0, 0, 0], R, skySides);
       const skyMeshRef = pkg.addExport({
-        classRef: refs.StaticMesh, name: "SkyRoom",
+        classRef: refs.StaticMesh, name: "SkyBox",
         flags: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
         serialize: (p) => buildMeshExport(p, sky),
       });
       const skyInstRef = pkg.addExport({
-        classRef: refs.StaticMeshInstance, name: "SkyRoomLight",
+        classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"),
         flags: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
         serialize: (p) => buildMeshInstance(p, sky),
       });
+      // Zone 2 on both: the backdrop projects a ZONE, so anything meant to be sky has to be in it.
+      holder.skyZoneRef = pkg.addExport({
+        classRef: refs.SkyZoneInfo, name: "SkyZoneInfo0", flags: ACTOR,
+        serialize: (p) => {
+          const w = new Writer(192);
+          writeStateFrame(w, refs.SkyZoneInfo);
+          const pr = p.props(w);
+          pr.bool("bDistanceFog", false);
+          pr.actorCommon(levelInfoRef, physVolRef, "SkyZoneInfo", 2, holder.skyZoneRef);
+          pr.vector("Location", skyRoomCentre);
+          pr.end();
+          return w;
+        },
+      });
+      meshActors.push(holder.skyZoneRef);
       meshActors.push(pkg.addExport({
-        classRef: refs.StaticMeshActor, name: "SkyRoomActor", flags: ACTOR,
+        classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(256);
           writeStateFrame(w, refs.StaticMeshActor);
@@ -1009,35 +1168,18 @@ function convert(opts) {
           pr.bool("bCollideActors", false);
           pr.bool("bBlockActors", false);
           pr.bool("bBlockKarma", false);
-          pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
-          pr.vector("ColLocation", room);
-          pr.vector("Location", room);
+          pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 2, holder.skyZoneRef);
+          pr.vector("ColLocation", skyRoomCentre);
+          pr.vector("Location", skyRoomCentre);
           pr.end();
           return w;
         },
       }));
-      meshActors.push(pkg.addExport({
-        classRef: refs.SkyZoneInfo, name: "SkyZoneInfo0", flags: ACTOR,
-        serialize: (p) => {
-          const w = new Writer(224);
-          writeStateFrame(w, refs.SkyZoneInfo);
-          const pr = p.props(w);
-          pr.byte("AmbientBrightness", 255);
-          pr.actorCommon(levelInfoRef, physVolRef, "SkyZoneInfo", 1, zoneInfoRef);
-          pr.vector("Location", room);
-          pr.end();
-          return w;
-        },
-      }));
-      log("sky: SkyZoneInfo room at " + room.map(Math.round).join(",") +
-        " (half-size " + R + "), projected through " + (built.model ? built.model.surfs.filter((s) => (s.polyFlags & 0x80) !== 0).length : "?") +
-        " PF_FakeBackdrop surfaces");
+      log("sky: SkyZoneInfo room half-size " + SKY_ROOM_HALF + " at " + skyRoomCentre.map(Math.round).join(",") +
+        ", cube half-size " + Math.round(R) + ", projected through the world's PF_FakeBackdrop walls");
     }
-    // The cube around the level. Not how KF builds a sky - but a real KF sky needs the sky room to
-    // be its OWN zone, and this degenerate BSP has none to give. Measured: PF_FakeBackdrop with
-    // nowhere to project draws pure white. KF_SKY_BACKDROP=1 tries the KF way anyway.
-    if (o.geometry === "mesh" && Object.keys(skySides).length && !o.noSky && !process.env.KF_SKY_BACKDROP) {
-      const center = [(skyExtent[0][0] + skyExtent[1][0]) / 2, (skyExtent[0][1] + skyExtent[1][1]) / 2, (skyExtent[0][2] + skyExtent[1][2]) / 2];
+    if (o.geometry === "mesh" && Object.keys(skySides).length && !o.noSky && !skyBackdrop) {
+      const center = skyCubeCentre;
       // How far away the cube sits is the whole look of the sky. Counter-Strike draws its skybox
       // around the camera, so the mountains never move; a real cube in the world has parallax, and
       // at 1.35x the map radius the mountains sat at wall height right behind the walls. Push it
@@ -1048,9 +1190,8 @@ function convert(opts) {
       // 55000 units) still drew everywhere, including straight up; an earlier note in this file
       // blamed clipping for the white smears, which this run does not reproduce. 30000 keeps a
       // margin.
-      const half = [0, 1, 2].map((a) => (skyExtent[1][a] - skyExtent[0][a]) / 2);
-      const radius = Math.hypot(half[0], half[1], half[2]);
-      const R = +process.env.KF_SKY_R || Math.max(12000, Math.min(30000, radius * 6));
+      const radius = Math.hypot(...[0, 1, 2].map((a) => (skyExtent[1][a] - skyExtent[0][a]) / 2));
+      const R = skyCubeHalf;
       const sky = buildSkyboxMesh(center, R, skySides);
       const skyMeshRef = pkg.addExport({
         classRef: refs.StaticMesh, name: "SkyBox",
@@ -1058,12 +1199,12 @@ function convert(opts) {
         serialize: (p) => buildMeshExport(p, sky),
       });
       const skyInstRef = pkg.addExport({
-        classRef: refs.StaticMeshInstance, name: "SkyBoxLight",
+        classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"),
         flags: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
         serialize: (p) => buildMeshInstance(p, sky),
       });
       meshActors.push(pkg.addExport({
-        classRef: refs.StaticMeshActor, name: "SkyBoxActor", flags: ACTOR,
+        classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
         serialize: (p) => {
           const w = new Writer(256);
           writeStateFrame(w, refs.StaticMeshActor);
@@ -1123,7 +1264,7 @@ function convert(opts) {
       },
     });
     meshActors.push(pkg.addExport({
-      classRef: refs.StaticMeshActor, name: "StockCopyActor", flags: ACTOR,
+      classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
       serialize: (p) => {
         const w = new Writer(256);
         writeStateFrame(w, refs.StaticMeshActor);
@@ -1183,12 +1324,12 @@ function convert(opts) {
       serialize: (p) => buildMeshExport(p, quad),
     });
     const qInst = pkg.addExport({
-      classRef: refs.StaticMeshInstance, name: "ProbeQuadLight",
+      classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"),
       flags: RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
       serialize: (p) => buildMeshInstance(p, quad),
     });
     meshActors.push(pkg.addExport({
-      classRef: refs.StaticMeshActor, name: "ProbeQuadActor", flags: ACTOR,
+      classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
       serialize: (p) => {
         const w = new Writer(256);
         writeStateFrame(w, refs.StaticMeshActor);
@@ -1210,7 +1351,12 @@ function convert(opts) {
       (m.indices.length / 3) + " tris, " + m.sections.length + " sections"));
   }
 
-  const actors = [levelInfoRef, brushRef, physVolRef, zoneInfoRef, ...lightRefs, ...sunRefs, ...waterVols, ...spriteActors, ...propActors, ...starts, ...meshActors];
+  // Actor order is the CSG order: UnrealEd rebuilds the world by replaying the level's brushes from
+  // the top, skipping the builder brush at index 1. A brush that is not in this array does not
+  // exist as far as Build Geometry is concerned - which is what left the rebuilt world solid, with
+  // every spawn "imbedded in level geometry", even once the brush itself was being written.
+  const actors = [levelInfoRef, brushRef, physVolRef, zoneInfoRef, ...csgBrushes,
+    ...lightRefs, ...sunRefs, ...waterVols, ...spriteActors, ...propActors, ...starts, ...meshActors];
   built.levelRef = pkg.addExport({
     classRef: refs.Level, name: "myLevel", flags: RF.GAME,
     serialize: (p) => {
