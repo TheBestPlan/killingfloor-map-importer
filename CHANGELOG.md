@@ -2,6 +2,20 @@
 
 All notable changes to Killing Floor Map Importer are documented here. The format follows [Conventional Commits](https://www.conventionalcommits.org/) and the version scheme is [Semantic Versioning](https://semver.org/).
 
+## [0.1.3](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.2...v0.1.3) (2026-08-11)
+
+
+### Features
+
+* **breakables:** shoot away every func_breakable, not just the glass ([01237ec](https://github.com/geekrainian/killingfloor-map-importer/commit/01237ec3d73268241720400e58078bf0bdfca0a6))
+* **lighting:** carry the map's own baked light across, and three ways to fake it ([d9843e1](https://github.com/geekrainian/killingfloor-map-importer/commit/d9843e1fa899a2845a59981ac5991a3a8fc9c750))
+
+
+### Bug Fixes
+
+* blue fringes, water volumes, sky sets and the KF colour grade ([509ceb8](https://github.com/geekrainian/killingfloor-map-importer/commit/509ceb8d23edd9c9190ecb71257619138c98fee9))
+* **lighting:** pack the luxels at 0.55, not at full strength ([bb44bd3](https://github.com/geekrainian/killingfloor-map-importer/commit/bb44bd346d0926fd3a532e6f21dc11c7eb586aa1))
+
 ## [0.1.2](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.1...v0.1.2) (2026-08-10)
 
 
