@@ -376,15 +376,30 @@ brightness is all that is left, forever. Carry the luxels across instead.
 * **`Combiner` has no masked output.** A cut-out texture multiplied by the atlas draws its
   transparent half solid - gg_trs_aim_churches' `{ladder1` came out a red slab. Hang the combiner
   off a `Shader` with `Opacity` = the same texture and `OutputBlending = OB_Masked`.
-* **The meshes go `bUnlit`**, since the light is already in the material. Which makes the zone
-  ambient a PAWN light and nothing else: at 0 the player's hands and weapon are black.
+* **The meshes stay LIT - the combiner is their `Diffuse`.** The baked light then sits inside the
+  surface the engine lights, so hlrad's shadows are on the wall AND the torch and the muzzle flash
+  land on top of them. `bUnlit` draws the same picture but `Actor.bUnlit` is "Lights don't affect
+  actor" (Actor.uc:464): nothing the player carries ever reaches a converted wall, which is what
+  every build before this one did. `KF_LM_UNLIT=1` goes back to it.
+* **`Shader.SelfIllumination` cannot give you both.** The obvious fix - baked picture in
+  `SelfIllumination`, plain texture in `Diffuse` for the dynamic light to land on - does not work:
+  measured over five builds of cs_assault, this engine draws the self-illuminated half OR the lit
+  Diffuse and never both, and writing a `SelfIlluminationMask` of ANY value (0, 128, 255) is what
+  flips it to the lit one. With no mask: right picture, no torch. With a mask: torch and muzzle
+  flash work, every hlrad shadow gone.
 * `Modulate2X` doubles, the way GoldSrc's own renderer doubles its lightmap - which turned out to be
   one doubling too many here.
-* **The luxels go in at 0.5.** GoldSrc draws `texture x luxel/128`, so on paper `255 / (128 * 2.5)`
-  = 0.8 should land on the same screen value. Judged against Counter-Strike side by side on
-  gg_trs_aim_churches, 0.8 still washed the wall out and 0.5 is the match - which puts the
-  overbright on a bUnlit surface nearer 4x than the 2.5x measured in 5.15. The app's light
-  multiplier scales this number, so a whole level dims or lifts from one field.
+* **The luxels go in at 1.0 against a zone ambient of 40.** The ambient is a plain multiplier on the
+  atlas now, so it is the SAME for every map - what varies from map to map is already in the atlas,
+  and a per-map ambient would count it twice. Measured on cs_assault against 1.7 and 2.5, which blew
+  the lit half of the level out.
+* The unlit route keeps its own number, 0.55: an unlit surface reads about 4x its material, so
+  `255 / (128 * 4)` lands on the same screen value - judged against Counter-Strike side by side on
+  gg_trs_aim_churches, where 0.8 still washed the wall out. The app's light multiplier scales
+  whichever is in use, so a whole level dims or lifts from one field.
+* **The torch is a projector plus a light** (`Effect_TacLightProjector` + `Effect_TacLightGlow`).
+  The projector draws its own spot on any surface and never depended on this; the light has
+  `LightRadius=3` and fades with beam length, so it only shows close up.
 
 ---
 
@@ -545,9 +560,11 @@ level-sized geometry either. Two ways out:
 Pick the value from the map itself rather than a constant: the average GoldSrc luxel of the level
 (cs_assault 63, de_dust2 84, cs_italy 78). A fixed 140 was visibly blown out.
 
-Still not solved: real baked light. The GoldSrc lightmaps are sampled into vertex colours and
-written, but nothing in the run-time path consumes them, so the result is even lighting at the
-map's own average rather than CS's shading. Recovering it likely needs Build Lighting in KFEd.
+Solved since, and not by a build: §4.11 carries the luxels across as an atlas texture and multiplies
+the wall by them, with the actor still lit through the zone exactly as above. The baked light is
+then part of the surface the engine lights, which is what keeps the torch and the muzzle flash
+working - and it is why the ambient in that route is a fixed 40 for every map instead of a
+per-map average.
 
 ### 5.7c Do not hand-write the skybox face orientation - solve it from the images
 Which way each of the six sky images has to be rotated is a convention, and it was got wrong

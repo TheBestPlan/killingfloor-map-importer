@@ -86,7 +86,7 @@ Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`
 | textures | 8-bit miptex → `UTexture` P8 + `UPalette` **without re-encoding**; GoldSrc's 4 mips are continued by point sampling down to 1×1 |
 | masked textures (`{name`) | palette permuted so the transparent index moves from 255 to 0, `PF_Masked` |
 | sky | six `gfx/env/<skyname>*` images → DXT1 on a skybox cube (RGBA8 was two thirds of a converted map: 1.33 MB a face against 0.13 MB); `sky` faces are cut out of the meshes; no `skyname` falls back to the engine's `desert` |
-| lighting | four routes, see `--lighting`. The faithful one packs the map's own luxels into 512×512 atlas pages and multiplies them into the texture through a second UV channel, so the shadows and half-tones are the ones hlrad baked twenty years ago |
+| lighting | four routes, see `--lighting`. The faithful one packs the map's own luxels into 512×512 atlas pages and multiplies them into the texture through a second UV channel, so the shadows and half-tones are the ones hlrad baked twenty years ago — and the wall stays lit geometry, so the torch and the muzzle flash still land on it |
 | player starts | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, lifted onto the floor |
 | scale | ×1.9 by default (×2 is what the shipped `KF-CS-*` ports measure at, and it lands GoldSrc's 16-unit luxel grid exactly on UE2.5's 32 UU one) |
 

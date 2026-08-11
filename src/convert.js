@@ -46,18 +46,28 @@ const BUILD_AMBIENT = 8;
 // Lit at run time, the ambient is only the floor under the shadows - what a surface shows when no
 // light reaches it. Too high and the lights stop reading; too low and the shadowed side is black.
 const DYNAMIC_AMBIENT = 5;
-// With the world bUnlit, the zone ambient stops being the level's lighting and becomes the only
-// light on the player's hands, the weapon and the zeds. Black hands are what 0 looks like.
-const LIGHTMAP_PAWN_AMBIENT = 90;
+// The zone ambient in the OLD unlit route lit nothing but the player, his hands, the weapon and the
+// zeds - the walls carried their own light and ignored it. A flat 90 lit them the same in a lamp-lit
+// street as in the shadow of a building, so it comes from the map's own shadow level instead: the
+// 25th percentile luxel, through the same gain the atlas went in at.
+const LIGHTMAP_PAWN_GAIN = 1.0;
+const LIGHTMAP_PAWN_MIN = 12;
+const LIGHTMAP_PAWN_MAX = 64;
+// In the lit route the ambient is the level's light again, and the same number for every map: what
+// varies from map to map is already in the atlas, so a per-map ambient would count it twice.
+const LIGHTMAP_LIT_AMBIENT = 40;
 // What the luxels have to be scaled by on the way into the atlas.
 //
 // GoldSrc draws texture x luxel/128 - its renderer doubles the lightmap, so 128 is "normally lit".
-// A bUnlit surface in Killing Floor reads about 2.5x its material (5.15). Handing the material
-// luxel/255 therefore needs 255 / (128 * 2.5) = 0.8 to land on the same screen value. Judged
-// side by side against Counter-Strike on gg_trs_aim_churches, 0.8 was still too bright and 0.5 is
-// the match - so the overbright on an unlit surface is nearer 4x than the 2.5x measured in 5.15.
-// The app's light multiplier scales this, so the whole level dims or lifts from one field.
-const LIGHTMAP_GAIN = 0.55;
+// In the lit route the atlas is multiplied by the level's own lighting rather than by a fixed
+// overbright, and 1.0 against an ambient of 40 is the match - measured on cs_assault against 1.7
+// and 2.5, which blew the lit half of the map out.
+//
+// The old unlit route needs its own number: an unlit surface reads about 4x its material there, so
+// 255 / (128 * 4) lands on the same screen value, and 0.55 was the match on gg_trs_aim_churches.
+// The app's light multiplier scales whichever is in use, so a level dims or lifts from one field.
+const LIGHTMAP_GAIN = 1.0;
+const LIGHTMAP_GAIN_UNLIT = 0.55;
 // How strong the fill sun is against the real one. Bounce is never as bright as the source - and
 // two directional lights add up on every surface that faces both, so this stays small: 0.35 with
 // an ambient of 20 under it lit the map like noon.
@@ -191,6 +201,24 @@ function convert(opts) {
   const dynamicLight = lightingMode === "dynamic";
   // One knob over every light the map places, for tuning a build without reconverting by hand.
   const lightScale = o.lightScale === undefined ? 1 : Math.max(0.05, o.lightScale);
+  // Two ways to hand the engine a wall that already has its light baked in. Same material either
+  // way - Combiner(texture x atlas) - the difference is whether the actor is lit:
+  //   lit   - the baked light sits INSIDE the surface the engine lights, so hlrad's shadows stay on
+  //           the wall and the torch and the muzzle flash land on top of them.
+  //   unlit - a bUnlit actor. `Actor.bUnlit` is "Lights don't affect actor" (Actor.uc:464), so it
+  //           draws the same picture at a fixed overbright and takes no light at all - which is why
+  //           nothing the player carried ever reached a converted wall.
+  // The third way, Shader.SelfIllumination, does not exist: measured over five builds, the engine
+  // draws the self-illuminated half or the lit Diffuse and never both, and a SelfIlluminationMask
+  // of ANY value - 0, 128, 255 - is what flips it to the lit one.
+  const lmMode = process.env.KF_LM_UNLIT || process.env.KF_LM_MODE === "unlit" ? "unlit" : "lit";
+  const unlitWorld = lightingMode === "lightmap" && lmMode === "unlit";
+  const lmGain = (+process.env.KF_LM_GAIN || (unlitWorld ? LIGHTMAP_GAIN_UNLIT : LIGHTMAP_GAIN)) * lightScale;
+  // A statically lit mesh takes dynamic light through StaticMeshActor's own bUseDynamicLights. If
+  // that turns out not to hold, KF_LM_DYNLIT=1 clears bStaticLighting and the renderer lights the
+  // mesh every frame the way `--lighting dynamic` does.
+  const meshDynLit = dynamicLight ||
+    (lightingMode === "lightmap" && !unlitWorld && !!process.env.KF_LM_DYNLIT);
 
   const map = bspReader.load(o.bspFile);
   const baseName = path.basename(o.bspFile).replace(/\.bsp$/i, "");
@@ -800,6 +828,11 @@ function convert(opts) {
   if (!sunEnts.length && lightingMode !== "ambient" && !o.noLight) sunEnts.push({ _synthetic: true });
   for (const e of sunEnts) {
     if (o.noLight) continue;
+    // In lightmap mode the sun reaches nothing but the player, the zeds and the props - the walls
+    // carry hlrad's own sun already - and it reaches them at the same strength in an alley as in
+    // the open, because a real-time directional light has no shadows. KF_LM_NOSUN=1 drops it, to
+    // see how much of the too-bright player is the sun rather than the zone ambient.
+    if (lightingMode === "lightmap" && process.env.KF_LM_NOSUN) continue;
     const parts = (e._light || "255 255 255 200").trim().split(/\s+/).map(Number);
     const rgb = [parts[0] || 255, parts[1] || 255, parts[2] || 255];
     const power = parts.length > 3 ? (parts[3] || 200) : 200;
@@ -1243,10 +1276,10 @@ function convert(opts) {
     // lights reproduces it: a real-time light casts no shadow on world geometry and does not bounce.
     // So pack the luxels into atlas pages and let the material multiply the texture by them.
     const lightmap = lightingMode === "lightmap"
-      ? planLightmaps(map, { gain: (+process.env.KF_LM_GAIN || LIGHTMAP_GAIN) * lightScale })
+      ? planLightmaps(map, { gain: lmGain })
       : null;
     if (lightmap) {
-      log("lightmap: gain " + ((+process.env.KF_LM_GAIN || LIGHTMAP_GAIN) * lightScale).toFixed(2) + ", " +
+      log("lightmap: gain " + lmGain.toFixed(2) + ", " +
         lightmap.stats.litFaces + " lit face(s) packed into " + lightmap.pages.length +
         " atlas page(s) of " + lightmap.size + "x" + lightmap.size +
         (lightmap.stats.flatFaces ? ", " + lightmap.stats.flatFaces + " face(s) had none and got a flat block" : ""));
@@ -1282,10 +1315,20 @@ function convert(opts) {
     // KF_AMBIENT=0 has to mean zero, not "unset": a probe that removes every light needs the
     // ambient gone too, or there is nothing to compare against.
     const envAmbient = process.env.KF_AMBIENT === undefined ? null : Math.max(0, Math.min(255, +process.env.KF_AMBIENT));
-    holder.ambient = envAmbient !== null ? envAmbient : (lightingMode === "lightmap" ? LIGHTMAP_PAWN_AMBIENT : dynamicLight ? DYNAMIC_AMBIENT : lightingMode === "sunlight" ? BUILD_AMBIENT
+    const shadowLuxel = holder.ambient;
+    // The lit route lights the world through the zone, so the ambient is the level's own light
+    // again and stays put; only the unlit route, where the walls ignore it, reads it off the map.
+    const lightmapAmbient = unlitWorld
+      ? Math.max(LIGHTMAP_PAWN_MIN, Math.min(LIGHTMAP_PAWN_MAX,
+        Math.round(shadowLuxel * lmGain * (+process.env.KF_LM_PAWN || LIGHTMAP_PAWN_GAIN))))
+      : Math.round(LIGHTMAP_LIT_AMBIENT * lightScale);
+    holder.ambient = envAmbient !== null ? envAmbient : (lightingMode === "lightmap" ? lightmapAmbient : dynamicLight ? DYNAMIC_AMBIENT : lightingMode === "sunlight" ? BUILD_AMBIENT
       : Math.max(24, Math.min(64, Math.round(holder.ambient * AMBIENT_GAIN))));
     log("ambient: zone brightness " + holder.ambient + (lightingMode === "lightmap"
-      ? " (reaches pawns only - the world meshes are bUnlit and carry the map's own lightmap)"
+      ? (unlitWorld
+        ? " (the player, the zeds and the props - the unlit world ignores it; shadow luxel " + shadowLuxel + ")"
+        : " (what the baked atlas is multiplied by - the same for every map, since the map's own"
+          + " level is already in the atlas)")
       : dynamicLight
       ? " (fill only - the lights themselves reach the meshes at run time)"
       : lightingMode === "sunlight"
@@ -1374,10 +1417,10 @@ function convert(opts) {
     const litMasked = new Map();
     const litMaterialFor = (texRef, page) => {
       const rec = texByRef.get(texRef);
-      if (!rec || rec.kind !== "masked") return litMaterial(texRef, page);
+      const combined = litMaterial(texRef, page);
+      if (!rec || rec.kind !== "masked") return combined;
       const key = texRef + "@" + page;
       if (litMasked.has(key)) return litMasked.get(key);
-      const combined = litMaterial(texRef, page);
       const ref = pkg.addExport({
         classRef: refs.Shader, name: "LitMasked" + litMasked.size, flags: refs.flagsGame,
         serialize: (p) => {
@@ -1399,7 +1442,8 @@ function convert(opts) {
         m.materials = m.materials.map((ref) => litMaterialFor(ref, m.lightPage));
       }
       log("lightmap materials: " + lmCombiner.size + " Combiner(s) over " + lmPageTex.length +
-        " atlas texture(s)" + (litMasked.size ? ", " + litMasked.size + " of them behind a masked Shader" : ""));
+        " atlas texture(s), on " + (unlitWorld ? "unlit" : "lit") + " actors" +
+        (litMasked.size ? ", " + litMasked.size + " of them behind a masked Shader" : ""));
     }
 
     meshBuild.meshes.forEach((mesh, i) => {
@@ -1534,10 +1578,12 @@ function convert(opts) {
             // bStaticLighting says its light was raytraced in advance, and it is the second one
             // that makes the engine ignore every light in favour of a bake nobody performed.
             pr.bool("bStatic", true);
-            pr.bool("bStaticLighting", !dynamicLight);
-            // With the map's own lightmap in the material, engine lighting on top would multiply a
-            // second time - and there is nothing left for it to add that hlrad did not already bake.
-            if (lightingMode === "lightmap" && !mesh.water) pr.bool("bUnlit", true);
+            pr.bool("bStaticLighting", !meshDynLit);
+            // The map's own lightmap is in the material's SelfIllumination, so the actor stays LIT:
+            // bUnlit would draw the same picture but shut the torch and the muzzle flash out of the
+            // level entirely. What static lighting adds on top is a bake nobody performed - black -
+            // and dynamic light lands on the Diffuse.
+            if (unlitWorld && !mesh.water) pr.bool("bUnlit", true);
             pr.bool("bWorldGeometry", true);
             // Spelled out rather than inherited: the level is nothing but these actors, so if the
             // class defaults ever disagree the whole map becomes a hole the player falls through.
