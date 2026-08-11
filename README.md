@@ -66,6 +66,8 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | off | do not carry over player starts |
 | `--no-swim` | off | drop the swimming physics from water, leaving only the underwater tint |
 | `--health-scale <n>` | `1` | multiply every breakable's health — CS walls are often 10 HP, which is one shot in KF |
+| `--light-scale <n>` | `1` | multiply the sun and every lamp — the knob for tuning a build without editing the map |
+| `--lighting <mode>` | `ambient` | `ambient` — the zone lights the level, plays as converted. `sunlight` — a `Gameplay.Sunlight` and almost no ambient, for a `Build Lighting` pass in KFEd. `dynamic` — the map's own lights, live, no build. `lightmap` — GoldSrc's baked light carried across as a texture: shadows, half-tones and colour as the original has them |
 | `--ase` | off | also emit `.ase` / `.t3d` (backend B, for hand-finishing in KFEd) |
 
 Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`, `--bare` (level scaffolding and player starts only — for bisecting what KFEd chokes on, not playable). `KF_SPAWN_AT="x,y,z[,yaw]"` in the environment replaces every player start with one at that point — the way to land where the thing you want to look at is.
@@ -83,8 +85,8 @@ Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`
 | props (`.mdl` on the same entities) | static mesh in bind pose plus one actor per instance; skins from the model or from `<name>T.mdl` |
 | textures | 8-bit miptex → `UTexture` P8 + `UPalette` **without re-encoding**; GoldSrc's 4 mips are continued by point sampling down to 1×1 |
 | masked textures (`{name`) | palette permuted so the transparent index moves from 255 to 0, `PF_Masked` |
-| sky | six `gfx/env/<skyname>*` images → RGBA8 (no block compression — it bands the gradients) on a skybox cube; `sky` faces are cut out of the meshes; no `skyname` falls back to the engine's `desert` |
-| lighting | `ZoneInfo.AmbientBrightness` from the shadow level of the map's own luxels, plus `Light`/`Sunlight` actors from the light entities; on the BSP route also DXT3 lightmap atlases inside `UModel` |
+| sky | six `gfx/env/<skyname>*` images → DXT1 on a skybox cube (RGBA8 was two thirds of a converted map: 1.33 MB a face against 0.13 MB); `sky` faces are cut out of the meshes; no `skyname` falls back to the engine's `desert` |
+| lighting | four routes, see `--lighting`. The faithful one packs the map's own luxels into 512×512 atlas pages and multiplies them into the texture through a second UV channel, so the shadows and half-tones are the ones hlrad baked twenty years ago |
 | player starts | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, lifted onto the floor |
 | scale | ×1.9 by default (×2 is what the shipped `KF-CS-*` ports measure at, and it lands GoldSrc's 16-unit luxel grid exactly on UE2.5's 32 UU one) |
 

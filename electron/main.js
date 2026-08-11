@@ -15,6 +15,8 @@ const DEFAULT_SETTINGS = {
   scale: 1.9,
   lightMapScale: 32,
   healthScale: 1,      // multiplies every func_breakable's Health; 1 is what the map itself says
+  lighting: "ambient", // "ambient" plays as converted, "sunlight" is written for a Build in KFEd
+  lightScale: 1,       // multiplies the sun and every lamp
   emitAse: false,
   emitPlayerStarts: true,
   lang: "en",          // UI language (Language picker in the header)

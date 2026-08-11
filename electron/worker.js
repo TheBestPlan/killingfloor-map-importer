@@ -17,7 +17,7 @@ process.on("message", (job) => {
       bspFile: job.bspFile,
       outFile: job.outDir ? path.join(job.outDir, (job.name || ("KF-" + path.basename(job.bspFile).replace(/\.bsp$/i, ""))) + ".rom") : null,
       mapName: job.name || null,
-      scale: job.scale, lightMapScale: job.lightMapScale, healthScale: job.healthScale,
+      scale: job.scale, lightMapScale: job.lightMapScale, healthScale: job.healthScale, lighting: job.lighting, lightScale: job.lightScale,
       wadDirs, emitPlayerStarts: job.emitPlayerStarts !== false, log,
     });
 

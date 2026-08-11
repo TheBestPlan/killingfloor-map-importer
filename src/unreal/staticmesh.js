@@ -247,10 +247,19 @@ function buildMeshExport(pkg, mesh) {
   for (let i = 0; i < mesh.colors.length; i++) w.u8(255).u8(255).u8(255).u8(255);
   w.i32(1);
 
-  w.cidx(1);                                          // one UV stream
+  // A second UV stream carries the GoldSrc lightmap's own coordinates into an atlas, which the
+  // material samples through TexCoordSource(SourceChannel=1). CoordIndex names the channel: 0 for
+  // the texture, 1 for the light.
+  const uvSets = mesh.lightPage !== undefined && mesh.uvs2 && mesh.uvs2.length === mesh.uvs.length ? 2 : 1;
+  w.cidx(uvSets);
   w.cidx(mesh.uvs.length);
   for (const t of mesh.uvs) w.f32(t[0]).f32(t[1]);
   w.i32(0).i32(1);                                    // CoordIndex, Revision - in that order
+  if (uvSets === 2) {
+    w.cidx(mesh.uvs2.length);
+    for (const t of mesh.uvs2) w.f32(t[0]).f32(t[1]);
+    w.i32(1).i32(1);
+  }
 
   w.cidx(mesh.indices.length);
   for (const i of mesh.indices) w.u16(i);
@@ -288,8 +297,13 @@ function buildMeshExport(pkg, mesh) {
     for (let f = 0; f < s.numFaces; f++) {
       const base = s.firstIndex + f * 3;
       for (let k = 0; k < 3; k++) w.vec(mesh.vertices[mesh.indices[base + k]].pos);
-      w.i32(1);
+      // The UV-set count here has to match the streams above, or KFEd rebuilds the mesh from
+      // triangles that disagree with it and the second channel is lost the first time it is opened.
+      w.i32(uvSets);
       for (let k = 0; k < 3; k++) { const uv = mesh.uvs[mesh.indices[base + k]]; w.f32(uv[0]).f32(uv[1]); }
+      if (uvSets === 2) {
+        for (let k = 0; k < 3; k++) { const uv = mesh.uvs2[mesh.indices[base + k]]; w.f32(uv[0]).f32(uv[1]); }
+      }
       for (let k = 0; k < 3; k++) { const c = mesh.colors[mesh.indices[base + k]]; w.u8(c[0]).u8(c[1]).u8(c[2]).u8(c[3]); }
       w.i32(0).i32(mesh.sections.indexOf(s));
     }

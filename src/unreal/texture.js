@@ -333,7 +333,7 @@ function mipChain(px, w, h) {
   return out;
 }
 
-function addRgbTexture(pkg, refs, name, img, gain) {
+function addRgbTexture(pkg, refs, name, img, gain, opts) {
   // The engine draws an unlit surface at roughly 2.5x the texture value (UE2 overbright plus KF
   // bloom): measured 233,233,249 on screen for a city1up whose own mean is 94,93,113. Pre-divide,
   // or the overcast grey of Counter-Strike arrives as a white glare.
@@ -346,12 +346,16 @@ function addRgbTexture(pkg, refs, name, img, gain) {
     px[i * 4 + 2] = Math.min(255, Math.round(img.rgb[i * 3] * g));
     px[i * 4 + 3] = img.alpha ? img.alpha[i] : 255;
   }
+  // DXT1 unless the caller wants the uncompressed original: a sky face is 1.33 MB as RGBA8 at 512
+  // and 0.125 MB as DXT1, and the six of them were two thirds of a converted map's bytes. An alpha
+  // channel rules it out - DXT1's one bit is not enough for a sprite.
+  const dxt1 = !img.alpha && !(opts && opts.raw);
   const texRef = pkg.addExport({
     classRef: refs.Texture, name: sanitizeName(name), flags: refs.flagsGame,
     serialize: (p) => {
       const w = new Writer(img.width * img.height * 6 + 512);
       const pr = p.props(w);
-      pr.byte("Format", 5);                          // TEXF_RGBA8
+      pr.byte("Format", dxt1 ? 3 : 5);                // TEXF_DXT1 / TEXF_RGBA8
       pr.int("USize", img.width);
       pr.int("VSize", img.height);
       pr.byte("UBits", log2(img.width));
@@ -365,8 +369,33 @@ function addRgbTexture(pkg, refs, name, img, gain) {
       const chain = mipChain(px, img.width, img.height);
       w.cidx(chain.length);
       for (const m of chain) {
+        // The pixels are BGRA in memory; the block encoder wants tight RGB.
+        let data = m.data;
+        if (dxt1) {
+          const dxt = require("./dxt");
+          const rgb = Buffer.alloc(m.width * m.height * 3);
+          for (let i = 0; i < m.width * m.height; i++) {
+            rgb[i * 3] = m.data[i * 4 + 2]; rgb[i * 3 + 1] = m.data[i * 4 + 1]; rgb[i * 3 + 2] = m.data[i * 4];
+          }
+          if (m.width >= 4 && m.height >= 4) {
+            data = dxt.encodeDXT1(rgb, m.width, m.height);
+          } else {
+            // A level smaller than one block is still stored as one block, filled by repeating the
+            // tiny image - the same padding the indexed path does, and the levels below 4x4 are not
+            // optional (GOTCHAS 5.33).
+            const rgb4 = Buffer.alloc(48);
+            for (let y = 0; y < 4; y++) {
+              for (let x = 0; x < 4; x++) {
+                const s = (Math.min(m.height - 1, y % m.height) * m.width + Math.min(m.width - 1, x % m.width)) * 4;
+                const d = (y * 4 + x) * 3;
+                rgb4[d] = m.data[s + 2]; rgb4[d + 1] = m.data[s + 1]; rgb4[d + 2] = m.data[s];
+              }
+            }
+            data = dxt.encodeDXT1(rgb4, 4, 4);
+          }
+        }
         const rec = w.lazySkip();
-        w.cidx(m.data.length).bytes(m.data);
+        w.cidx(data.length).bytes(data);
         w.resolveLazy(rec);
         w.i32(m.width).i32(m.height).u8(log2(m.width)).u8(log2(m.height));
       }

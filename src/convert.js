@@ -16,6 +16,7 @@ const { addTexture, addRgbTexture, sanitizeName } = require("./unreal/texture");
 const { loadSkybox, SIDES } = require("./goldsrc/skybox");
 const { buildModel, worldBox } = require("./build/model");
 const { buildMeshes } = require("./build/mesh");
+const { planLightmaps } = require("./build/meshlight");
 const { buildSkyboxMesh, faceCorners } = require("./build/skyboxmesh");
 const { orientSkybox } = require("./build/skyboxorient");
 const { upscale, resample } = require("./build/upscale");
@@ -33,6 +34,34 @@ const SKY_GAIN = 1 / 2.4;
 // Converted maps read a little darker than the same map in Counter-Strike, so the zone's ambient -
 // which is what lights the meshes - gets this much on top of the measured shadow level.
 const AMBIENT_GAIN = 1.2;
+
+// `--lighting sunlight` writes the level the way a hand-built KF port is written: one directional
+// Sunlight and almost no ambient, so the editor's Build Lighting has something to bake and the
+// result has shape instead of flat fill. Measured off KF-CS-GG_Dustwars-KFN_Test, which a mapper
+// built by hand around this converter's meshes: Sunlight at 25, ZoneInfo.AmbientBrightness at 8.
+// A map converted this way is DARK until somebody runs Build in KFEd - a static light contributes
+// nothing at runtime (GOTCHAS 4.10) - which is why it is not the default.
+const SUN_BRIGHTNESS = 50;
+const BUILD_AMBIENT = 8;
+// Lit at run time, the ambient is only the floor under the shadows - what a surface shows when no
+// light reaches it. Too high and the lights stop reading; too low and the shadowed side is black.
+const DYNAMIC_AMBIENT = 5;
+// With the world bUnlit, the zone ambient stops being the level's lighting and becomes the only
+// light on the player's hands, the weapon and the zeds. Black hands are what 0 looks like.
+const LIGHTMAP_PAWN_AMBIENT = 90;
+// How strong the fill sun is against the real one. Bounce is never as bright as the source - and
+// two directional lights add up on every surface that faces both, so this stays small: 0.35 with
+// an ambient of 20 under it lit the map like noon.
+const FILL_RATIO = 0.15;
+
+// GoldSrc's `_light` fourth number is a radiosity input, not a brightness: every lamp in
+// gg_death_arena and gg_dustwars says 200, and 200 through the old formula came out at 170 - hot
+// enough to wash out the room it stands in once the editor bakes it. Judged in built maps over
+// three rounds - 30% off, then 20% of what was left, then 20% again - it settles here: a lamp that
+// The numbers below were tuned against a picture that was drowning in the colour stream (4.10),
+// so they are the ones that survived once the meshes were actually lit by these lights and not by
+// a constant added underneath: a lamp that says 200 arrives at 229, against a sun of 100.
+const LAMP_GAIN = 0.8;
 
 // func_breakable's `material`, and the KF emitter that matches it. 0 and 7 are glass and keep
 // KFGlassMover's own default.
@@ -146,6 +175,14 @@ function convert(opts) {
   // then add back. A converted map is not playable in this mode.
   if (o.bare) { o.noExtras = true; o.noLight = true; o.noSky = true; o.brushEntities = false; }
 
+  // "ambient": the level lights itself, because nothing else will until somebody builds lighting.
+  // "sunlight": written for that build - a real sun, real lamps, and an ambient that only fills.
+  const lightingMode = ["sunlight", "dynamic", "lightmap"].includes(o.lighting) ? o.lighting : "ambient";
+  // "dynamic": the meshes are lit at run time by the map's own lights, no editor build involved.
+  const dynamicLight = lightingMode === "dynamic";
+  // One knob over every light the map places, for tuning a build without reconverting by hand.
+  const lightScale = o.lightScale === undefined ? 1 : Math.max(0.05, o.lightScale);
+
   const map = bspReader.load(o.bspFile);
   const baseName = path.basename(o.bspFile).replace(/\.bsp$/i, "");
   const mapName = o.mapName || ("KF-" + sanitizeName(baseName));
@@ -177,6 +214,10 @@ function convert(opts) {
     // (KF-Crash: 10 of them, KF-Aperture: 2).
     Shader: pkg.importClass("Engine", "Shader"),
     ConstantColor: pkg.importClass("Engine", "ConstantColor"),
+    // Texture x lightmap, with the lightmap read from the mesh's SECOND UV channel:
+    // Combiner(Material1 = texture, Material2 = TexCoordSource(atlas, SourceChannel 1)).
+    Combiner: pkg.importClass("Engine", "Combiner"),
+    TexCoordSource: pkg.importClass("Engine", "TexCoordSource"),
     Model: pkg.importClass("Engine", "Model"),
     Polys: pkg.importClass("Engine", "Polys"),
     Brush: pkg.importClass("Engine", "Brush"),
@@ -201,6 +242,10 @@ function convert(opts) {
     DoorMover: pkg.importClass("KFMod", "KFDoorMover"),
     UseTrigger: pkg.importClass("KFMod", "KFUseTrigger"),
     GlassMover: pkg.importClass("KFMod", "KFGlassMover"),
+    // The real directional-sun class. It exists after all - in `Gameplay`, not in `Engine`, which
+    // is why this converter faked one out of Engine.Light with LightEffect=LE_Sunlight for so long.
+    // A hand-built KF port of a CS map carries exactly one of these and almost no ambient.
+    Sunlight: pkg.importClass("Gameplay", "Sunlight"),
     // What a breakable throws off when it is hit and when it goes. KF has one of these per
     // material, which is exactly the axis GoldSrc's `material` key describes.
     hitEmitter: (name) => pkg.importClass("KFMod", name),
@@ -686,7 +731,16 @@ function convert(opts) {
           const w = new Writer(224);
           writeStateFrame(w, refs.Light);
           const pr = p.props(w);
-          pr.byte("LightBrightness", Math.max(1, Math.min(255, Math.round(power * 255 / 300))));
+          // A light is BUILD-TIME unless it says otherwise: Light.uc defaults to bStatic=True with
+          // bDynamicLight unset, so it contributes to the editor's bake and to nothing else. That
+          // is why the sun could be 20, 60 or 100 with no visible difference - not one of these
+          // ever reached a surface at run time. `GamePlay.TriggerLight`, the one map-placed light
+          // in the SDK that changes while the game runs, spells out the recipe:
+          // bStatic=False, bMovable=True, bDynamicLight=True - of which only bDynamicLight is
+          // wanted here, since these lamps never move and clearing bStatic is what KFEd reports as
+          // "map will fail in netplay".
+          if (dynamicLight) pr.bool("bDynamicLight", true);
+          pr.byte("LightBrightness", Math.max(1, Math.min(255, Math.round(power * 255 / 300 * LAMP_GAIN * lightScale))));
           pr.byte("LightRadius", Math.max(4, Math.min(255, Math.round(power * o.scale / 25))));
           pr.byte("LightHue", hue);
           pr.byte("LightSaturation", maxc ? 255 - Math.round(255 * (maxc - min) / maxc) : 255);
@@ -698,7 +752,8 @@ function convert(opts) {
       });
       lightRefs.push(ref);
     }
-    log("lights: " + lightRefs.length + " converted from GoldSrc light entities");
+    log("lights: " + lightRefs.length + " converted from GoldSrc light entities, brightness x" +
+      (LAMP_GAIN * lightScale).toFixed(2));
   }
 
   // KF_NO_VISION=1: a KFSPLevelInfo with bUseVisionOverlay=False, which is the only way to stop
@@ -724,43 +779,112 @@ function convert(opts) {
   }
 
   // GoldSrc's `light_environment` is the sun: a direction (pitch + yaw) and a colour, with no
-  // position. KF has no Sunlight class, but Engine.Light does the same job with
-  // LightEffect = LE_Sunlight and bDirectional, taking its direction from the actor's Rotation.
-  // It is the only light in a CS map that can cast the shape of the level, so it is what makes a
-  // Build Lighting in KFEd produce shadows instead of flat fill.
+  // position. `Gameplay.Sunlight` is the same thing in KF - bDirectional and LE_Sunlight are its
+  // own defaults - and it is the only light in a CS map that can cast the shape of the level, so
+  // it is what makes a Build Lighting in KFEd produce shadows instead of flat fill.
+  //
+  // A map with no light_environment gets one anyway in `--lighting sunlight`: the whole point of
+  // that mode is that the editor's Build has something to bake, and every CS map was lit by
+  // something overhead even when the entity is missing.
   const sunRefs = [];
-  for (const e of map.entities) {
-    if (e.classname !== "light_environment" || o.noLight) continue;
+  const sunEnts = map.entities.filter((e) => e.classname === "light_environment");
+  if (!sunEnts.length && lightingMode !== "ambient" && !o.noLight) sunEnts.push({ _synthetic: true });
+  for (const e of sunEnts) {
+    if (o.noLight) continue;
     const parts = (e._light || "255 255 255 200").trim().split(/\s+/).map(Number);
     const rgb = [parts[0] || 255, parts[1] || 255, parts[2] || 255];
     const power = parts.length > 3 ? (parts[3] || 200) : 200;
     const mx = Math.max(rgb[0], rgb[1], rgb[2]), mn = Math.min(rgb[0], rgb[1], rgb[2]);
     // GoldSrc pitch is negative pointing down, Unreal's is positive pointing up; both measure
     // 65536 units to the turn. Yaw comes from `angles` as "0 yaw 0", and Y is mirrored.
-    const pitchDeg = parseFloat(e.pitch !== undefined ? e.pitch : (e.angles || "0 0 0").split(/\s+/)[0]) || -45;
+    // A sun that points UP lights nothing, so a positive pitch is either the other convention or a
+    // typo - fy_snow says `pitch 100`. Either way the only useful reading is "down at that angle",
+    // and past vertical it is clamped to nearly straight down.
+    const pitchKey = parseFloat(e.pitch !== undefined ? e.pitch : (e.angles || "0 0 0").split(/\s+/)[0]) || -45;
+    const pitchDeg = Math.max(-89, -Math.min(89, Math.abs(pitchKey)));
     const yawDeg = parseFloat((e.angles || "0 0 0").split(/\s+/)[1]) || 0;
     const rot = [Math.round((pitchDeg / 360) * 65536), Math.round((-yawDeg / 360) * 65536), 0];
+    // A hand-built port's sun sits at LightBrightness 25 with the zone ambient at 8 - the light is
+    // meant to be baked and to show, not to fill. Ours came out of `_light`'s fourth number, which
+    // is a GoldSrc radiosity input and reads far too hot next to that.
+    const brightness = Math.max(1, Math.min(255, Math.round(
+      (lightingMode === "ambient" ? power * 255 / 300 : SUN_BRIGHTNESS) * lightScale)));
     sunRefs.push(pkg.addExport({
-      classRef: refs.Light, name: named("Light"), flags: ACTOR,
+      classRef: refs.Sunlight, name: named("Sunlight"), flags: ACTOR,
       serialize: (p) => {
         const w = new Writer(256);
-        writeStateFrame(w, refs.Light);
+        writeStateFrame(w, refs.Sunlight);
         const pr = p.props(w);
-        pr.byte("LightEffect", 19);                  // LE_Sunlight
-        pr.bool("bDirectional", true);
+        // bDirectional and LightEffect=LE_Sunlight are the class's own defaults.
         pr.bool("bStatic", true);
-        pr.byte("LightBrightness", Math.max(1, Math.min(255, Math.round(power * 255 / 300))));
+        if (dynamicLight) pr.bool("bDynamicLight", true);
+        pr.bool("bActorShadows", true);
+        pr.byte("LightBrightness", brightness);
         pr.byte("LightHue", hueOf(rgb, mx, mn));
         pr.byte("LightSaturation", mx ? Math.max(0, Math.min(255, Math.round(255 - 255 * (mx - mn) / mx))) : 255);
         pr.byte("LightRadius", 255);
-        pr.actorCommon(levelInfoRef, physVolRef, "Light", 1, zoneInfoRef);
-        pr.vector("Location", [0, 0, holder.sunZ === undefined ? 4096 : holder.sunZ]);
+        pr.actorCommon(levelInfoRef, physVolRef, "Sunlight", 1, zoneInfoRef);
+        // ABOVE THE MIDDLE OF THE LEVEL, INSIDE THE ROOM. The old (0, 0, 4096) was neither: the
+        // world origin of a CS map is wherever the mapper happened to build around, and 4096 is
+        // usually past the ceiling of the subtracted room - so the actor sat in solid rock, in
+        // zone 0, and the editor's Build had a sun it could not use. Which is what "the sun
+        // changes nothing" looks like from the inside, at any brightness.
+        pr.vector("Location", [
+          (box.min[0] + box.max[0]) / 2,
+          (box.min[1] + box.max[1]) / 2,
+          box.max[2] - 256,
+        ]);
         pr.rotator("Rotation", rot);
         pr.end();
         return w;
       },
     }));
-    log("sunlight: pitch " + pitchDeg + ", yaw " + yawDeg + ", colour " + rgb.join(",") + " @ " + power);
+    log("sunlight: Gameplay.Sunlight, pitch " + pitchDeg + ", yaw " + yawDeg + ", colour " + rgb.join(",") +
+      " @ brightness " + brightness + (e._synthetic ? " (map has no light_environment - one added for the editor's Build)" : ""));
+
+    // A FILL SUN from the other side. What lights the shadowed face of a wall in Counter-Strike is
+    // hlrad's bounce - light that arrived from the sky and off the ground - and a real-time
+    // renderer has no such thing: a surface the sun cannot see gets the zone ambient and nothing
+    // else, which is why the far sides came out near-black. A second directional light aimed back
+    // the other way and kept dim is the cheap stand-in for that bounce, and unlike raising the
+    // ambient it still has a direction, so surfaces keep their shape.
+    if (dynamicLight) {
+      const fill = Math.max(1, Math.round(brightness * FILL_RATIO));
+      // UPWARDS, not down. Bounce comes OFF the ground onto what faces it, so a fill aimed down
+      // lands on the same floor the sun already covers and burns it - the ground went saturated
+      // yellow while the walls beside it looked right. Aim it up and it lifts undersides, ledges
+      // and the shaded vertical faces, and adds nothing to the surface that needs it least.
+      const fillRot = [Math.round((25 / 360) * 65536), rot[1] + 32768, 0];
+      sunRefs.push(pkg.addExport({
+        classRef: refs.Sunlight, name: named("Sunlight"), flags: ACTOR,
+        serialize: (p) => {
+          const w = new Writer(256);
+          writeStateFrame(w, refs.Sunlight);
+          const pr = p.props(w);
+          pr.bool("bStatic", true);
+          pr.bool("bDynamicLight", true);
+          // No shadows from the fill: it exists to lift what the sun missed, and a second set of
+          // shadows crossing the first is exactly what it is meant to hide.
+          pr.bool("bActorShadows", false);
+          pr.byte("LightBrightness", fill);
+          pr.byte("LightHue", hueOf(rgb, mx, mn));
+          // Washed out on purpose - bounce light carries much less colour than the sun does.
+          pr.byte("LightSaturation", 210);
+          pr.byte("LightRadius", 255);
+          pr.actorCommon(levelInfoRef, physVolRef, "SunlightFill", 1, zoneInfoRef);
+          pr.vector("Location", [
+            (box.min[0] + box.max[0]) / 2,
+            (box.min[1] + box.max[1]) / 2,
+            box.max[2] - 256,
+          ]);
+          pr.rotator("Rotation", fillRot);
+          pr.end();
+          return w;
+        },
+      }));
+      log("fill light: a second Sunlight from the opposite side @ brightness " + fill +
+        " - the stand-in for hlrad's bounce, which is what lit the shadowed sides in CS");
+    }
   }
 
   // Water. Translucent faces alone are just a picture; KF decides you are in water from a
@@ -1104,7 +1228,25 @@ function convert(opts) {
     // Doors and breakable glass become actors of their own; everything else merges into the world.
     const special = o.noExtras ? [] : brushEnts.collect(map);
     const separate = new Map(special.map((s, i) => [s.mi, i]));
-    const meshBuild = buildMeshes(map, { scale: o.scale, texByMiptex, separate, materialOf });
+    // THE MAP'S OWN LIGHT, carried across as a texture. Everything Counter-Strike shows on a
+    // surface - the shadow a building drops, the pool under a lamp, the half-tones hlrad bounced
+    // around the level - is in the .bsp at one luxel per 16 units, and no arrangement of Unreal
+    // lights reproduces it: a real-time light casts no shadow on world geometry and does not bounce.
+    // So pack the luxels into atlas pages and let the material multiply the texture by them.
+    const lightmap = lightingMode === "lightmap" ? planLightmaps(map, {}) : null;
+    if (lightmap) {
+      log("lightmap: " + lightmap.stats.litFaces + " lit face(s) packed into " + lightmap.pages.length +
+        " atlas page(s) of " + lightmap.size + "x" + lightmap.size +
+        (lightmap.stats.flatFaces ? ", " + lightmap.stats.flatFaces + " face(s) had none and got a flat block" : ""));
+    }
+    const meshBuild = buildMeshes(map, {
+      scale: o.scale, texByMiptex, separate, materialOf, lightmap,
+      // Extra vertices only pay for themselves once something bakes light into them.
+      lightDetail: lightingMode === "sunlight",
+      // Lit at run time, the baked luxels would add themselves on top of the real lights; carried
+      // as a texture, they are in the material instead and the stream is dead weight either way.
+      flatColor: dynamicLight || lightmap ? 0 : undefined,
+    });
     // Zone ambient = the 25th PERCENTILE of the map's luxels, not the average.
     //
     // Ambient is the light that exists in shadow; the bright half of a GoldSrc lightmap comes from
@@ -1122,9 +1264,21 @@ function convert(opts) {
       for (; q < 256 && seen < want; q++) seen += meshBuild.stats.lumHist[q];
       holder.ambient = q;
     }
-    holder.ambient = +process.env.KF_AMBIENT ||
-      Math.max(24, Math.min(140, Math.round(holder.ambient * AMBIENT_GAIN)));
-    log("ambient: zone brightness " + holder.ambient + " (shadow level: 25th percentile of every GoldSrc luxel, x" + AMBIENT_GAIN + ")");
+    // The ceiling is 64, not 140: an unlit surface already reads about 2.5x its texture in KF
+    // (5.15), so a bright map that measured 80 came out at 96 and burned to white - gg_death_arena,
+    // Screenshot_50. Nothing in a converted map needs more fill than this.
+    // KF_AMBIENT=0 has to mean zero, not "unset": a probe that removes every light needs the
+    // ambient gone too, or there is nothing to compare against.
+    const envAmbient = process.env.KF_AMBIENT === undefined ? null : Math.max(0, Math.min(255, +process.env.KF_AMBIENT));
+    holder.ambient = envAmbient !== null ? envAmbient : (lightingMode === "lightmap" ? LIGHTMAP_PAWN_AMBIENT : dynamicLight ? DYNAMIC_AMBIENT : lightingMode === "sunlight" ? BUILD_AMBIENT
+      : Math.max(24, Math.min(64, Math.round(holder.ambient * AMBIENT_GAIN))));
+    log("ambient: zone brightness " + holder.ambient + (lightingMode === "lightmap"
+      ? " (reaches pawns only - the world meshes are bUnlit and carry the map's own lightmap)"
+      : dynamicLight
+      ? " (fill only - the lights themselves reach the meshes at run time)"
+      : lightingMode === "sunlight"
+      ? " (fill only - the light comes from the Sunlight once KFEd has built it)"
+      : " (shadow level: 25th percentile of every GoldSrc luxel, x" + AMBIENT_GAIN + ")"));
     if (meshBuild.stats.lumN) {
       const r = meshBuild.stats.lumR / meshBuild.stats.lumN;
       const gch = meshBuild.stats.lumG / meshBuild.stats.lumN;
@@ -1152,6 +1306,90 @@ function convert(opts) {
       (meshBuild.stats.sky ? ", " + meshBuild.stats.sky + " sky faces cut out for the skybox" : "") +
       (meshBuild.stats.water ? ", " + meshBuild.stats.water + " water surfaces (translucent, no collision, " +
         (meshBuild.stats.waterHidden || 0) + " box sides dropped)" : ""));
+    // One texture per atlas page, one TexCoordSource that reads it through UV channel 1, and one
+    // Combiner per (texture, page) pair that multiplies the two. Modulate2X because GoldSrc's own
+    // renderer doubles its lightmap - 128 is "normally lit" there, not "half lit".
+    const lmPageTex = [], lmCoord = [], lmCombiner = new Map();
+    if (lightmap) {
+      lightmap.pages.forEach((rgb, i) => {
+        const t = addRgbTexture(pkg, refs, mapName.replace(/[^A-Za-z0-9_]/g, "") + "_lm" + i,
+          { width: lightmap.size, height: lightmap.size, rgb }, 1);
+        lmPageTex.push(t.texRef);
+        lmCoord.push(pkg.addExport({
+          classRef: refs.TexCoordSource, name: "LightCoords" + i, flags: refs.flagsGame,
+          serialize: (p) => {
+            const w = new Writer(96);
+            const pr = p.props(w);
+            pr.object("Material", t.texRef);
+            // TCS_Stream1 alone is what steers the sampler. Writing SourceChannel as well made no
+            // difference, and writing ONLY SourceChannel banded the whole level - measured with
+            // three builds of the same map. KF_LM_COORD=channel|both puts the other two back.
+            const how = process.env.KF_LM_COORD || "stream";
+            if (how !== "stream") pr.int("SourceChannel", 1);
+            if (how !== "channel") pr.byte("TexCoordSource", 1);   // TCS_Stream1
+            pr.end();
+            return w;
+          },
+        }));
+      });
+    }
+    const litMaterial = (texRef, page) => {
+      const key = texRef + "@" + page;
+      if (lmCombiner.has(key)) return lmCombiner.get(key);
+      const ref = pkg.addExport({
+        classRef: refs.Combiner, name: "Lit" + lmCombiner.size, flags: refs.flagsGame,
+        serialize: (p) => {
+          const w = new Writer(128);
+          const pr = p.props(w);
+          pr.object("Material1", texRef);
+          pr.object("Material2", lmCoord[page]);
+          pr.byte("CombineOperation", 2);              // CO_Multiply
+          pr.byte("AlphaOperation", 3);                // AO_Use_Alpha_From_Material1
+          if (process.env.KF_LM_2X) pr.bool("Modulate2X", true);
+          pr.end();
+          return w;
+        },
+      });
+      lmCombiner.set(key, ref);
+      return ref;
+    };
+
+    // A cut-out texture cannot just be multiplied. Masking in this engine is a property of the
+    // MATERIAL's output, and Combiner has no such mode - so a ladder wrapped in one draws its
+    // transparent half opaque, which is the red slab where gg_trs_aim_churches has rungs. Hang the
+    // combiner off a Shader instead: Diffuse carries the lit texture, Opacity carries the same
+    // texture for its alpha, and OB_Masked is what puts the holes back.
+    const litMasked = new Map();
+    const litMaterialFor = (texRef, page) => {
+      const rec = texByRef.get(texRef);
+      if (!rec || rec.kind !== "masked") return litMaterial(texRef, page);
+      const key = texRef + "@" + page;
+      if (litMasked.has(key)) return litMasked.get(key);
+      const combined = litMaterial(texRef, page);
+      const ref = pkg.addExport({
+        classRef: refs.Shader, name: "LitMasked" + litMasked.size, flags: refs.flagsGame,
+        serialize: (p) => {
+          const w = new Writer(128);
+          const pr = p.props(w);
+          pr.object("Diffuse", combined);
+          pr.object("Opacity", texRef);
+          pr.byte("OutputBlending", 1);              // OB_Masked
+          pr.end();
+          return w;
+        },
+      });
+      litMasked.set(key, ref);
+      return ref;
+    };
+    if (lightmap) {
+      for (const m of meshBuild.meshes) {
+        if (m.lightPage === undefined) continue;
+        m.materials = m.materials.map((ref) => litMaterialFor(ref, m.lightPage));
+      }
+      log("lightmap materials: " + lmCombiner.size + " Combiner(s) over " + lmPageTex.length +
+        " atlas texture(s)" + (litMasked.size ? ", " + litMasked.size + " of them behind a masked Shader" : ""));
+    }
+
     meshBuild.meshes.forEach((mesh, i) => {
       const meshRef = pkg.addExport({
         classRef: refs.StaticMesh, name: mapName.replace(/[^A-Za-z0-9_]/g, "") + "_geo" + i,
@@ -1272,7 +1510,22 @@ function convert(opts) {
           if (o.geometry === "both") pr.bool("bHidden", true);
 
           {
+            // THIS is why a converted map ignores its own lights. A StaticMeshActor defaults to
+            // bStatic + bStaticLighting, and a statically lit actor only ever shows light that was
+            // baked into its StaticMeshInstance - which nothing writes until KFEd builds lighting.
+            // Turn both off and the renderer lights the mesh from the level's Light actors every
+            // frame, exactly the way a Mover is lit, so the sun and the lamps finally reach it with
+            // no build step at all. The price is per-frame lighting instead of a lookup.
+            // bStatic stays TRUE even here. Clearing it is what KFEd reports as "bStatic false, but
+            // is bStatic by default - map will fail in netplay", once per mesh, and Killing Floor is
+            // a co-op game. Only bStaticLighting has to go: bStatic says the actor never moves,
+            // bStaticLighting says its light was raytraced in advance, and it is the second one
+            // that makes the engine ignore every light in favour of a bake nobody performed.
             pr.bool("bStatic", true);
+            pr.bool("bStaticLighting", !dynamicLight);
+            // With the map's own lightmap in the material, engine lighting on top would multiply a
+            // second time - and there is nothing left for it to add that hlrad did not already bake.
+            if (lightingMode === "lightmap" && !mesh.water) pr.bool("bUnlit", true);
             pr.bool("bWorldGeometry", true);
             // Spelled out rather than inherited: the level is nothing but these actors, so if the
             // class defaults ever disagree the whole map becomes a hole the player falls through.

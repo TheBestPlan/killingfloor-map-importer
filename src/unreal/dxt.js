@@ -75,6 +75,18 @@ function encodeDXT3(rgb, width, height, alpha) {
   return out;
 }
 
+// DXT1 (ETextureFormat 3) is the same colour block without the alpha half: 8 bytes per 4x4 instead
+// of 16, a quarter of the bytes RGBA8 needs. The six sky faces were the biggest thing in a
+// converted map by a wide margin - 1.33 MB each as RGBA8, 8 MB of an 11 MB file - and a hand-built
+// port ships the same sky at 1024 in DXT1 for 0.5 MB a face. Resolution buys back what block
+// compression costs on a gradient.
+function encodeDXT1(rgb, width, height) {
+  const dxt3 = encodeDXT3(rgb, width, height, null);
+  const out = Buffer.alloc(dxt3.length / 2);
+  for (let b = 0, o = 0; b < dxt3.length; b += 16, o += 8) dxt3.copy(out, o, b + 8, b + 16);
+  return out;
+}
+
 // Returns RGBA8, width*height*4.
 function decodeDXT3(data, width, height) {
   const bw = Math.ceil(width / 4), bh = Math.ceil(height / 4);
@@ -121,4 +133,4 @@ function halveRGB(rgb, w, h) {
   return { rgb: out, width: nw, height: nh };
 }
 
-module.exports = { encodeDXT3, decodeDXT3, halveRGB, to565, from565 };
+module.exports = { encodeDXT1, encodeDXT3, decodeDXT3, halveRGB, to565, from565 };

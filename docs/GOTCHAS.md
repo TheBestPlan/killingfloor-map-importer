@@ -298,6 +298,89 @@ mesh's vertex count exactly (checked against embedded meshes in `KF-Farm.rom`: 1
 The larger shipped instances carry per-light shadow records after the trailing `cidx`; the minimal
 shipped instance is 23 bytes and ends right there.
 
+### 4.10 How a Killing Floor map is actually lit, and what that costs a converter
+Four facts, measured, in the order they matter:
+
+1. **A GoldSrc `light` entity is a compiler input.** `hlrad` bakes it into the lightmap and the
+   entity does not exist at runtime. "The lamp lights the room in CS" IS the baked lightmap.
+2. **`Engine.Light` is the same kind of thing** - `bStatic`, `bNoDelete`, no `bDynamicLight` - so
+   it contributes only while UnrealEd bakes. Place fifteen of them in a converted map and the
+   running game is not one lumen brighter.
+3. **A `StaticMeshActor` takes its light from `StaticMeshInstance`** (`bStaticLighting=True` by
+   default, and `Actor.uc:321` calls that object "per-instance static mesh data, like static
+   lighting data"). No Build, no light: the zone's ambient is all a converted map has, which is
+   why it reads flat next to the original.
+4. **That static lighting is per VERTEX, not a lightmap.** Only BSP surfaces get lightmaps. A CS
+   face is up to 240 units across, so a Build over unsplit faces puts light at their corners and
+   nowhere else - hard dark wedges at chunk boundaries, which is exactly what a mapper's rebuild
+   of these meshes produced.
+
+`Gameplay.Sunlight` is the real directional-sun class - not in `Engine`, which is why this file
+once claimed KF had none. A hand-built KF port of a CS map carries one at `LightBrightness=25` with
+`bActorShadows`, sixteen `Light`s at brightness 0 with `bCorona` for the lamp glows, and
+`ZoneInfo.AmbientBrightness=8`: everything visible is baked from that one sun.
+
+So there are two honest ways to ship, and `--lighting` picks between them:
+* `ambient` - the zone lights the level, because nothing else will. Plays as converted; flat.
+* `sunlight` - a Sunlight, ambient 8, and extra vertices split into the faces whose GoldSrc luxels
+  actually vary (graded by contrast: 3 levels of splitting over 90, 2 over 40, 1 over 20 - splitting
+  everything cost 5x the triangles for detail half the map has no use for). Dark until KFEd builds
+  the lighting, right afterwards.
+
+* `dynamic` - clear `bStaticLighting` on the meshes and set `bDynamicLight` on every light, and the
+  engine lights the level every frame with no build at all.
+* `lightmap` - carry GoldSrc's own baked light across as a texture. The only one that MATCHES the
+  original, because it is the original: see 4.11.
+
+Whichever way, the ambient ceiling is 64: an unlit surface reads about 2.5x its texture (5.15), so
+gg_death_arena measured 80, shipped at 96 and burned to white.
+
+### 4.10a What each flag actually does, measured
+Four rounds of "the sun changes nothing" came down to these, in order:
+
+* **`bStaticLighting`, not `bStatic`, is the lighting flag.** Clearing both works and clearing
+  `bStatic` also makes KFEd report *"bStatic false, but is bStatic by default - map will fail in
+  netplay"* once per mesh. Killing Floor is co-op. Clear only `bStaticLighting`.
+* **A light with no `bDynamicLight` does not exist at run time.** `Light.uc` is `bStatic=True` with
+  the flag unset, which means build-time only: the sun could be set to 20, 60, 100 or 150 with no
+  difference on screen, because none of it ever reached a surface. `GamePlay.TriggerLight` is the
+  one map-placed light in the SDK that lives during play, and it spells out `bStatic=False`,
+  `bMovable=True`, `bDynamicLight=True` - of which only the last is wanted for a lamp that stays put.
+* **The mesh colour stream ADDS to the lighting, it does not modulate it.** Three probe builds on
+  gg_dustwars: colours 0 with no lights is black, colours 0 with lights looks lit, colours 128 with
+  the same lights burns to white. Those colours hold the GoldSrc luxel (mean 128-180), so a
+  dynamically lit map has to ship the stream at zero or every surface carries a second light nobody
+  can turn down.
+* **A directional light lands hardest on what faces it.** The ground is perpendicular to the sun and
+  took a full hit while the walls took a graze - saturated yellow sand beside walls that looked
+  right. A fill light aimed DOWNWARDS makes that worse, not better; bounce comes off the ground, so
+  the fill has to point up.
+
+### 4.11 THE LIGHTMAP ROUTE: the map's own light, carried as a texture
+Everything Counter-Strike shows - the shadow a building drops, the pool under a lamp, the
+half-tones hlrad bounced - is in the .bsp at one luxel per 16 units. No arrangement of Unreal lights
+reproduces it: a real-time light casts no shadow on world geometry and does not bounce, so tuning
+brightness is all that is left, forever. Carry the luxels across instead.
+
+* **Pack them into 512x512 atlas pages** with a one-texel border of edge repeat, or bilinear
+  filtering samples the neighbour packed beside it. gg_dustwars: 3054 lit faces into 3 pages.
+* **The mapping is exact, not fitted.** GoldSrc's luxel coordinates come out of texinfo:
+  `s = dot(p, ti.s) + ti.sShift`, `luxel x = s / 16 - hl.baseS`, plus half a texel to land in the
+  middle of one.
+* **Write it as a second UV stream.** `UVStreams` is an array; stream 0 is the texture, stream 1 the
+  atlas, and their `CoordIndex` is what names the channel. RawTriangles must carry `numUV = 2` as
+  well, or KFEd rebuilds the mesh from triangles that disagree and the channel is gone.
+* **`TexCoordSource=TCS_Stream1` is what steers the sampler - `SourceChannel` is not.** Measured
+  with three builds of one map: the enum alone is right, both together are identical to it, and
+  `SourceChannel` alone bands the whole level.
+* **`Combiner` has no masked output.** A cut-out texture multiplied by the atlas draws its
+  transparent half solid - gg_trs_aim_churches' `{ladder1` came out a red slab. Hang the combiner
+  off a `Shader` with `Opacity` = the same texture and `OutputBlending = OB_Masked`.
+* **The meshes go `bUnlit`**, since the light is already in the material. Which makes the zone
+  ambient a PAWN light and nothing else: at 0 the player's hands and weapon are black.
+* `Modulate2X` doubles, the way GoldSrc's own renderer doubles its lightmap - which turned out to be
+  one doubling too many here.
+
 ---
 
 ## 5. Rendering behaviour observed in the client
@@ -604,6 +687,15 @@ Build the chain for a masked texture in RGBA instead: average colour over the VI
 keep alpha binary at half coverage, bleed to convergence, and hand a level that has no visible
 texel left the average colour of the one above it. Same fence afterwards: `72,57,35 / 129,109,80`
 at the top and `123,101,74` at 1x1 - no blue anywhere.
+
+### 5.21b The sky was two thirds of the file, because RGBA8
+Six faces at 512x512 RGBA8 with mips is 1.33 MB each - 8 MB of an 11.5 MB map, against 2 MB for all
+the world geometry. A hand-built port ships the same sky at 1024 in DXT1 for 0.5 MB a face. Block
+compression on a gradient is the thing RGBA8 was chosen to avoid, and resolution buys that back:
+gg_dustwars went 11.52 MB -> 3.99 MB, smaller than the hand-built version of the same level.
+
+DXT1 is DXT3 without the alpha half - the colour block is byte-identical - so the encoder is eight
+bytes copied out of each sixteen. It cannot carry an alpha channel, so anything masked stays RGBA8.
 
 ### 5.22a The distance fog that fixes the flashes also washes the map blue-grey
 `bClearToFogColor` is what stops the frame-to-frame accumulation; the fog RAMP is a side effect
