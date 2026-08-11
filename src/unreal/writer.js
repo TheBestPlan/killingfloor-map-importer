@@ -111,6 +111,9 @@ class Props {
   float(name, v) { const b = Buffer.alloc(4); b.writeFloatLE(v); return this._tag(name, PropType.Float, b); }
   bool(name, v) { return this._tag(name, PropType.Bool, null, null, null, !!v); }
   object(name, ref) { const t = new Writer(8); t.cidx(ref); return this._tag(name, PropType.Object, Buffer.from(t.out())); }
+  // A `class<X>` property. Same payload as an object reference, different tag - the engine matches
+  // the tag against the property it is loading into and drops what does not agree.
+  classProp(name, ref) { const t = new Writer(8); t.cidx(ref); return this._tag(name, PropType.Class, Buffer.from(t.out())); }
   nameProp(name, value) { const t = new Writer(8); t.cidx(this.names.add(value)); return this._tag(name, PropType.Name, Buffer.from(t.out())); }
   str(name, value) { const t = new Writer(64); t.fstring(value); return this._tag(name, PropType.Str, Buffer.from(t.out())); }
   vector(name, v) {

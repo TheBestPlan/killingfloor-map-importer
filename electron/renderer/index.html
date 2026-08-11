@@ -101,6 +101,9 @@
       <label data-i18n="label.lms">Lightmap luxel size (Unreal units)</label>
       <input type="number" id="lms" step="1" min="4">
       <div class="hint" data-i18n="hint.lms">32 lines the luxels up 1:1 with GoldSrc at scale 2.</div>
+      <label data-i18n="label.health">Breakable health multiplier</label>
+      <input type="number" id="health" step="0.5" min="0.1">
+      <div class="hint" data-i18n="hint.health">1.0 keeps what the map says. CS walls often have 10 HP, which is one shot here.</div>
       <div class="check"><input type="checkbox" id="spawns"><span data-i18n="chk.spawns">Convert player starts</span></div>
       <div class="check"><input type="checkbox" id="ase"><span data-i18n="chk.ase">Also write .ase / .t3d (backend B)</span></div>
     </fieldset>
@@ -153,6 +156,7 @@ function save() {
   settings.csDir = $("csDir").value.trim();
   settings.scale = parseFloat($("scale").value) || 2;
   settings.lightMapScale = parseFloat($("lms").value) || 32;
+  settings.healthScale = parseFloat($("health").value) || 1;
   settings.emitAse = $("ase").checked;
   settings.emitPlayerStarts = $("spawns").checked;
   window.api.setSettings(settings);
@@ -178,10 +182,11 @@ I18N.onChange(() => { renderFiles(); if (settings) renderWads(); });   // lists 
   $("csDir").value = settings.csDir || "";
   $("scale").value = settings.scale;
   $("lms").value = settings.lightMapScale;
+  $("health").value = settings.healthScale === undefined ? 1 : settings.healthScale;
   $("ase").checked = !!settings.emitAse;
   $("spawns").checked = settings.emitPlayerStarts !== false;
   renderWads(); renderFiles();
-  for (const el of ["outDir", "csDir", "scale", "lms"]) $(el).addEventListener("change", save);
+  for (const el of ["outDir", "csDir", "scale", "lms", "health"]) $(el).addEventListener("change", save);
   for (const el of ["ase", "spawns"]) $(el).addEventListener("change", save);
 })();
 
@@ -228,7 +233,7 @@ $("go").onclick = async () => {
     const res = await window.api.convert({
       bspFile: f.path,
       outDir: settings.outDir || null, csDir: settings.csDir || null,
-      scale: settings.scale, lightMapScale: settings.lightMapScale,
+      scale: settings.scale, lightMapScale: settings.lightMapScale, healthScale: settings.healthScale,
       wadDirs: settings.wadDirs || [], emitAse: settings.emitAse,
       emitPlayerStarts: settings.emitPlayerStarts,
     });

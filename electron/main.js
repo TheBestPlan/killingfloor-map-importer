@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   wadDirs: [],
   scale: 1.9,
   lightMapScale: 32,
+  healthScale: 1,      // multiplies every func_breakable's Health; 1 is what the map itself says
   emitAse: false,
   emitPlayerStarts: true,
   lang: "en",          // UI language (Language picker in the header)

@@ -34,6 +34,22 @@ const SKY_GAIN = 1 / 2.4;
 // which is what lights the meshes - gets this much on top of the measured shadow level.
 const AMBIENT_GAIN = 1.2;
 
+// func_breakable's `material`, and the KF emitter that matches it. 0 and 7 are glass and keep
+// KFGlassMover's own default.
+//
+// Not the *HitEmitter family, whatever their names promise: `RockHitEmitter` and `DirtHitEmitter`
+// ship with `Texture=none//Texture'...' KFTODO: Replace this` - Tripwire commented the particle
+// texture out, so they emit nothing you can see and a shot wall just blinked out of existence.
+// The door-explosion emitters are whole and are built for something door-sized breaking.
+const BREAK_EMITTER = {
+  1: "KFDoorExplosionDustWood",     // wood
+  2: "KFDoorExplosionDust",         // metal - sparks, "FOR METALLIC DOORS ONLY" per the class
+  3: "FleshHitEmitter",             // flesh, and its blood texture is present
+  4: "KFDoorExplosionDustWood",     // cinderblock: a dust cloud reads right for concrete too
+  5: "KFDoorExplosionDustWood",     // ceiling tile
+  6: "KFDoorExplosionDust",         // computer
+};
+
 // Where a player appears. Point entities with nothing to draw: any `model` on them is Hammer's
 // preview, which GoldSrc never renders.
 const isSpawn = (e) => /^info_(player_(start|deathmatch|coop)|vip_start)$/.test(e.classname || "");
@@ -185,6 +201,9 @@ function convert(opts) {
     DoorMover: pkg.importClass("KFMod", "KFDoorMover"),
     UseTrigger: pkg.importClass("KFMod", "KFUseTrigger"),
     GlassMover: pkg.importClass("KFMod", "KFGlassMover"),
+    // What a breakable throws off when it is hit and when it goes. KF has one of these per
+    // material, which is exactly the axis GoldSrc's `material` key describes.
+    hitEmitter: (name) => pkg.importClass("KFMod", name),
     // Stock embedded textures and meshes carry exactly these: without RF_Public a mesh material
     // does not resolve and the mesh draws as bare wireframe.
     flagsGame: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
@@ -1199,10 +1218,26 @@ function convert(opts) {
               pr.bool("bDynamicLightMover", false);
               pr.bool("bShadowCast", false);
             } else {
-              pr.int("Health", Math.max(1, parseInt(item.e.health, 10) || 50));
-              // CS glass is drawn with renderamt; without this it converts to an opaque slab.
-              pr.byte("Style", 3);                      // STY_Translucent
-              pr.float("ScaleGlow", Math.max(0.15, (parseFloat(item.e.renderamt) || 150) / 255));
+              // CS walls carry the health the mapper gave them - gg_33_shudder's are 10, one shot.
+              // --health-scale multiplies every one of them, for a map that should not fall apart
+              // under Killing Floor's rate of fire.
+              const raw = Math.max(1, parseInt(item.e.health, 10) || 50);
+              pr.int("Health", Math.max(1, Math.round(raw * (o.healthScale || 1))));
+              if (item.kind === "glass") {
+                // CS glass is drawn with renderamt; without this it converts to an opaque slab.
+                pr.byte("Style", 3);                    // STY_Translucent
+                pr.float("ScaleGlow", Math.max(0.15, (parseFloat(item.e.renderamt) || 150) / 255));
+              } else {
+                // A cinderblock wall is a KFGlassMover too - it is the only actor in KFMod that
+                // takes damage, disappears and clears its collision - but glass shards off concrete
+                // read as a bug. KF keeps one hit emitter per material, so use the one GoldSrc's
+                // own `material` key names.
+                const bits = refs.hitEmitter(BREAK_EMITTER[parseInt(item.e.material, 10)] || "KFDoorExplosionDustWood");
+                // classProp, not object: these are `class<Emitter>` properties and the engine drops
+                // a value whose tag says Object.
+                pr.classProp("GlassBits", bits);
+                pr.classProp("BreakGlassBits", bits);
+              }
             }
             pr.bool("bBlockKarma", false);
             pr.actorCommon(levelInfoRef, physVolRef, isDoor ? doorTag : "KFGlassMover", 1, zoneInfoRef);
@@ -1263,9 +1298,10 @@ function convert(opts) {
       }));
     });
     if (special.length) {
-      const doors = special.filter((s) => s.kind === "door").length;
-      log("brush entities: " + doors + " door(s) as KFDoorMover + KFUseTrigger (use key, weldable), " +
-        (special.length - doors) + " glass pane(s) as KFGlassMover");
+      const count = (k) => special.filter((s) => s.kind === k).length;
+      log("brush entities: " + count("door") + " door(s) as KFDoorMover + KFUseTrigger (use key, weldable), " +
+        count("glass") + " glass pane(s) and " + count("breakable") +
+        " other breakable(s) as KFGlassMover, each its own actor");
     }
     meshBuild.meshes.forEach((m, i) => log("  geo" + i + ": " + m.vertices.length + " verts, " +
       (m.indices.length / 3) + " tris, " + m.sections.length + " sections"));

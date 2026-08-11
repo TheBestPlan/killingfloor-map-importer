@@ -65,6 +65,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--verify` | off | read the finished `.rom` back with an independent reader and check its invariants |
 | `--no-spawns` | off | do not carry over player starts |
 | `--no-swim` | off | drop the swimming physics from water, leaving only the underwater tint |
+| `--health-scale <n>` | `1` | multiply every breakable's health — CS walls are often 10 HP, which is one shot in KF |
 | `--ase` | off | also emit `.ase` / `.t3d` (backend B, for hand-finishing in KFEd) |
 
 Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`, `--bare` (level scaffolding and player starts only — for bisecting what KFEd chokes on, not playable). `KF_SPAWN_AT="x,y,z[,yaw]"` in the environment replaces every player start with one at that point — the way to land where the thing you want to look at is.
@@ -76,7 +77,7 @@ Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`
 | world geometry | static meshes, one material per mesh, sliced on a 2048 UU grid, reverse-wound (the Y mirror flips triangle orientation); collision is their kDOP tree |
 | brush entities (`func_wall`, `func_illusionary`, `func_ladder`…) | the same way, honouring the entity's `origin` key |
 | doors (`func_door`, `func_door_rotating`) | `KFMod.KFDoorMover` + `KFMod.KFUseTrigger` — opened with the use key and weldable like a native KF door; `KeyPos`/`KeyRot` from `angle`/`lip`/`distance` |
-| breakable glass (`func_breakable`, material 0/7) | `KFMod.KFGlassMover`, `Health` from the entity, `Style = STY_Translucent` |
+| breakables (`func_breakable`, any material) | `KFMod.KFGlassMover` with the entity's `Health`, one actor and one mesh each so they can be shot away or deleted; glass also gets `Style = STY_Translucent`, everything else loses the glass shards |
 | water (`func_water`) | translucent top plane plus a `PhysicsVolume` with a real brush box: swimmable, but standing 110 uu clear of the bottom so zeds — which cannot swim — keep walking through it |
 | sprites (`env_sprite`, `env_glow`, `cycler_sprite`) | `Engine.Effects` billboards, additive or alpha by the `.spr` texture format |
 | props (`.mdl` on the same entities) | static mesh in bind pose plus one actor per instance; skins from the model or from `<name>T.mdl` |

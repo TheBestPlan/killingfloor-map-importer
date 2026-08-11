@@ -737,6 +737,30 @@ Texture -> BitmapMaterial -> RenderedMaterial -> Material and none of them decla
 by size. Water reads as water because of `bAlphaTexture` plus the alpha baked into its DXT3 blocks.
 `Style` on an ACTOR (KFGlassMover) is real - that one is `Actor.Style`.
 
+### 5.30b Every `func_breakable` is a separate object, whatever its material
+`material` says what a breakable is made of - 0 glass, 1 wood, 2 metal, 4 cinderblock, 7
+unbreakable glass - and it was read as "only glass is worth an actor". gg_33_shudder's six
+cinderblock walls (material 4, health 10) are shot away in the original; merged into the world's
+chunks they became terrain: indestructible in game, and impossible to delete in the editor without
+tearing a hole where they met the geometry around them.
+
+`KFMod.KFGlassMover` is the only KF actor that takes damage, hides itself and clears its collision,
+so it carries the non-glass ones too - with `GlassBits` and `BreakGlassBits` set to None, or a
+concrete wall showers the room in glass shards on the way out.
+
+### 5.30c Half the KF hit emitters draw nothing, and `class<X>` is not an object property
+Two separate reasons a broken wall blinked out with no debris at all:
+
+* `RockHitEmitter` and `DirtHitEmitter` - the two whose names fit stone and rubble - carry
+  `Texture=none//Texture'EmitterTextures.MultiFrame.rockchunks02' KFTODO: Replace this`. Tripwire
+  commented the particle texture out, so they spawn and emit nothing visible. Whole ones:
+  `WoodHitEmitter` (KFMaterials.WoodChips), `MetalHitEmitter` (KFX.KFSparkHead),
+  `FleshHitEmitter`, the glass pair, and the door-explosion emitters `KFDoorExplosionDustWood` /
+  `KFDoorExplosionDust` - which are also the right SIZE for something wall-sized breaking.
+* `GlassBits` and `BreakGlassBits` are `class<Emitter>`, and a class property is tag type 8, not
+  the object tag 5. The engine matches the tag against the property it is loading into and drops
+  what does not agree - silently, with the class default left in place.
+
 ### 5.31 `.mdl` props are placed by cycler_sprite, not by any model entity
 Counter-Strike has no env_model. Scenery models are `cycler_sprite` (also monster_furniture, cycler)
 whose `model` names a `.mdl` instead of a `.spr` - de_winter_austria places 61 that way, including

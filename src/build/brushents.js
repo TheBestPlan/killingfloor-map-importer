@@ -6,8 +6,10 @@
 "use strict";
 
 // GoldSrc `material` on func_breakable: 0 glass, 1 wood, 2 metal, 3 flesh, 4 cinderblock,
-// 5 ceiling tile, 6 computer, 7 unbreakable glass. Only the two glass values become KFGlassMover -
-// the rest are better off as the solid geometry they already are.
+// 5 ceiling tile, 6 computer, 7 unbreakable glass. Glass decides the flavour of the break, not
+// whether it happens: every func_breakable is a separate object in the original and is shot away
+// there, so merging the rest into the world made gg_33_shudder's six cinderblock walls part of the
+// terrain - indestructible, and impossible to take out in the editor without leaving a hole.
 function isGlass(e) {
   const m = e.material === undefined ? -1 : parseInt(e.material, 10);
   if (m === 0 || m === 7) return true;
@@ -43,7 +45,7 @@ function collect(map) {
     const model = map.models[+mm[1]];
     if (!model || model.numfaces <= 0) return;
     if (e.classname === "func_door" || e.classname === "func_door_rotating") out.push({ kind: "door", e, model, mi: +mm[1] });
-    else if (e.classname === "func_breakable" && isGlass(e)) out.push({ kind: "glass", e, model, mi: +mm[1] });
+    else if (e.classname === "func_breakable") out.push({ kind: isGlass(e) ? "glass" : "breakable", e, model, mi: +mm[1] });
   });
   return out;
 }
