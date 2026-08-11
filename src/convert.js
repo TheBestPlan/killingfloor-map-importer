@@ -49,6 +49,15 @@ const DYNAMIC_AMBIENT = 5;
 // With the world bUnlit, the zone ambient stops being the level's lighting and becomes the only
 // light on the player's hands, the weapon and the zeds. Black hands are what 0 looks like.
 const LIGHTMAP_PAWN_AMBIENT = 90;
+// What the luxels have to be scaled by on the way into the atlas.
+//
+// GoldSrc draws texture x luxel/128 - its renderer doubles the lightmap, so 128 is "normally lit".
+// A bUnlit surface in Killing Floor reads about 2.5x its material (5.15). Handing the material
+// luxel/255 therefore needs 255 / (128 * 2.5) = 0.8 to land on the same screen value. Judged
+// side by side against Counter-Strike on gg_trs_aim_churches, 0.8 was still too bright and 0.5 is
+// the match - so the overbright on an unlit surface is nearer 4x than the 2.5x measured in 5.15.
+// The app's light multiplier scales this, so the whole level dims or lifts from one field.
+const LIGHTMAP_GAIN = 0.55;
 // How strong the fill sun is against the real one. Bounce is never as bright as the source - and
 // two directional lights add up on every surface that faces both, so this stays small: 0.35 with
 // an ambient of 20 under it lit the map like noon.
@@ -1233,9 +1242,12 @@ function convert(opts) {
     // around the level - is in the .bsp at one luxel per 16 units, and no arrangement of Unreal
     // lights reproduces it: a real-time light casts no shadow on world geometry and does not bounce.
     // So pack the luxels into atlas pages and let the material multiply the texture by them.
-    const lightmap = lightingMode === "lightmap" ? planLightmaps(map, {}) : null;
+    const lightmap = lightingMode === "lightmap"
+      ? planLightmaps(map, { gain: (+process.env.KF_LM_GAIN || LIGHTMAP_GAIN) * lightScale })
+      : null;
     if (lightmap) {
-      log("lightmap: " + lightmap.stats.litFaces + " lit face(s) packed into " + lightmap.pages.length +
+      log("lightmap: gain " + ((+process.env.KF_LM_GAIN || LIGHTMAP_GAIN) * lightScale).toFixed(2) + ", " +
+        lightmap.stats.litFaces + " lit face(s) packed into " + lightmap.pages.length +
         " atlas page(s) of " + lightmap.size + "x" + lightmap.size +
         (lightmap.stats.flatFaces ? ", " + lightmap.stats.flatFaces + " face(s) had none and got a flat block" : ""));
     }

@@ -380,6 +380,11 @@ brightness is all that is left, forever. Carry the luxels across instead.
   ambient a PAWN light and nothing else: at 0 the player's hands and weapon are black.
 * `Modulate2X` doubles, the way GoldSrc's own renderer doubles its lightmap - which turned out to be
   one doubling too many here.
+* **The luxels go in at 0.5.** GoldSrc draws `texture x luxel/128`, so on paper `255 / (128 * 2.5)`
+  = 0.8 should land on the same screen value. Judged against Counter-Strike side by side on
+  gg_trs_aim_churches, 0.8 still washed the wall out and 0.5 is the match - which puts the
+  overbright on a bUnlit surface nearer 4x than the 2.5x measured in 5.15. The app's light
+  multiplier scales this number, so a whole level dims or lifts from one field.
 
 ---
 
