@@ -134,8 +134,11 @@ class Props {
     b.writeInt32LE(r[0] | 0, 0); b.writeInt32LE(r[1] | 0, 4); b.writeInt32LE(r[2] | 0, 8);
     return this._tag(name, PropType.Struct, b, "Rotator", index);
   }
+  // Takes R,G,B[,A] and writes B,G,R,A: FColor is BGRA on disk, and the engine's own text form says
+  // so - a KFEd .t3d reads `DistanceFogColor=(B=108,G=182,R=255)`. Passing RGB straight through put
+  // the blue of the underwater overlay in the red channel, which is why water tinted the screen red.
   color(name, c) {
-    const b = Buffer.from([c[0] & 255, c[1] & 255, c[2] & 255, c.length > 3 ? c[3] & 255 : 255]);
+    const b = Buffer.from([c[2] & 255, c[1] & 255, c[0] & 255, c.length > 3 ? c[3] & 255 : 255]);
     return this._tag(name, PropType.Struct, b, "Color");
   }
   // Struct whose value is itself a tagged property block (how the engine stores PointRegion, Scale…).

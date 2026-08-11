@@ -49,6 +49,14 @@ loads a map and then refuses to do something to it: the whole package is describ
 so a wrong bit disqualifies everything inside it at once, with no error and nothing wrong in any
 individual object.
 
+### 1.8 `FColor` is B, G, R, A on disk
+Not RGBA. The engine's own text form says so - a KFEd `.t3d` writes
+`DistanceFogColor=(B=108,G=182,R=255)`. Writing R first swaps the red and blue channels of every
+colour property, which is invisible on the near-grey fog this converter derives from luxels and
+obvious on anything saturated: the underwater overlay was authored `40,90,130` and tinted the
+screen RED for months. `build/mesh.js` and `build/propmesh.js` had it right for vertex colours
+(`[hl[2], hl[1], hl[0], 255]`); the property writer did not.
+
 ---
 
 ## 2. UModel (the world BSP)
@@ -559,6 +567,64 @@ never wider than the water, and the only water it misses is the four corners.
 
 `Priority` must beat `DefaultPhysicsVolume`, and `FluidFriction` around 2.4 swims like CS.
 
+### 5.23a Zeds cannot swim, so the water volume must not reach the bottom
+`KFMonster.uc:4007` is `bCanSwim=False`. A zed that reaches a `bWaterVolume` has nowhere to path
+to, stands in it, and drowns - watch `Bug_fy_evilpyramid.mp4`. Killing Floor ships no swimmable
+water anywhere: every `PhysicsVolume` in the stock maps is a sound volume (KF-Farm has 25, all
+`VolumeEffect=EFFECT_WOODEN_*`, not one with `bWaterVolume`).
+
+Turning the water off is not the answer either - the player is supposed to swim. Lift the volume's
+FLOOR instead: which volume an actor is in is decided by its Location, its centre, and every zed
+stands 44 units up (crawler 25, boss 44), so 110 units of standing room under the water leaves them
+walking normally while a player at the surface swims. A pool with less than ~48 units of water left
+above that band keeps its full box and carries only the tint - and the tint is the other half of
+what this actor does: it comes from `bNewKFColorCorrection` / `KFOverlayColor`
+(`HudKillingFloor.uc:2294`), not from `bWaterVolume`. `--no-swim` drops the flag everywhere.
+
+### 5.21a THE BLUE FRINGE: a cut-out texture's mip chain cannot be point-sampled
+GoldSrc masks on the last palette entry, and in almost every CS texture that entry is pure blue.
+Hiding it with alpha is not enough - the RGB under it is still blue, and every filter that mixes
+texels drags it back onto what is visible. Measured on gg_33_mario's `{zaun01` fence, per level,
+"colour under the transparent texels / colour of the visible ones":
+
+    256x64  38,30,138 / 129,109,80      the top level, already blue underneath
+    64x16   32,27,188 / 127,109,146     the visible texels are drifting blue too
+    4x1     0,0,255   / 0,0,255         the whole level is the mask colour
+
+That last level is what a fence across the field samples, which is exactly the "blue far away,
+normal close up" report. Two causes, both needed:
+
+* the chain was built by point-sampling PALETTE INDICES, so one unlucky texel turns a 2x2 into
+  cut-out, and small levels end up entirely mask-coloured;
+* `bleedTransparent` ran a fixed four passes - four texels - and a third of a fence is gap, so the
+  middle of every gap kept its blue. DXT fits its block endpoints across all 16 texels, so the
+  visible ones inherit it.
+
+Build the chain for a masked texture in RGBA instead: average colour over the VISIBLE texels only,
+keep alpha binary at half coverage, bleed to convergence, and hand a level that has no visible
+texel left the average colour of the one above it. Same fence afterwards: `72,57,35 / 129,109,80`
+at the top and `123,101,74` at 1x1 - no blue anywhere.
+
+### 5.22a The distance fog that fixes the flashes also washes the map blue-grey
+`bClearToFogColor` is what stops the frame-to-frame accumulation; the fog RAMP is a side effect
+nobody asked for. It is linear between `DistanceFogStart` and `DistanceFogEnd`, so at
+`start -2000 / end 250000` a surface 25000 units away already carries a tenth of the fog colour -
+enough to read as a blue-grey cast on distant geometry that clears as the player walks toward it,
+and on the skybox cube at 30000 as well. Pushing the end to 2000000 takes the ramp out of the map -
+and with the flashes traced to `iRenderBound` (2.12) rather than to frame accumulation, the whole
+block is off by default now: `bDistanceFog`, `bClearToFogColor`, `bNewKFColorCorrection` and
+`KFOverlayColor` only push a converted map away from the original it should match. `KF_FOG=1`
+brings them back for anyone who wants the KF grade.
+
+### 5.23b What makes a brush water is the ENTITY, not the texture
+gg_33_mario's two pools are `func_water` wearing `weg01` - no `!` anywhere. Test only the texture
+name and the water box goes through as ordinary geometry: both facings of all 54 faces are kept and
+the pool z-fights into moving stripes across the whole surface (§5.26 is the filter that should
+have caught it). Key the water rules on the classname and let the texture be an extra hint.
+
+That brush is also 8 GoldSrc units thick - a water SHEET, not a filled pool. Depth cannot be
+assumed from the fact that the entity exists.
+
 ### 5.24 Sprites: `Engine.Effects` is the billboard, and `.spr` is 40 bytes of header
 `env_sprite`, `env_glow` and `cycler_sprite` name a `.spr` in their `model` key. `Engine.Effects`
 is the right actor to place them with - `DT_Sprite`, `bUnlit`, no collision, no physics and no
@@ -816,6 +882,14 @@ frame that happens to catch the bright part of the up face reads higher than the
 assignment is not a rotation. Mean seam error over the 12 cube edges, each with its best rotation
 set: city1 32.5 -> 21.0, des 42.8 -> 13.9, green 42.9 -> 6.4. With the layout right, the rotation
 solver returns the clean answer `rt lf bk ft up:rot180 dn:rot180` - no mirrors on the sides.
+
+### 5.16a A sky set in the wild can be INCOMPLETE, and "all six or nothing" costs the whole sky
+gg_33_mario asks for `skyname toon`, and `toonrt.tga` does not exist - not in the map's own
+`cstrike/gfx/env`, not in a full Counter-Strike install, only five files were ever shipped. A loader
+that demands six returns nothing and the map ends up with no sky at all while the images sit right
+where the user pointed it. Stand the absent sides in instead: a missing wall takes a mirrored copy
+of a wall that exists, a missing `up`/`dn` takes the flat average of the row that meets it. Only an
+empty set is a missing sky.
 
 ### 6.4 What else a CS map carries, and how it maps
 * `light_environment` - the sun: a direction (`pitch`, `angles`) and a colour (`_light`), with no

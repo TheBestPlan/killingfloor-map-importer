@@ -319,7 +319,8 @@ function convert(opts) {
         const t = addRgbTexture(pkg, refs, "sky_" + skyName + "_" + side, img, SKY_GAIN);
         skySides[side] = t;
       }
-      log("skybox: " + skyName + " (" + box.up.width + "x" + box.up.height + " x6) " + oriented.report.join(" "));
+      log("skybox: " + skyName + " (" + box.up.width + "x" + box.up.height + " x6) " + oriented.report.join(" ") +
+        (box.missing && box.missing.length ? " [no " + box.missing.map((s) => skyName + s + ".tga").join(", ") + " - stood in]" : ""));
     } else {
       log("skybox MISSING: " + skyName + " - no gfx/env images found, sky faces keep the flat placeholder");
     }
@@ -388,13 +389,24 @@ function convert(opts) {
       // point of that mode is to leave only what a working map is known to need.
       if (!o.bare) {
         const fog = holder.fogColor || [76, 76, 76];
+        // OFF by default. These went in while the white flashes were being chased - bClearToFogColor
+        // clears the frame buffer, which stopped them accumulating - and the flashes turned out to be
+        // iRenderBound (2.12) instead. What is left is a screen tint and a distance ramp that push a
+        // converted map away from the Counter-Strike original it is supposed to look like. KF_FOG=1
+        // puts them back.
+        if (process.env.KF_FOG) {
         pr.bool("bDistanceFog", true);
         pr.bool("bClearToFogColor", true);
         pr.bool("bNewKFColorCorrection", true);
         pr.color("KFOverlayColor", [fog[0], fog[1], fog[2], 0]);
         pr.color("DistanceFogColor", [fog[0], fog[1], fog[2], 0]);
         pr.float("DistanceFogStart", -2000);
-        pr.float("DistanceFogEnd", 250000);   // past the skybox cube: the fog must not tint anything
+        // Linear ramp: at 250000 a surface 25000 units away still picked up a tenth of the fog
+        // colour, which is the blue-grey wash that came off distant geometry and off the sky itself
+        // and cleared up as the player walked toward it. bClearToFogColor is what stops the flash
+        // accumulation (5.x), not the ramp, so the ramp can be pushed out of the map entirely.
+        pr.float("DistanceFogEnd", 2000000);
+        }
       }
       // Bloom, with the numbers the shipped maps use. KF switches the effect on from the HUD
       // (HUDKillingFloor.DrawHud) between the world render and the first-person weapon, so bloom
@@ -607,13 +619,24 @@ function convert(opts) {
       // clear the colour buffer each frame as well, which is what stops the accumulation at source.
       {
         const fog = holder.fogColor || [76, 76, 76];
+        // OFF by default. These went in while the white flashes were being chased - bClearToFogColor
+        // clears the frame buffer, which stopped them accumulating - and the flashes turned out to be
+        // iRenderBound (2.12) instead. What is left is a screen tint and a distance ramp that push a
+        // converted map away from the Counter-Strike original it is supposed to look like. KF_FOG=1
+        // puts them back.
+        if (process.env.KF_FOG) {
         pr.bool("bDistanceFog", true);
         pr.bool("bClearToFogColor", true);
         pr.bool("bNewKFColorCorrection", true);
         pr.color("KFOverlayColor", [fog[0], fog[1], fog[2], 0]);
         pr.color("DistanceFogColor", [fog[0], fog[1], fog[2], 0]);
         pr.float("DistanceFogStart", -2000);
-        pr.float("DistanceFogEnd", 250000);   // past the skybox cube: the fog must not tint anything
+        // Linear ramp: at 250000 a surface 25000 units away still picked up a tenth of the fog
+        // colour, which is the blue-grey wash that came off distant geometry and off the sky itself
+        // and cleared up as the player walked toward it. bClearToFogColor is what stops the flash
+        // accumulation (5.x), not the ramp, so the ramp can be pushed out of the map entirely.
+        pr.float("DistanceFogEnd", 2000000);
+        }
       }
       pr.actorCommon(levelInfoRef, physVolRef, "ZoneInfo");
       pr.vector("Location", [0, 0, 0]);
@@ -659,6 +682,28 @@ function convert(opts) {
     log("lights: " + lightRefs.length + " converted from GoldSrc light entities");
   }
 
+  // KF_NO_VISION=1: a KFSPLevelInfo with bUseVisionOverlay=False, which is the only way to stop
+  // HudKillingFloor drawing its full-screen tint tile (HudKillingFloor.uc:2438 returns early on it).
+  // Diagnostic: the tile is uniform, so it cannot make distance look different from close up - this
+  // build says whether the wash a map wears is KF's overlay or something in the map.
+  const visionRefs = [];
+  if (process.env.KF_NO_VISION) {
+    visionRefs.push(pkg.addExport({
+      classRef: refs.SPLevelInfo, name: named("KFSPLevelInfo"), flags: ACTOR,
+      serialize: (p) => {
+        const w = new Writer(192);
+        writeStateFrame(w, refs.SPLevelInfo);
+        const pr = p.props(w);
+        pr.bool("bUseVisionOverlay", false);
+        pr.actorCommon(levelInfoRef, physVolRef, "KFSPLevelInfo", 1, zoneInfoRef);
+        pr.vector("Location", [0, 0, 0]);
+        pr.end();
+        return w;
+      },
+    }));
+    log("KF vision overlay: disabled by a KFSPLevelInfo actor (diagnostic build)");
+  }
+
   // GoldSrc's `light_environment` is the sun: a direction (pitch + yaw) and a colour, with no
   // position. KF has no Sunlight class, but Engine.Light does the same job with
   // LightEffect = LE_Sunlight and bDirectional, taking its direction from the actor's Rotation.
@@ -699,8 +744,27 @@ function convert(opts) {
     log("sunlight: pitch " + pitchDeg + ", yaw " + yawDeg + ", colour " + rgb.join(",") + " @ " + power);
   }
 
-  // Water you can actually swim in. Translucent faces alone are just a picture - the player falls
-  // straight through them. KF decides you are in water from a PhysicsVolume with bWaterVolume.
+  // Water. Translucent faces alone are just a picture; KF decides you are in water from a
+  // PhysicsVolume with bWaterVolume. The player must be able to swim, and `KFMonster` is
+  // `bCanSwim=False` (KFMonster.uc:4007) - a zed inside a water volume has nowhere to path to,
+  // stands in it and drowns (Bug_fy_evilpyramid.mp4). Killing Floor itself ships no swimmable water
+  // at all: every PhysicsVolume in the stock maps is a sound volume (KF-Farm has 25, all
+  // VolumeEffect, none of them water).
+  //
+  // Both, then, and the two pawns are 6 units apart: which volume an actor is in is decided by its
+  // Location - its centre - and a standing KFHumanPawn puts that at 50 (KFHumanPawn.uc:1140) while
+  // every zed puts it at 44 (crawler 25, boss 44). Lift the volume's FLOOR into that gap and the
+  // player is in the water even standing on the bottom, while a zed walking the same floor is not.
+  // A 110-unit band was tried first and the bottom of the pool read as dry, which is the whole
+  // pool at fy_evilpyramid's depth.
+  //
+  // The margin is three units either way, so a zed on a step or a slope can still get wet: --wade
+  // raises the band (110 keeps every zed out for certain), --wade 0 fills the pool to the floor the
+  // way GoldSrc has it. A pool too shallow for even this keeps its full box and carries only the
+  // tint, which is the other half of what this actor does: the underwater overlay comes from
+  // bNewKFColorCorrection / KFOverlayColor (HudKillingFloor.uc:2294), not from bWaterVolume.
+  const WADE = o.wade === undefined ? 46 : o.wade;   // Unreal units of zed footing under the water
+  const SWIM_MIN = 48;                         // ...and how much water has to be left above it
   //
   // The volume needs a Brush. A PhysicsVolume is an ABrush, and an ABrush whose `Brush` is None has
   // no shape: setting only CollisionRadius/CollisionHeight produced an actor that loaded, sat in
@@ -717,9 +781,13 @@ function convert(opts) {
     const org = bspReader.num3(e.origin, [0, 0, 0]);
     const lo = [0, 1, 2].map((a) => (sm.mins[a] + org[a]) * o.scale);
     const hi = [0, 1, 2].map((a) => (sm.maxs[a] + org[a]) * o.scale);
+    // Lift the floor of the volume so a zed can stand under it; keep the whole box when what is
+    // left would be too thin to swim in.
+    const swims = !o.noSwim && (hi[2] - lo[2]) >= WADE + SWIM_MIN;
+    const floor = swims ? lo[2] + WADE : lo[2];
     // GoldSrc -> UE mirrors Y, which swaps that axis' min and max.
-    const centre = [(lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
-    const half = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
+    const centre = [(lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, (floor + hi[2]) / 2];
+    const half = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - floor) / 2];
     const idx = waterVols.length;
     const polysRef = pkg.addExport({
       classRef: refs.Polys, name: named("Polys"), flags: RF.GAME,
@@ -735,9 +803,11 @@ function convert(opts) {
         const w = new Writer(320);
         writeStateFrame(w, refs.PhysicsVolume);
         const pr = p.props(w);
-        pr.bool("bWaterVolume", true);
-        pr.float("FluidFriction", 2.4);
-        pr.float("TerminalVelocity", 800);          // sinking at 2500 uu/s reads as falling, not swimming
+        if (swims) {
+          pr.bool("bWaterVolume", true);
+          pr.float("FluidFriction", 2.4);
+          pr.float("TerminalVelocity", 800);        // sinking at 2500 uu/s reads as falling, not swimming
+        }
         pr.int("Priority", 100000);                 // must win over DefaultPhysicsVolume
         // KF tints the screen from the volume the player is standing in, but only when the volume
         // says it has fog (HUDKillingFloor.Timer). It is what makes water look like water from the
@@ -755,9 +825,12 @@ function convert(opts) {
         return w;
       },
     }));
-    waterWhere.push(centre.map(Math.round).join(",") + " " + half.map((v) => Math.round(v * 2)).join("x"));
+    waterWhere.push(centre.map(Math.round).join(",") + " " + half.map((v) => Math.round(v * 2)).join("x") +
+      (swims ? " swim" : " tint"));
   }
-  if (waterVols.length) log("water volumes: " + waterVols.length + " (swimmable) at " + waterWhere.join(" | "));
+  if (waterVols.length) log("water volumes: " + waterVols.length + ", swimmable" +
+    (WADE ? " above a " + WADE + "uu band that keeps zeds on their feet" : " to the floor") +
+    ": " + waterWhere.join(" | "));
 
   // Sprites: env_sprite, env_glow and cycler_sprite all name a .spr in their `model` key. They are
   // the lamp glows, the smoke puffs and the signs - small, but a map missing them looks unlit and
@@ -1432,7 +1505,7 @@ function convert(opts) {
   // exist as far as Build Geometry is concerned - which is what left the rebuilt world solid, with
   // every spawn "imbedded in level geometry", even once the brush itself was being written.
   const actors = [levelInfoRef, brushRef, physVolRef, zoneInfoRef, ...csgBrushes,
-    ...lightRefs, ...sunRefs, ...waterVols, ...spriteActors, ...propActors, ...starts, ...meshActors];
+    ...lightRefs, ...sunRefs, ...visionRefs, ...waterVols, ...spriteActors, ...propActors, ...starts, ...meshActors];
   built.levelRef = pkg.addExport({
     classRef: refs.Level, name: "myLevel", flags: RF.GAME,
     serialize: (p) => {

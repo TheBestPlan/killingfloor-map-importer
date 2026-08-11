@@ -72,7 +72,9 @@ function toPowerOfTwo(mip0, width, height) {
 // it reaches a few texels deep) leaves nothing blue to bleed.
 function bleedTransparent(rgb, alpha, w, h) {
   const solid = Buffer.from(alpha);
-  for (let pass = 0; pass < 4; pass++) {
+  // Run to convergence, not for a fixed four passes: a fence is a third cut-out, and four passes
+  // reach four texels, so the middle of every gap kept its blue and the mips averaged it back in.
+  for (let pass = 0; pass < 64; pass++) {
     const next = Buffer.from(solid);
     let changed = 0;
     for (let y = 0; y < h; y++) {
@@ -98,6 +100,48 @@ function bleedTransparent(rgb, alpha, w, h) {
     solid.set(next);
     if (!changed) break;
   }
+  // A level small enough to be all cut-out has no neighbour to take colour from, and that is
+  // exactly the level a distant surface samples. Return what the visible texels averaged to so the
+  // caller can carry it down the chain.
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < alpha.length; i++) {
+    if (!solid[i]) continue;
+    r += rgb[i * 3]; g += rgb[i * 3 + 1]; b += rgb[i * 3 + 2]; n++;
+  }
+  return n ? [Math.round(r / n), Math.round(g / n), Math.round(b / n)] : null;
+}
+
+// Halve an RGBA level, averaging COLOUR over the visible texels only.
+//
+// The mip chain for a cut-out texture cannot be built by point-sampling palette indices: pick the
+// wrong texel and a whole 2x2 collapses to the cut-out colour, and by 4x1 the entire level is the
+// pure blue GoldSrc masks with. Measured on gg_33_mario's `{zaun01` fence: 256x64 hid 38,30,138
+// under its transparent texels and 4x1 was 0,0,255 everywhere - visible texels included, because
+// the DXT endpoints are fitted across the whole block. That level is what a fence across the field
+// samples, which is the blue that clears up as the player walks toward it.
+function halveMaskedRgba(src, w, h, fallback) {
+  const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
+  const rgb = Buffer.alloc(nw * nh * 3), alpha = Buffer.alloc(nw * nh);
+  for (let y = 0; y < nh; y++) {
+    for (let x = 0; x < nw; x++) {
+      let r = 0, g = 0, b = 0, n = 0, seen = 0;
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const sx = Math.min(w - 1, x * 2 + dx), sy = Math.min(h - 1, y * 2 + dy), i = sy * w + sx;
+          seen++;
+          if (!src.alpha[i]) continue;
+          r += src.rgb[i * 3]; g += src.rgb[i * 3 + 1]; b += src.rgb[i * 3 + 2]; n++;
+        }
+      }
+      const d = y * nw + x;
+      const c = n ? [Math.round(r / n), Math.round(g / n), Math.round(b / n)] : fallback || [0, 0, 0];
+      rgb[d * 3] = c[0]; rgb[d * 3 + 1] = c[1]; rgb[d * 3 + 2] = c[2];
+      // Binary alpha: a cut-out has to stay a cut-out, and half the source texels is the threshold
+      // that keeps a fence's slats from dissolving one level at a time.
+      alpha[d] = n * 2 >= seen ? 255 : 0;
+    }
+  }
+  return { width: nw, height: nh, rgb, alpha };
 }
 
 // Registers a UPalette + UTexture pair in the package. Returns the texture's export ref.
@@ -166,8 +210,25 @@ function addTexture(pkg, refs, miptex, opts) {
       }
       return { rgb: rgb4, alpha: a4, w: 4, h: 4 };
     };
-    const blocks = chain.map((m) => {
-      const { rgb, alpha } = rgbaOf(m);
+    // A cut-out texture builds its own chain in RGBA instead of reusing the indexed one: colour has
+    // to be averaged over the visible texels only, and the level that is entirely cut out has to
+    // inherit a colour rather than invent one.
+    const levels = [];
+    if (masked) {
+      let cur = Object.assign({ width: chain[0].width, height: chain[0].height }, rgbaOf(chain[0]));
+      let lastVisible = bleedTransparent(cur.rgb, cur.alpha, cur.width, cur.height);
+      levels.push(cur);
+      for (let i = 1; i < chain.length; i++) {
+        cur = halveMaskedRgba(cur, cur.width, cur.height, lastVisible);
+        const avg = bleedTransparent(cur.rgb, cur.alpha, cur.width, cur.height);
+        if (avg) lastVisible = avg;
+        levels.push(cur);
+      }
+    } else {
+      for (const m of chain) levels.push(Object.assign({ width: m.width, height: m.height }, rgbaOf(m)));
+    }
+    const blocks = levels.map((m) => {
+      const { rgb, alpha } = m;
       // GoldSrc water is a solid texture that the engine draws with a per-entity alpha
       // (func_water's renderamt, typically ~100/255). Bake that into the DXT3 alpha block so the
       // surface reads as water rather than as an opaque blue floor.

@@ -77,6 +77,10 @@ function buildMeshes(map, opts) {
     jobs.push({
       model: sm, offset: [org[0] || 0, org[1] || 0, org[2] || 0], top: sm.maxs[2],
       ent: separate.get(+mm[1]),
+      // What makes a brush water is the ENTITY, not the texture. gg_33_mario's two pools are
+      // func_water wearing `weg01` - an ordinary name, no `!` - so the texture test alone let both
+      // facings of all 54 faces through and the pool z-fought into stripes.
+      isWater: /^func_water$/i.test(ent.classname || ""),
       // Glass and anything else the mapper drew with a render mode: the faces keep their texture
       // but wear a translucent material instead of the plain one.
       mat: opts.materialOf ? opts.materialOf(ent) : null,
@@ -101,7 +105,7 @@ function buildMeshes(map, opts) {
       // behind it - the "white sky" that survived every fix aimed at the sky itself. Cut them out
       // and the holes they leave are exactly the view onto the real skybox.
       if (tex.kind === "sky") { stats.sky = (stats.sky || 0) + 1; continue; }
-      const isWater = tex.kind === "liquid";
+      const isWater = tex.kind === "liquid" || !!job.isWater;
       const ring = map.faceVertices(face);
       if (ring.length < 3) { stats.skipped++; continue; }
       // A GoldSrc water brush is a closed box, and every one of its planes is stored TWICE - once

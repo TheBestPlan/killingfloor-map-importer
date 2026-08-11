@@ -64,6 +64,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--geometry mesh\|bsp\|both` | `mesh` | what draws the world: static meshes, the BSP, or BSP with meshes as collision only |
 | `--verify` | off | read the finished `.rom` back with an independent reader and check its invariants |
 | `--no-spawns` | off | do not carry over player starts |
+| `--no-swim` | off | drop the swimming physics from water, leaving only the underwater tint |
 | `--ase` | off | also emit `.ase` / `.t3d` (backend B, for hand-finishing in KFEd) |
 
 Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`, `--bare` (level scaffolding and player starts only — for bisecting what KFEd chokes on, not playable). `KF_SPAWN_AT="x,y,z[,yaw]"` in the environment replaces every player start with one at that point — the way to land where the thing you want to look at is.
@@ -76,7 +77,7 @@ Diagnostic switches, kept on purpose: `--stock-sky "Pkg.Group.Name"`, `--no-sky`
 | brush entities (`func_wall`, `func_illusionary`, `func_ladder`…) | the same way, honouring the entity's `origin` key |
 | doors (`func_door`, `func_door_rotating`) | `KFMod.KFDoorMover` + `KFMod.KFUseTrigger` — opened with the use key and weldable like a native KF door; `KeyPos`/`KeyRot` from `angle`/`lip`/`distance` |
 | breakable glass (`func_breakable`, material 0/7) | `KFMod.KFGlassMover`, `Health` from the entity, `Style = STY_Translucent` |
-| water (`func_water`) | translucent top plane plus a `PhysicsVolume` with a real brush box (`bWaterVolume`, fog, drowning) |
+| water (`func_water`) | translucent top plane plus a `PhysicsVolume` with a real brush box: swimmable, but standing 110 uu clear of the bottom so zeds — which cannot swim — keep walking through it |
 | sprites (`env_sprite`, `env_glow`, `cycler_sprite`) | `Engine.Effects` billboards, additive or alpha by the `.spr` texture format |
 | props (`.mdl` on the same entities) | static mesh in bind pose plus one actor per instance; skins from the model or from `<name>T.mdl` |
 | textures | 8-bit miptex → `UTexture` P8 + `UPalette` **without re-encoding**; GoldSrc's 4 mips are continued by point sampling down to 1×1 |
