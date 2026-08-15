@@ -1167,6 +1167,10 @@ function convert(opts) {
           pr.object("StaticMeshInstance", hit.instRef);
           pr.bool("bStatic", true);
           pr.bool("bWorldGeometry", true);
+          // A prop is scenery standing IN the world, so it takes the world's share of the light and
+          // not the pawn's - without this the split leaves the truck at the zone ambient while the
+          // wall behind it is four times brighter.
+          if (lmGlow) pr.byte("AmbientGlow", lmGlow);
           pr.bool("bCollideActors", true);
           pr.bool("bBlockActors", true);
           pr.bool("bBlockPlayers", true);
