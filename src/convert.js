@@ -56,9 +56,15 @@ const DYNAMIC_AMBIENT = 5;
 const LIGHTMAP_PAWN_GAIN = 1.0;
 const LIGHTMAP_PAWN_MIN = 12;
 const LIGHTMAP_PAWN_MAX = 64;
-// In the lit route the ambient is the level's light again, and the same number for every map: what
-// varies from map to map is already in the atlas, so a per-map ambient would count it twice.
-const LIGHTMAP_LIT_AMBIENT = 40;
+// In the lit route the level's light is a plain multiplier on the atlas, the same number for every
+// map: what varies from map to map is already in the atlas, so a per-map value would count it twice.
+// 40 is that number - but it cannot all sit in the zone, because the zone ambient is ALSO the only
+// light on the player, his hands and the zeds (GOTCHAS 4.11a), and 40 there is a soldier glowing in
+// a dark alley. So the world's share rides on the mesh actors' own AmbientGlow, which adds to the
+// zone ambient at the same weight and reaches nobody standing in the level, and the zone keeps only
+// what the pawn needs. The two must go on adding up to 40.
+const LIGHTMAP_LIT_AMBIENT = 8;
+const LIGHTMAP_WORLD_GLOW = 32;
 // What the luxels have to be scaled by on the way into the atlas.
 //
 // GoldSrc draws texture x luxel/128 - its renderer doubles the lightmap, so 128 is "normally lit".
@@ -71,6 +77,11 @@ const LIGHTMAP_LIT_AMBIENT = 40;
 // The app's light multiplier scales whichever is in use, so a level dims or lifts from one field.
 const LIGHTMAP_GAIN = 1.0;
 const LIGHTMAP_GAIN_UNLIT = 0.55;
+// The floor under the atlas. The baked light multiplies the wall's texture, so a luxel hlrad left
+// at 0 is a surface no torch and no muzzle flash can reach - and that is 64.5% of zm_rooms
+// (GOTCHAS 4.11b). This is the smallest value judged to give the flashlight something to work with;
+// what it costs is the deepest shadows lifting by the same amount.
+const LIGHTMAP_FLOOR = 16;
 // How strong the fill sun is against the real one. Bounce is never as bright as the source - and
 // two directional lights add up on every surface that faces both, so this stays small: 0.35 with
 // an ambient of 20 under it lit the map like noon.
@@ -217,6 +228,10 @@ function convert(opts) {
   const lmMode = process.env.KF_LM_UNLIT || process.env.KF_LM_MODE === "unlit" ? "unlit" : "lit";
   const unlitWorld = lightingMode === "lightmap" && lmMode === "unlit";
   const lmGain = (+process.env.KF_LM_GAIN || (unlitWorld ? LIGHTMAP_GAIN_UNLIT : LIGHTMAP_GAIN)) * lightScale;
+  // The floor under the atlas, so a surface hlrad left black still has something for the torch to
+  // light. See build/meshlight.js for why zero is a trap and what the floor costs.
+  const lmFloor = Math.max(0, Math.min(255, Math.round(lightScale *
+    (process.env.KF_LM_FLOOR === undefined ? LIGHTMAP_FLOOR : +process.env.KF_LM_FLOOR))));
   // A statically lit mesh takes dynamic light through StaticMeshActor's own bUseDynamicLights. If
   // that turns out not to hold, KF_LM_DYNLIT=1 clears bStaticLighting and the renderer lights the
   // mesh every frame the way `--lighting dynamic` does.
@@ -229,13 +244,13 @@ function convert(opts) {
   // UseSimpleKarmaCollision=False already sends Karma to the kDOP triangles instead. KF_KARMA=1
   // turns it back on - gated until a level has been loaded with it and the memory watched.
   const blockKarma = !!process.env.KF_KARMA;
-  // The zone ambient is BOTH the multiplier on the world's baked atlas and the light on the player,
-  // his hands and the zeds, so one number cannot serve both: at 40 the walls read right and the
-  // soldier is a lamp. AmbientGlow is per ACTOR - it lifts the world without touching anybody
-  // standing in it - so KF_LM_GLOW=<0..254> puts the world's share there and leaves KF_AMBIENT free
-  // to be whatever the pawn needs.
-  const lmGlow = process.env.KF_LM_GLOW === undefined
-    ? 0 : Math.max(0, Math.min(254, Math.round(+process.env.KF_LM_GLOW)));
+  // The world's share of the level's light, carried per ACTOR so it reaches the walls and the props
+  // and nobody standing between them. KF_LM_GLOW=<0..254> overrides it; 255 would mean "pulsing".
+  // Only the lit route: every other mode lights the meshes some other way, and a glow on top of it
+  // would be a second helping nobody asked for.
+  const lmGlow = lightingMode !== "lightmap" || unlitWorld ? 0
+    : Math.max(0, Math.min(254, Math.round(lightScale *
+      (process.env.KF_LM_GLOW === undefined ? LIGHTMAP_WORLD_GLOW : +process.env.KF_LM_GLOW))));
 
   const map = bspReader.load(o.bspFile);
   const baseName = path.basename(o.bspFile).replace(/\.bsp$/i, "");
@@ -1303,10 +1318,10 @@ function convert(opts) {
     // lights reproduces it: a real-time light casts no shadow on world geometry and does not bounce.
     // So pack the luxels into atlas pages and let the material multiply the texture by them.
     const lightmap = lightingMode === "lightmap"
-      ? planLightmaps(map, { gain: lmGain })
+      ? planLightmaps(map, { gain: lmGain, floor: lmFloor })
       : null;
     if (lightmap) {
-      log("lightmap: gain " + lmGain.toFixed(2) + ", " +
+      log("lightmap: gain " + lmGain.toFixed(2) + (lmFloor ? ", floor " + lmFloor : "") + ", " +
         lightmap.stats.litFaces + " lit face(s) packed into " + lightmap.pages.length +
         " atlas page(s) of " + lightmap.size + "x" + lightmap.size +
         (lightmap.stats.flatFaces ? ", " + lightmap.stats.flatFaces + " face(s) had none and got a flat block" : ""));
@@ -1345,8 +1360,8 @@ function convert(opts) {
     // ambient gone too, or there is nothing to compare against.
     const envAmbient = process.env.KF_AMBIENT === undefined ? null : Math.max(0, Math.min(255, +process.env.KF_AMBIENT));
     const shadowLuxel = holder.ambient;
-    // The lit route lights the world through the zone, so the ambient is the level's own light
-    // again and stays put; only the unlit route, where the walls ignore it, reads it off the map.
+    // In the lit route the zone lights the PAWN and the mesh actors' AmbientGlow lights the world,
+    // so this number stays put and small; only the unlit route reads it off the map.
     const lightmapAmbient = unlitWorld
       ? Math.max(LIGHTMAP_PAWN_MIN, Math.min(LIGHTMAP_PAWN_MAX,
         Math.round(shadowLuxel * lmGain * (+process.env.KF_LM_PAWN || LIGHTMAP_PAWN_GAIN))))
@@ -1356,8 +1371,8 @@ function convert(opts) {
     log("ambient: zone brightness " + holder.ambient + (lightingMode === "lightmap"
       ? (unlitWorld
         ? " (the player, the zeds and the props - the unlit world ignores it; shadow luxel " + shadowLuxel + ")"
-        : " (what the baked atlas is multiplied by - the same for every map, since the map's own"
-          + " level is already in the atlas)")
+        : " on the player, his hands and the zeds - the world takes its own " + lmGlow +
+          " through AmbientGlow, so the atlas is multiplied by " + (holder.ambient + lmGlow) + " either way")
       : dynamicLight
       ? " (fill only - the lights themselves reach the meshes at run time)"
       : lightingMode === "sunlight"

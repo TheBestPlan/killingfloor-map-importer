@@ -397,10 +397,13 @@ brightness is all that is left, forever. Carry the luxels across instead.
   flash work, every hlrad shadow gone.
 * `Modulate2X` doubles, the way GoldSrc's own renderer doubles its lightmap - which turned out to be
   one doubling too many here.
-* **The luxels go in at 1.0 against a zone ambient of 40.** The ambient is a plain multiplier on the
-  atlas now, so it is the SAME for every map - what varies from map to map is already in the atlas,
-  and a per-map ambient would count it twice. Measured on cs_assault against 1.7 and 2.5, which blew
-  the lit half of the level out.
+* **The luxels go in at 1.0 against a level light of 40**, split 8 in the zone and 32 in the mesh
+  actors' `AmbientGlow` - see §4.11a for why it cannot all sit in the zone. It is a plain multiplier
+  on the atlas, so it is the SAME for every map: what varies from map to map is already in the
+  atlas, and a per-map value would count it twice. Measured on cs_assault against 1.7 and 2.5, which
+  blew the lit half of the level out.
+* **And a floor of 16 under the atlas**, because the multiply means a luxel of 0 takes no light at
+  all - §4.11b.
 * The unlit route keeps its own number, 0.55: an unlit surface reads about 4x its material, so
   `255 / (128 * 4)` lands on the same screen value - judged against Counter-Strike side by side on
   gg_trs_aim_churches, where 0.8 still washed the wall out. The app's light multiplier scales
@@ -408,6 +411,27 @@ brightness is all that is left, forever. Carry the luxels across instead.
 * **The torch is a projector plus a light** (`Effect_TacLightProjector` + `Effect_TacLightGlow`).
   The projector draws its own spot on any surface and never depended on this; the light has
   `LightRadius=3` and fades with beam length, so it only shows close up.
+
+### 4.11b A luxel of 0 is a surface no light can ever reach
+The lit route's whole point is that the baked light sits inside the wall's `Diffuse`, so what the
+engine lights is `texture x atlas`. Where hlrad left the atlas at 0 that product is 0, and so is
+everything downstream: torch, muzzle flash, lamp, ambient. The flashlight lights nothing in those
+rooms, and no flag fixes it because nothing is missing - it is a multiply by zero.
+
+How much of a map this is varies wildly, per lit luxel, area-weighted:
+
+| map | luxels at exactly 0 | below 16 |
+|---|---|---|
+| zm_rooms | 64.5% | 75.1% |
+| gg_dustwars | 3.4% | 4.6% |
+| cs_assault | 0.0% | 22.3% |
+
+The floor under the atlas leaves the darkest surface a little of its texture for a light to land on.
+It lifts hlrad's deepest shadows by the same amount, which is why it wants to be small. Judged on
+zm_rooms against 8 and 32: **16** is the default, `KF_LM_FLOOR=<0..255>` overrides it.
+
+Note what it does NOT fix: the torch is a projector plus a light of `LightRadius=3` (§4.11), so even
+on a floored atlas it only reaches what is close.
 
 ### 4.11a The zone ambient is the ONLY light on the player, and `AmbientGlow` splits it off the world
 Measured on ka_legoland, one build per row, everything else equal:
@@ -419,7 +443,12 @@ Measured on ka_legoland, one build per row, everything else equal:
 | 0 | 40 | right | a black silhouette |
 | 10 | 30 | right | right |
 
-Two facts fall out of it:
+**8 + 32 is what shipped**, judged against 16+24 and 24+16 on ka_legoland and then on five more maps
+from both ends of the range (gg_gardenworld_cs16 is the brightest of the 227, zm_rooms the darkest).
+The props get the glow too: a truck stands IN the world, not in the pawn's place, and without it the
+split left it four times darker than the wall behind it.
+
+Two facts fall out of the table:
 
 * **`AmbientGlow` adds to the zone ambient, per ACTOR, and the two are worth the same.** 0+40 and
   10+30 light the wall identically. So the world's share can live on the mesh actors and the zone

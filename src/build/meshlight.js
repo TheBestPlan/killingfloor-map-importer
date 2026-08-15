@@ -48,6 +48,18 @@ function planLightmaps(map, opts) {
   const pages = [];                                   // page index -> RGB buffer
   const byFace = new Map();                           // face index -> { page, x, y, hl }
   const gain = opts && opts.gain ? opts.gain : 1;
+  // Nothing survives a multiply by zero. In the lit route the baked light rides INSIDE the wall's
+  // Diffuse, so a luxel hlrad left at 0 is a surface no torch, no muzzle flash and no lamp can ever
+  // reach: texture x 0 x light is still 0. It is not a corner case - 64.5% of zm_rooms' luxels are
+  // exactly 0, against 3.4% of gg_dustwars and none of cs_assault - and the flashlight there lights
+  // nothing at all (Screenshot_13).
+  //
+  // A floor under the atlas leaves the darkest surface a little of its texture for a light to land
+  // on. The price is hlrad's deepest shadows lifting by the same amount, which is why it is small:
+  // at 8 it moves 70% of zm_rooms and 0% of cs_assault.
+  const floor = opts && opts.floor ? Math.max(0, Math.min(255, opts.floor)) : 0;
+  const lut = new Uint8Array(256);
+  for (let v = 0; v < 256; v++) lut[v] = Math.max(floor, Math.min(255, Math.round(v * gain)));
   let flatFaces = 0, litFaces = 0;
 
   const pageOf = (i) => {
@@ -71,9 +83,9 @@ function planLightmaps(map, opts) {
         const sx = Math.max(0, Math.min(w - 1, x));
         const s = (sy * w + sx) * 3;
         const d = ((at.y + BORDER + y) * ATLAS + (at.x + BORDER + x)) * 3;
-        page[d] = Math.min(255, Math.round(hl.rgb[s] * gain));
-        page[d + 1] = Math.min(255, Math.round(hl.rgb[s + 1] * gain));
-        page[d + 2] = Math.min(255, Math.round(hl.rgb[s + 2] * gain));
+        page[d] = lut[hl.rgb[s]];
+        page[d + 1] = lut[hl.rgb[s + 1]];
+        page[d + 2] = lut[hl.rgb[s + 2]];
       }
     }
     byFace.set(fi, { page: at.page, x: at.x + BORDER, y: at.y + BORDER, hl });
