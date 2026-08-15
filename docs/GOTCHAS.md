@@ -292,7 +292,42 @@ the storm is `KAggregateGeomInstance` building simple hulls out of a mesh that h
 its bodies rest on the floor while the converted map's fall through, same level, same meshes.
 
 Measured with it back on: ka_legoland loads and plays, and zp_kievpass - 1227 mesh actors, the
-biggest map in the set - loads too, no allocation storm. `KF_KARMA=1` while the default is still off.
+biggest map in the set - loads too, no allocation storm. `KF_NO_KARMA=1` goes back to scenery that
+nothing can rest on.
+
+What it needs to be safe is a collision tree with no zero-area triangles in it - see 4.8e, which is
+the same flag's second failure and looks nothing like the first.
+
+### 4.8e A collinear triangle in the collision tree deletes the corpse
+Turning `bBlockKarma` on made the bodies stop falling through the floor and start vanishing in
+mid-air instead - no fall, no body, just blood and gibs. The log says why:
+
+```
+Log: (Karma:) Bad Normal Length: 0.000000
+```
+
+Karma reads the mesh's kDOP triangles as the level's world collision, and a triangle whose three
+points are on one line has a face normal of length zero. The contact goes NaN, the ragdoll leaves
+the level, and `KFMonster`'s `ZombieDying.Timer` destroys anything the player cannot see two seconds
+later - so the corpse is gone before it lands.
+
+They are not rare. GoldSrc face rings carry the vertices of their neighbours' T-junctions, and a fan
+over such a ring produces one degenerate triangle per extra vertex:
+
+| map | triangles | collinear |
+|---|---|---|
+| ka_legoland | 3306 | 293 (8.9%) |
+| zm_rooms | 3078 | 342 (11%) |
+| cs_assault | 9407 | 694 (7.4%) |
+| zp_kievpass | 21978 | 1259 (5.7%) |
+
+Every one of them EXACTLY collinear, none with a repeated vertex, which is why the test in
+build/mesh.js can be a strict zero rather than a tolerance. Dropped at the point the triangles are
+emitted, so they leave the index stream and the collision tree together; the fixed build logs 0 of
+those Karma lines against 27 for the same fight before it.
+
+The reason none of this showed for years: with `bBlockKarma=False` Karma never built world collision
+at all, so it never read the triangles. A control build with the flag off logs zero Karma lines.
 
 ### 4.8b The mesh serializer is not the problem - measure it correctly
 `writeMesh` reproduces **4377 of 4377** shipped static meshes byte for byte. An earlier figure of

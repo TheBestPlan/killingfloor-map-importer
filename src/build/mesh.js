@@ -26,6 +26,22 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+// Three points on one line make a triangle of no area. It draws nothing, so it looks free - but it
+// goes into the collision tree all the same, and Karma, which reads that tree as the level's world
+// collision, gets a face normal of length 0 out of it: "(Karma:) Bad Normal Length: 0.000000" in
+// the log, a NaN in the contact, and the ragdoll that touched it leaves the level instead of
+// landing on it. Which is a corpse vanishing in mid-air, no fall, no body.
+//
+// GoldSrc rings carry the vertices of their neighbours' T-junctions, so a fan over one produces
+// these by the hundred: 293 of ka_legoland's 3306 triangles, 342 of zm_rooms' 3078 - and every one
+// EXACTLY collinear rather than merely thin, which is why the test can be this strict.
+const collinear = (a, b, c) => {
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+  const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  return nx * nx + ny * ny + nz * nz <= 1e-6;
+};
+
 // Bilinear sample of a face's GoldSrc lightmap at a world position (in GoldSrc space).
 function sampleLight(hl, ti, pHL) {
   if (!hl) return [128, 128, 128];
@@ -116,7 +132,7 @@ function buildMeshes(map, opts) {
 
   // 256-bin histogram of luxel brightness, so a percentile can be taken later without keeping
   // every sample.
-  const stats = { faces: 0, skipped: 0, triangles: 0, subdivided: 0, sky: 0, skyLid: 0, lumHist: new Int32Array(256), lumN: 0, lumR: 0, lumG: 0, lumB: 0 };
+  const stats = { faces: 0, skipped: 0, triangles: 0, subdivided: 0, sky: 0, skyLid: 0, flat3: 0, lumHist: new Int32Array(256), lumN: 0, lumR: 0, lumG: 0, lumB: 0 };
   const byMaterial = new Map();                        // group key -> triangles
   const groupInfo = new Map();                         // group key -> { matRef, page }
 
@@ -207,23 +223,24 @@ function buildMeshes(map, opts) {
       // Splitting every face would multiply the triangle count ~25x; split only the faces GoldSrc
       // itself lit unevenly, since a face its own compiler shaded flat has nothing to lose.
       const depth = opts.lightDetail ? detailDepth(lightContrast(hl)) : 0;
+      // Reversed winding on both paths. GoldSrc -> Unreal mirrors Y, and a mirror flips triangle
+      // orientation as the rasteriser sees it, so emitting the ring in its original order presents
+      // every face to the camera back-first and back-face culling removes it. The ground suffered
+      // most visibly (nothing to stand on, sky showing through), but it hit every surface.
+      const emit = (t) => {
+        if (collinear(t[0].pos, t[2].pos, t[1].pos)) { stats.flat3++; return; }
+        list.push({ tri: [t[0], t[2], t[1]], normal, water: isWater, ent: job.ent });
+        stats.triangles++;
+      };
       for (let i = 2; i < pts.length; i++) {
         const fan = [pts[0], pts[i - 1], pts[i]];
         if (opts.subdivide || depth) {
           const out = [];
           subdivide(fan, out, 0, opts.subdivide ? undefined : depth);
           if (out.length > 1) stats.subdivided++;
-          // Same reversed winding as below: the Y mirror flips what the rasteriser sees, and the
-          // subdivided path used to emit the original order and present every split face backwards.
-          for (const tri of out) list.push({ tri: [tri[0], tri[2], tri[1]], normal, water: isWater, ent: job.ent });
-          stats.triangles += out.length;
+          for (const tri of out) emit(tri);
         } else {
-          // Reversed winding. GoldSrc -> Unreal mirrors Y, and a mirror flips triangle orientation
-          // as the rasteriser sees it, so emitting the ring in its original order presents every
-          // face to the camera back-first and back-face culling removes it. The ground suffered
-          // most visibly (nothing to stand on, sky showing through), but it hit every surface.
-          list.push({ tri: [fan[0], fan[2], fan[1]], normal, water: isWater, ent: job.ent });
-          stats.triangles++;
+          emit(fan);
         }
       }
     }

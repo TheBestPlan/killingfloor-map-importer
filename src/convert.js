@@ -238,12 +238,15 @@ function convert(opts) {
   const meshDynLit = dynamicLight ||
     (lightingMode === "lightmap" && !unlitWorld && !!process.env.KF_LM_DYNLIT);
   // `bBlockKarma` is "block actors being simulated with Karma" (Actor.uc:561), and a corpse IS one -
-  // so False is why bodies drop through a converted floor while a hand-built port holds them
+  // so False is why bodies dropped through a converted floor while a hand-built port held them
   // (StaticMeshActor's own default is True). It went off to stop the malloc storm of GOTCHAS 4.8a,
   // but that storm is KAggregateGeomInstance building simple hulls out of a mesh that has none, and
-  // UseSimpleKarmaCollision=False already sends Karma to the kDOP triangles instead. KF_KARMA=1
-  // turns it back on - gated until a level has been loaded with it and the memory watched.
-  const blockKarma = !!process.env.KF_KARMA;
+  // UseSimpleKarmaCollision=False already sends Karma to the kDOP triangles instead.
+  //
+  // What has to hold for this to be safe is that those triangles are clean: Karma reads them as the
+  // world and a zero-area one is a NaN contact (build/mesh.js). KF_NO_KARMA=1 goes back to scenery
+  // nothing can rest on.
+  const blockKarma = !process.env.KF_NO_KARMA;
   // The world's share of the level's light, carried per ACTOR so it reaches the walls and the props
   // and nobody standing between them. KF_LM_GLOW=<0..254> overrides it; 255 would mean "pulsing".
   // Only the lit route: every other mode lights the meshes some other way, and a glow on top of it
@@ -303,6 +306,9 @@ function convert(opts) {
     SPLevelInfo: pkg.importClass("KFMod", "KFSPLevelInfo"),
     Light: pkg.importClass("Engine", "Light"),
     PhysicsVolume: pkg.importClass("Engine", "PhysicsVolume"),
+    // Where Killing Floor's waves come from. A converted map has none of its own, so KF_TEST_ZEDS
+    // puts a few in for testing the things that need something to shoot.
+    ZombieVolume: pkg.importClass("KFMod", "ZombieVolume"),
     // Engine.Effects is the plain sprite billboard: DT_Sprite, unlit, no collision, no physics and
     // no script of its own - exactly what env_sprite/env_glow/cycler_sprite are.
     Effects: pkg.importClass("Engine", "Effects"),
@@ -1207,7 +1213,7 @@ function convert(opts) {
       (missing ? ", " + missing + " skipped (file not found or unreadable)" : ""));
   }
 
-  const starts = [];
+  const starts = [], startLocs = [];
   if (o.emitPlayerStarts) {
     // Harness hook: KF_SPAWN_AT="x,y,z" drops the player at one chosen spot instead of the map's
     // own spawns, so a specific thing (a pool, a corner) can be looked at without driving there.
@@ -1228,6 +1234,7 @@ function convert(opts) {
         if (g !== null) loc = [e._at[0], e._at[1], g * o.scale + 46];
       }
       const yaw = e._at && spawnAt && spawnAt.length > 3 ? Math.round((spawnAt[3] / 360) * 65536) & 0xffff : angleToYaw(e);
+      startLocs.push(loc);
       starts.push(pkg.addExport({
         classRef: refs.PlayerStart, name: named("PlayerStart"), flags: ACTOR,
         serialize: (p) => {
@@ -1244,6 +1251,48 @@ function convert(opts) {
     });
     holder.starts = starts;
     log("player starts: " + starts.length);
+  }
+
+  // KF_TEST_ZEDS=<n>: n ZombieVolumes on the player starts, so a converted map has something to
+  // fight in without hand-placing anything in KFEd. A converted map carries none of its own - the
+  // waves have nowhere to come from - which makes anything that only shows on a dead zed (the
+  // ragdoll, the corpse) impossible to look at.
+  //
+  // Not on top of the player: ZombieVolume skips itself while anyone is within MinDistanceToPlayer
+  // (600), so they are spread over the starts and there is always one somewhere else in the level.
+  const zedVols = [];
+  const testZeds = Math.max(0, Math.min(32, Math.round(+process.env.KF_TEST_ZEDS || 0)));
+  if (testZeds && startLocs.length) {
+    const half = [256, 256, 96];
+    const step = Math.max(1, Math.floor(startLocs.length / testZeds));
+    for (let i = 0; i < startLocs.length && zedVols.length < testZeds; i += step) {
+      // The start sits 46 above the floor; centre the box so its own floor is about there.
+      const centre = [startLocs[i][0], startLocs[i][1], startLocs[i][2] + half[2] - 40];
+      const polysRef = pkg.addExport({
+        classRef: refs.Polys, name: named("Polys"), flags: RF.GAME,
+        serialize: (p) => writePolys(p, boxPolys(half.map((v) => -v), half)),
+      });
+      const modelRef = pkg.addExport({
+        classRef: refs.Model, name: named("Model"), flags: RF.GAME,
+        serialize: (p) => writeModel(p, Object.assign(boxBrushModel(half.map((v) => -v), half), { polys: polysRef })),
+      });
+      zedVols.push(pkg.addExport({
+        classRef: refs.ZombieVolume, name: named("ZombieVolume"), flags: ACTOR,
+        serialize: (p) => {
+          const w = new Writer(256);
+          writeStateFrame(w, refs.ZombieVolume);
+          const pr = p.props(w);
+          // Everything else is the class's own default: every zed type allowed, volume enabled.
+          pr.bool("bAllowPlainSightSpawns", true);
+          pr.actorCommon(levelInfoRef, physVolRef, "ZombieVolume", 1, zoneInfoRef);
+          pr.vector("Location", centre);
+          pr.object("Brush", modelRef);
+          pr.end();
+          return w;
+        },
+      }));
+    }
+    log("test zeds: " + zedVols.length + " ZombieVolume(s) on the player starts (KF_TEST_ZEDS)");
   }
 
   const summaryRef = pkg.addExport({
@@ -1402,6 +1451,7 @@ function convert(opts) {
     if (Number.isFinite(lowest)) holder.killZ = lowest - 2000;
     log("mesh: " + meshBuild.stats.faces + " faces -> " + meshBuild.stats.triangles + " triangles in " +
       meshBuild.meshes.length + " mesh(es)" + (meshBuild.stats.skipped ? ", " + meshBuild.stats.skipped + " skipped" : "") +
+      (meshBuild.stats.flat3 ? ", " + meshBuild.stats.flat3 + " collinear triangle(s) dropped" : "") +
       (meshBuild.stats.sky ? ", " + meshBuild.stats.sky + " sky faces " +
         (meshBuild.stats.skyLid ? "KEPT as a lid - no skybox to see through them" : "cut out for the skybox") : "") +
       (meshBuild.stats.water ? ", " + meshBuild.stats.water + " water surfaces (translucent, no collision, " +
@@ -1897,7 +1947,7 @@ function convert(opts) {
   // exist as far as Build Geometry is concerned - which is what left the rebuilt world solid, with
   // every spawn "imbedded in level geometry", even once the brush itself was being written.
   const actors = [levelInfoRef, brushRef, physVolRef, zoneInfoRef, ...csgBrushes,
-    ...lightRefs, ...sunRefs, ...visionRefs, ...waterVols, ...spriteActors, ...propActors, ...starts, ...meshActors];
+    ...lightRefs, ...sunRefs, ...visionRefs, ...waterVols, ...zedVols, ...spriteActors, ...propActors, ...starts, ...meshActors];
   built.levelRef = pkg.addExport({
     classRef: refs.Level, name: "myLevel", flags: RF.GAME,
     serialize: (p) => {
