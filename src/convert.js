@@ -30,6 +30,9 @@ const dxt = require("./unreal/dxt");
 // Measured overbright of an unlit surface in KF: 2.5x (see unreal/texture.js). Pre-divide the sky
 // so it reads at the brightness Counter-Strike shows.
 const SKY_GAIN = 1 / 2.4;
+// What the sky is when the map's own images are nowhere to be found: a plain daylight blue, in
+// screen values, since SKY_GAIN and the engine's overbright cancel out.
+const FLAT_SKY = [120, 148, 188];
 
 // Converted maps read a little darker than the same map in Counter-Strike, so the zone's ambient -
 // which is what lights the meshes - gets this much on top of the measured shadow level.
@@ -219,6 +222,20 @@ function convert(opts) {
   // mesh every frame the way `--lighting dynamic` does.
   const meshDynLit = dynamicLight ||
     (lightingMode === "lightmap" && !unlitWorld && !!process.env.KF_LM_DYNLIT);
+  // `bBlockKarma` is "block actors being simulated with Karma" (Actor.uc:561), and a corpse IS one -
+  // so False is why bodies drop through a converted floor while a hand-built port holds them
+  // (StaticMeshActor's own default is True). It went off to stop the malloc storm of GOTCHAS 4.8a,
+  // but that storm is KAggregateGeomInstance building simple hulls out of a mesh that has none, and
+  // UseSimpleKarmaCollision=False already sends Karma to the kDOP triangles instead. KF_KARMA=1
+  // turns it back on - gated until a level has been loaded with it and the memory watched.
+  const blockKarma = !!process.env.KF_KARMA;
+  // The zone ambient is BOTH the multiplier on the world's baked atlas and the light on the player,
+  // his hands and the zeds, so one number cannot serve both: at 40 the walls read right and the
+  // soldier is a lamp. AmbientGlow is per ACTOR - it lifts the world without touching anybody
+  // standing in it - so KF_LM_GLOW=<0..254> puts the world's share there and leaves KF_AMBIENT free
+  // to be whatever the pawn needs.
+  const lmGlow = process.env.KF_LM_GLOW === undefined
+    ? 0 : Math.max(0, Math.min(254, Math.round(+process.env.KF_LM_GLOW)));
 
   const map = bspReader.load(o.bspFile);
   const baseName = path.basename(o.bspFile).replace(/\.bsp$/i, "");
@@ -396,18 +413,8 @@ function convert(opts) {
     // A map that leaves skyname unset is not a map without a sky: the engine falls back to whatever
     // sv_skyname holds, which ships as "desert". a2k_aimskillz is one of these.
     const skyName = o.sky || world.skyname || "desert";
-    const box = o.stockSky ? null : loadSkybox(skyName, roots);
-    // Control experiment: --stock-sky "Package.Group.Name" puts a texture that ships with Killing
-    // Floor on all six faces of the sky room instead of the converted ones. If an artefact survives
-    // that, nothing about the converted sky images can be causing it.
-    if (o.stockSky) {
-      const parts = o.stockSky.split(".");
-      let outer = pkg.importPackage(parts[0]);
-      for (let i = 1; i < parts.length - 1; i++) outer = pkg.importObject("Core", "Package", outer, parts[i]);
-      const texRef = pkg.importObject("Engine", "Texture", outer, parts[parts.length - 1]);
-      for (const side of SIDES) skySides[side] = { texRef, name: o.stockSky, width: 512, height: 512 };
-      log("skybox: STOCK " + o.stockSky + " on all six faces (control build)");
-    } else if (box) {
+    const box = loadSkybox(skyName, roots);
+    if (box) {
       // How each sky image has to be rotated is a convention that is easy to get wrong from memory
       // - and getting it wrong shows up only as clouds breaking across a cube edge. Solve it from
       // the pictures instead: see build/skyboxorient.js.
@@ -422,6 +429,23 @@ function convert(opts) {
       }
       log("skybox: " + skyName + " (" + box.up.width + "x" + box.up.height + " x6) " + oriented.report.join(" ") +
         (box.missing && box.missing.length ? " [no " + box.missing.map((s) => skyName + s + ".tga").join(", ") + " - stood in]" : ""));
+    } else if (!o.noSky) {
+      // The images are on nobody's disk - `dustbowl` ships with Counter-Strike itself, and a map
+      // downloaded on its own brings none of it. Put a flat sky on the cube rather than leave the
+      // sky brushes' holes with nothing behind them, which is not "no sky" but the previous frame
+      // smeared over the screen (build/mesh.js).
+      //
+      // Generated, not borrowed from a KF package: a texture reference the client cannot resolve is
+      // a map that will not open AT ALL, and trading a cosmetic fault for that is a bad deal. The
+      // colour is what a real sky face lands on once the engine's overbright has had it, so it sits
+      // in the same range as a converted one.
+      const side = 8;
+      const rgb = Buffer.alloc(side * side * 3);
+      for (let i = 0; i < side * side; i++) rgb.set(FLAT_SKY, i * 3);
+      const t = addRgbTexture(pkg, refs, "sky_flat", { width: side, height: side, rgb }, SKY_GAIN);
+      for (const s of SIDES) skySides[s] = t;
+      log("skybox MISSING: " + skyName + " - no gfx/env images found, a flat sky stands in" +
+        " (--sky <name> / --wad <folder with gfx/env> to use a real one)");
     } else {
       log("skybox MISSING: " + skyName + " - no gfx/env images found, sky faces keep the flat placeholder");
     }
@@ -1143,14 +1167,13 @@ function convert(opts) {
           pr.object("StaticMeshInstance", hit.instRef);
           pr.bool("bStatic", true);
           pr.bool("bWorldGeometry", true);
-          // Props are scenery: they collide so you cannot walk through the truck, but they are not
-          // the floor, so the karma flag stays off (see GOTCHAS 4.8c).
           pr.bool("bCollideActors", true);
           pr.bool("bBlockActors", true);
           pr.bool("bBlockPlayers", true);
           pr.bool("bBlockZeroExtentTraces", true);
           pr.bool("bBlockNonZeroExtentTraces", true);
-          pr.bool("bBlockKarma", false);
+          // A body thrown onto the roof of the truck should stay there, same rule as the floor.
+          pr.bool("bBlockKarma", blockKarma);
           pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
           pr.vector("ColLocation", loc);
           pr.vector("Location", loc);
@@ -1291,6 +1314,8 @@ function convert(opts) {
       // Lit at run time, the baked luxels would add themselves on top of the real lights; carried
       // as a texture, they are in the material instead and the stream is dead weight either way.
       flatColor: dynamicLight || lightmap ? 0 : undefined,
+      // Only cut the sky brushes out when something will be drawn through the holes.
+      hasSkybox: !o.noSky && Object.keys(skySides).length > 0,
     });
     // Zone ambient = the 25th PERCENTILE of the map's luxels, not the average.
     //
@@ -1358,7 +1383,8 @@ function convert(opts) {
     if (Number.isFinite(lowest)) holder.killZ = lowest - 2000;
     log("mesh: " + meshBuild.stats.faces + " faces -> " + meshBuild.stats.triangles + " triangles in " +
       meshBuild.meshes.length + " mesh(es)" + (meshBuild.stats.skipped ? ", " + meshBuild.stats.skipped + " skipped" : "") +
-      (meshBuild.stats.sky ? ", " + meshBuild.stats.sky + " sky faces cut out for the skybox" : "") +
+      (meshBuild.stats.sky ? ", " + meshBuild.stats.sky + " sky faces " +
+        (meshBuild.stats.skyLid ? "KEPT as a lid - no skybox to see through them" : "cut out for the skybox") : "") +
       (meshBuild.stats.water ? ", " + meshBuild.stats.water + " water surfaces (translucent, no collision, " +
         (meshBuild.stats.waterHidden || 0) + " box sides dropped)" : ""));
     // One texture per atlas page, one TexCoordSource that reads it through UV channel 1, and one
@@ -1584,6 +1610,7 @@ function convert(opts) {
             // level entirely. What static lighting adds on top is a bake nobody performed - black -
             // and dynamic light lands on the Diffuse.
             if (unlitWorld && !mesh.water) pr.bool("bUnlit", true);
+            if (lmGlow && !unlitWorld && !mesh.water) pr.byte("AmbientGlow", lmGlow);
             pr.bool("bWorldGeometry", true);
             // Spelled out rather than inherited: the level is nothing but these actors, so if the
             // class defaults ever disagree the whole map becomes a hole the player falls through.
@@ -1594,10 +1621,9 @@ function convert(opts) {
             pr.bool("bBlockPlayers", !mesh.water);
             pr.bool("bBlockZeroExtentTraces", !mesh.water);
             pr.bool("bBlockNonZeroExtentTraces", !mesh.water);
-            // Karma is what killed the level: KInitActorKarma -> KCreateActorGeometry ->
-            // KAggregateGeomInstance allocates until the process runs out of virtual memory when
-            // the mesh has no karma primitives to build from. Nothing here needs rigid bodies.
-            pr.bool("bBlockKarma", false);
+            // This is the floor corpses rest on, so it is the one that has to block Karma - see the
+            // KF_KARMA note above for why it is off by default.
+            pr.bool("bBlockKarma", blockKarma && !mesh.water);
           }
           pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
           // The mesh is authored around its own centre; put the actor where that centre belongs.

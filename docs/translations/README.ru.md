@@ -66,7 +66,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | выкл | не переносить точки спавна |
 | `--ase` | выкл | дополнительно выдать `.ase` / `.t3d` (бекенд B, для доводки руками в KFEd) |
 
-Диагностические ключи оставлены намеренно: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. Переменная `KF_SPAWN_AT="x,y,z[,yaw]"` заменяет все точки спавна одной в этой точке — так попадают туда, где интересно.
+Диагностические ключи оставлены намеренно: `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. Переменная `KF_SPAWN_AT="x,y,z[,yaw]"` заменяет все точки спавна одной в этой точке — так попадают туда, где интересно.
 
 ## Что переносится
 

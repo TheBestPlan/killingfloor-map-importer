@@ -66,7 +66,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | desligado | não transportar os pontos de spawn |
 | `--ase` | desligado | emitir também `.ase` / `.t3d` (backend B, para acabamento manual no KFEd) |
 
-Interruptores de diagnóstico, deixados de propósito: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. A variável de ambiente `KF_SPAWN_AT="x,y,z[,yaw]"` substitui todos os pontos de spawn por um único naquele ponto — a forma de aterrar onde está o que queres ver.
+Interruptores de diagnóstico, deixados de propósito: `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. A variável de ambiente `KF_SPAWN_AT="x,y,z[,yaw]"` substitui todos os pontos de spawn por um único naquele ponto — a forma de aterrar onde está o que queres ver.
 
 ## O que é transportado
 

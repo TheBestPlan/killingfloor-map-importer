@@ -66,7 +66,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | wył. | nie przenosić punktów startowych |
 | `--ase` | wył. | dodatkowo wypisać `.ase` / `.t3d` (backend B, do ręcznego wykończenia w KFEd) |
 
-Przełączniki diagnostyczne zostawione celowo: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. Zmienna środowiskowa `KF_SPAWN_AT="x,y,z[,yaw]"` zastępuje wszystkie punkty startowe jednym w tym miejscu — tak trafia się tam, gdzie jest ciekawie.
+Przełączniki diagnostyczne zostawione celowo: `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. Zmienna środowiskowa `KF_SPAWN_AT="x,y,z[,yaw]"` zastępuje wszystkie punkty startowe jednym w tym miejscu — tak trafia się tam, gdzie jest ciekawie.
 
 ## Co jest przenoszone
 

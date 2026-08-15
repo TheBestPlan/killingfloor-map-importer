@@ -66,7 +66,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | オフ | スポーン地点を移植しない |
 | `--ase` | オフ | `.ase` / `.t3d` も出力（バックエンド B、KFEd での手仕上げ用） |
 
-意図的に残してある診断用スイッチ: `--stock-sky "Pkg.Group.Name"`、`--no-sky`、`--no-extras`、`--no-light`、`--tree-translate`、`--spawn-index N`。環境変数 `KF_SPAWN_AT="x,y,z[,yaw]"` はすべてのスポーン地点をその 1 点に置き換えます——見たい場所に直接降り立つ方法です。
+意図的に残してある診断用スイッチ: `--no-sky`、`--no-extras`、`--no-light`、`--tree-translate`、`--spawn-index N`。環境変数 `KF_SPAWN_AT="x,y,z[,yaw]"` はすべてのスポーン地点をその 1 点に置き換えます——見たい場所に直接降り立つ方法です。
 
 ## 移植されるもの
 

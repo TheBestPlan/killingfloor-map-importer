@@ -29,7 +29,6 @@ function parseArgs(argv) {
     else if (t === "--light-scale") a.lightScale = parseFloat(argv[++i]);
     else if (t === "--bare") a.bare = true;
     else if (t === "--sky") a.sky = argv[++i];
-    else if (t === "--stock-sky") a.stockSky = argv[++i];
     else if (t === "--no-sky") a.noSky = true;
     else if (t === "--no-extras") a.noExtras = true;
     else if (t === "--no-light") a.noLight = true;
@@ -74,7 +73,7 @@ function main() {
     bspFile, outFile: outIsDir ? null : a.out || null, outDir: outIsDir ? a.out : null,
     mapName: a.name, scale: a.scale, lightMapScale: a.lightMapScale,
     wadDirs, emitPlayerStarts: !a.noSpawns, log: (m) => console.log("  " + m),
-    sky: a.sky, stockSky: a.stockSky, noSky: a.noSky, noExtras: a.noExtras, noLight: a.noLight, brushEntities: !a.noBrushEntities, noMasked: a.noMasked, noSections: a.noSections, emptyWorld: a.emptyWorld, noHulls: a.noHulls, stockTexture: a.stockTexture, textureFormat: a.textureFormat, faceLimit: a.faceLimit, maxDepth: a.maxDepth, spawnLimit: a.spawnLimit, spawnIndex: a.spawnIndex, noSplitPolys: a.noSplitPolys, treeTranslate: a.treeTranslate, geometry: a.geometry || undefined, hullMax: a.hullMax, bare: a.bare, noSwim: a.noSwim, wade: a.wade, healthScale: a.healthScale, lighting: a.lighting, lightScale: a.lightScale,
+    sky: a.sky, noSky: a.noSky, noExtras: a.noExtras, noLight: a.noLight, brushEntities: !a.noBrushEntities, noMasked: a.noMasked, noSections: a.noSections, emptyWorld: a.emptyWorld, noHulls: a.noHulls, stockTexture: a.stockTexture, textureFormat: a.textureFormat, faceLimit: a.faceLimit, maxDepth: a.maxDepth, spawnLimit: a.spawnLimit, spawnIndex: a.spawnIndex, noSplitPolys: a.noSplitPolys, treeTranslate: a.treeTranslate, geometry: a.geometry || undefined, hullMax: a.hullMax, bare: a.bare, noSwim: a.noSwim, wade: a.wade, healthScale: a.healthScale, lighting: a.lighting, lightScale: a.lightScale,
   });
 
   if (a.ase) {

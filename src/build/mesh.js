@@ -116,7 +116,7 @@ function buildMeshes(map, opts) {
 
   // 256-bin histogram of luxel brightness, so a percentile can be taken later without keeping
   // every sample.
-  const stats = { faces: 0, skipped: 0, triangles: 0, subdivided: 0, sky: 0, lumHist: new Int32Array(256), lumN: 0, lumR: 0, lumG: 0, lumB: 0 };
+  const stats = { faces: 0, skipped: 0, triangles: 0, subdivided: 0, sky: 0, skyLid: 0, lumHist: new Int32Array(256), lumN: 0, lumR: 0, lumG: 0, lumB: 0 };
   const byMaterial = new Map();                        // group key -> triangles
   const groupInfo = new Map();                         // group key -> { matRef, page }
 
@@ -128,11 +128,20 @@ function buildMeshes(map, opts) {
       const ti = map.texinfo[face.texinfo];
       const tex = texOf.get(ti.miptex);
       if (!tex || tex.kind === "tool" || !tex.ref) { stats.skipped++; continue; }
-      // Sky brushes must NOT become geometry. Their texture is the 16x16 `sky` placeholder from
-      // halflife.wad, so they turn into a pale lid sealing the level and hiding the skybox cube
-      // behind it - the "white sky" that survived every fix aimed at the sky itself. Cut them out
-      // and the holes they leave are exactly the view onto the real skybox.
-      if (tex.kind === "sky") { stats.sky = (stats.sky || 0) + 1; continue; }
+      // Sky brushes must NOT become geometry when there is a skybox behind them. Their texture is
+      // the 16x16 `sky` placeholder from halflife.wad, so they turn into a pale lid sealing the
+      // level and hiding the cube - the "white sky" that survived every fix aimed at the sky
+      // itself. Cut them out and the holes they leave are exactly the view onto the real skybox.
+      //
+      // With no skybox - the map names one whose gfx/env images are nowhere on this machine, as
+      // ka_legoland names dustbowl - there is nothing behind those holes, and an unfilled hole is
+      // not "no sky": it is the previous frame smeared across the screen. The pale lid is the
+      // lesser of the two.
+      if (tex.kind === "sky") {
+        stats.sky++;
+        if (opts.hasSkybox) continue;
+        stats.skyLid++;
+      }
       const isWater = tex.kind === "liquid" || !!job.isWater;
       const ring = map.faceVertices(face);
       if (ring.length < 3) { stats.skipped++; continue; }

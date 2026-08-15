@@ -276,15 +276,23 @@ to build from it allocates until the process dies with "Ran out of virtual memor
 `UseSimpleKarmaCollision=False` on the mesh and `bBlockKarma=False` on the actor.
 
 ### 4.8c UseSimpleKarmaCollision=False is required on every walkable mesh
-Reported by a mapper, and it has two separate consequences - both bad, both silent:
+Without it the engine walks KInitActorKarma -> KCreateActorGeometry -> KAggregateGeomInstance for
+every actor using the mesh and allocates until the process dies of "Ran out of virtual memory". The
+converter emits it False on every mesh it makes (unreal/staticmesh.js). Do not "tidy it away" -
+nothing in the file says why it is there.
 
-* at load, the engine walks KInitActorKarma -> KCreateActorGeometry -> KAggregateGeomInstance for
-  every actor using the mesh and allocates until the process dies of "Ran out of virtual memory";
-* in play, corpses of players and monsters FALL THROUGH the floor instead of resting on it, because
-  ragdolls collide against the simplified karma hull rather than the real surface.
+### 4.8d `bBlockKarma=False` is why the corpses fall through the floor
+`Actor.bBlockKarma` is "Block actors being simulated with Karma" (Actor.uc:561) and a ragdoll is
+exactly that, so an actor with it off is one every corpse drops straight through. It was turned off
+alongside `UseSimpleKarmaCollision` to stop the malloc storm above, and that was one flag too many:
+the storm is `KAggregateGeomInstance` building simple hulls out of a mesh that has none, and
+`UseSimpleKarmaCollision=False` already sends Karma to the kDOP triangles instead.
 
-The converter emits it False on every mesh it makes (unreal/staticmesh.js). Do not "tidy it away" -
-nothing in the file says why it is there, and the second symptom appears only minutes into a match.
+`StaticMeshActor`'s own default is True, and the hand-built KF port of ka_legoland leaves it there -
+its bodies rest on the floor while the converted map's fall through, same level, same meshes.
+
+Measured with it back on: ka_legoland loads and plays, and zp_kievpass - 1227 mesh actors, the
+biggest map in the set - loads too, no allocation storm. `KF_KARMA=1` while the default is still off.
 
 ### 4.8b The mesh serializer is not the problem - measure it correctly
 `writeMesh` reproduces **4377 of 4377** shipped static meshes byte for byte. An earlier figure of
@@ -401,6 +409,32 @@ brightness is all that is left, forever. Carry the luxels across instead.
   The projector draws its own spot on any surface and never depended on this; the light has
   `LightRadius=3` and fades with beam length, so it only shows close up.
 
+### 4.11a The zone ambient is the ONLY light on the player, and `AmbientGlow` splits it off the world
+Measured on ka_legoland, one build per row, everything else equal:
+
+| ZoneInfo.AmbientBrightness | StaticMeshActor.AmbientGlow | the world | the player |
+|---|---|---|---|
+| 40 | - | right | too bright - the complaint |
+| 10 | - | dark | dim |
+| 0 | 40 | right | a black silhouette |
+| 10 | 30 | right | right |
+
+Two facts fall out of it:
+
+* **`AmbientGlow` adds to the zone ambient, per ACTOR, and the two are worth the same.** 0+40 and
+  10+30 light the wall identically. So the world's share can live on the mesh actors and the zone
+  ambient is free to be whatever the pawn needs - one number no longer has to serve both.
+* **A static light reaches the pawn no more than it reaches the wall.** At ambient 0 the player is
+  pure black with `Gameplay.Sunlight` at brightness 50 and nine `Light`s at up to 136 standing in
+  the level. §4.10's "a static light contributes nothing at run time" holds for dynamic actors too;
+  everything the player, his hands and the zeds show comes from the zone.
+
+The mapper's side of the same fact: a hand-placed KF static has no `AmbientGlow`, so it sits at the
+zone ambient while the converted world sits at ambient + glow. Give it the same `AmbientGlow` the
+converted meshes carry and it matches. `AmbientGlow` only ever brightens (0..254; 255 means pulsing)
+- to go the other way use `ScaleGlow`, a float multiplier on the actor's draw that KF's own
+`KFDoorMover` ships at 0.5.
+
 ---
 
 ## 5. Rendering behaviour observed in the client
@@ -516,6 +550,26 @@ skybox cube. cs_assault: 295 faces cut.
 Corollary: the skybox cube is built separately and does not pass through the world meshes'
 winding flip, so it must not be "corrected" along with them. It is emitted with both windings so
 the convention cannot silently break it again.
+
+Second corollary, and it cost an evening: **cut the faces out only when a cube will be built.** A
+map can name a sky whose `gfx/env` images are on nobody's disk - ka_legoland names `dustbowl`, which
+ships with Counter-Strike and with none of the map packs - and then the holes have nothing behind
+them. An unfilled hole is not "no sky": it is the previous frame smeared across the screen, bands of
+yellow and magenta that read as a corrupt texture rather than as missing geometry.
+
+So the missing-images case now builds the cube anyway, out of a flat blue 8x8 the converter
+generates itself. Generated rather than named out of a KF package on purpose: a texture reference
+the client cannot resolve is a map that will not open at all, and that is a far worse failure than a
+plain sky. A stock KF sky was tried against it - `Waterworks_T.General.skyblue` renders as flat
+blue, the same picture the generated one gives, for the price of a package dependency.
+
+`--no-sky` is the one route with no cube at all, and there `hasSkybox` keeps the pale lid so the
+level is sealed rather than smeared.
+
+Better than either: point the converter at the images - `--wad <any cstrike folder that has
+gfx/env>` plus `--sky <a name that is there>`, or `--cs-dir <a Counter-Strike install>` so the stock
+skies are always found. The log says which it took: `skybox: desert (256x256 x6)` against
+`skybox MISSING: dustbowl ... a flat sky stands in`.
 
 ### 5.8 RETRACTED: "a token BSP / chunked meshes stop the meshes drawing"
 Both of those conclusions were false negatives from a broken test harness: the engine writes 24-bit

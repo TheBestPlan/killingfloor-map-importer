@@ -66,7 +66,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | 关 | 不搬运出生点 |
 | `--ase` | 关 | 额外输出 `.ase` / `.t3d`（后端 B，供在 KFEd 里手工收尾） |
 
-刻意保留的诊断开关：`--stock-sky "Pkg.Group.Name"`、`--no-sky`、`--no-extras`、`--no-light`、`--tree-translate`、`--spawn-index N`。环境变量 `KF_SPAWN_AT="x,y,z[,yaw]"` 会把所有出生点换成该点的一个——这是直接落到想看的位置的办法。
+刻意保留的诊断开关：`--no-sky`、`--no-extras`、`--no-light`、`--tree-translate`、`--spawn-index N`。环境变量 `KF_SPAWN_AT="x,y,z[,yaw]"` 会把所有出生点换成该点的一个——这是直接落到想看的位置的办法。
 
 ## 会搬过来的东西
 

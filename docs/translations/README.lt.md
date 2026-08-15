@@ -66,7 +66,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | `--no-spawns` | išjungta | neperkelti atsiradimo taškų |
 | `--ase` | išjungta | papildomai išvesti `.ase` / `.t3d` (B galas, rankiniam užbaigimui KFEd) |
 
-Diagnostiniai jungikliai palikti tyčia: `--stock-sky "Pkg.Group.Name"`, `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. Aplinkos kintamasis `KF_SPAWN_AT="x,y,z[,yaw]"` pakeičia visus atsiradimo taškus vienu tame taške — taip patenkama ten, kur įdomu.
+Diagnostiniai jungikliai palikti tyčia: `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`. Aplinkos kintamasis `KF_SPAWN_AT="x,y,z[,yaw]"` pakeičia visus atsiradimo taškus vienu tame taške — taip patenkama ten, kur įdomu.
 
 ## Kas perkeliama
 
