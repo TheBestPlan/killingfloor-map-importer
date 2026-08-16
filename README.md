@@ -159,13 +159,17 @@ killingfloor-map-importer/
 ├─ test/                    selfcheck.js (pnpm test), repack.js, render-test.ps1
 ├─ harness/                 play.ps1, flat.js, bmp2png.js — looking at a map in the real client
 ├─ scripts/                 research tools used to work the formats out (see docs/RESEARCH.md)
-└─ docs/                    RESEARCH.md, GOTCHAS.md, translations/
+└─ docs/                    RESEARCH.md, GOTCHAS.md, games/, translations/
 ```
 
 ## Documentation
 
+The notes are split the way the converter is: one file for the target, one per source game.
+
 - **[docs/RESEARCH.md](./docs/RESEARCH.md)** — the format research: what was measured on both sides, the `UModel` v128 serialization order, the three possible architectures and why this one, how the existing `KF-CS-*` ports were actually made.
-- **[docs/GOTCHAS.md](./docs/GOTCHAS.md)** — every measured pitfall, including the five invariants whose violation crashes the engine. Required reading before changing the writer.
+- **[docs/GOTCHAS.md](./docs/GOTCHAS.md)** — the Killing Floor side: every measured pitfall of writing UE2.5, including the invariants whose violation crashes the engine. Required reading before changing the writer, whatever you are reading from.
+- **[docs/games/goldsrc.md](./docs/games/goldsrc.md)** — what reading a Counter-Strike 1.6 `.bsp` costs: WADs, palettes and masking, sky images, brush entities, `.mdl` props, water.
+- **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields and their layer blend, brush polygons, and why the sky cannot be carried across.
 - **[harness/README.md](./harness/README.md)** — checking a converted map in the real client.
 
 ## Legal
