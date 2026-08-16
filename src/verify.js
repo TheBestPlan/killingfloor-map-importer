@@ -64,6 +64,19 @@ function verify(file) {
   for (const im of pkg.imports) if (im.packageIndex < 0 && -im.packageIndex - 1 >= pkg.imports.length) badRef++;
   check("class / outer references resolve", badRef === 0, badRef + " unresolved");
 
+  // An export whose class is 0 IS "in range" - index 0 is the null reference - and it is fatal:
+  // the engine binds the object as a UClass and dies on the first one it loads ("Assertion failed:
+  // GIsEditor || GetSuperClass()"). It costs a whole test round to find that way, and one `refs`
+  // entry misspelled or missing produces it, so it is checked here rather than in the client.
+  let classless = 0, firstClassless = "";
+  for (const e of pkg.exports) {
+    if (e.classIndex !== 0) continue;
+    classless++;
+    if (!firstClassless) firstClassless = e.name;
+  }
+  check("every export names a class", classless === 0,
+    classless ? classless + " with class None, first " + firstClassless : "0 with class None");
+
   const need = ["LevelInfo", "Level", "Model", "Polys", "Brush"];
   const present = new Set(pkg.exports.map((e) => pkg.classOf(e)));
   check("required object classes present", need.every((n) => present.has(n)), [...present].slice(0, 12).join(","));

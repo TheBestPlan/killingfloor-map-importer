@@ -19,12 +19,24 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const SKY_PACKAGE = /^l2_skies$/i;
 const isSky = (target) => !!(target && target.pkg && SKY_PACKAGE.test(target.pkg));
 
+// An antiportal is a rendering hint - a box the engine uses to occlude what is behind it - and not a
+// surface. Carried across as geometry it is a grey slab across the level.
+const isAntiportal = (target) => !!(target && /antiportal/i.test(target.name || ""));
+
+// Water. A square's sea is one brush polygon a kilometre across, and drawing it opaque puts a flat
+// lid over the terrain: on 16_24 that lid IS what looked like flat ground with the real mountains
+// poking through it, and the red stripes were the two fighting for the same depth. It is drawn
+// see-through and it is not something to stand on.
+const isWater = (target) => !!(target && /water|ocean/i.test((target.pkg || "") + "." + (target.name || "")));
+
 // `resolve(target)` hands back { texRef, width, height } for a poly's texture, or null.
 function buildBrushMeshes(polys, resolve, opts) {
   const scale = (opts && opts.scale) || 1;
   const groups = new Map();
+  let antiportal = 0;
   for (const p of polys) {
     if (p.vertices.length < 3) continue;
+    if (isAntiportal(p.texture)) { antiportal++; continue; }
     const key = p.texture ? p.texture.pkg + "." + p.texture.name : "(none)";
     if (!groups.has(key)) groups.set(key, { target: p.texture, polys: [] });
     groups.get(key).polys.push(p);
@@ -33,7 +45,8 @@ function buildBrushMeshes(polys, resolve, opts) {
   const meshes = [];
   let dropped = 0;
   for (const [key, g] of groups) {
-    const tex = resolve(g.target);
+    const water = isWater(g.target);
+    const tex = resolve(g.target, { water });
     if (!tex || !tex.texRef) { dropped += g.polys.length; continue; }
     let cur = null;
     const flush = () => {
@@ -46,7 +59,8 @@ function buildBrushMeshes(polys, resolve, opts) {
     };
     const start = () => {
       cur = {
-        key, sky: isSky(g.target), materials: [tex.texRef], vertices: [], uvs: [], colors: [], indices: [],
+        key, sky: isSky(g.target), water, blend: tex.blend || "opaque",
+        materials: [tex.texRef], vertices: [], uvs: [], colors: [], indices: [],
         bbox: { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] },
         origin: [0, 0, 0],
       };
@@ -78,7 +92,7 @@ function buildBrushMeshes(polys, resolve, opts) {
     flush();
   }
   const triangles = meshes.reduce((n, m) => n + m.indices.length / 3, 0);
-  return { meshes, triangles, dropped, groups: groups.size };
+  return { meshes, triangles, dropped, antiportal, groups: groups.size };
 }
 
 module.exports = { buildBrushMeshes };

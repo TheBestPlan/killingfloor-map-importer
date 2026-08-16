@@ -762,6 +762,26 @@ CS door brush wears one texture on its two faces and another on its four edges, 
 two meshes - two Movers at the same place, each holding half the door, and the door read as a
 paper-thin sheet with no edges. Entity meshes stay whole and multi-section.
 
+### 5.36 `bAlphaTexture` is an instruction, not a description
+It does not mean "this texture has an alpha channel", it means "cut this surface out by it", and the
+D3D renderer draws that as a dither pattern. Setting it from the format - DXT3/DXT5 have alpha, so
+flag them - puts a stipple over every wall whose alpha the artist never used, which is most of them
+in a Lineage 2 client. The importer classifies the alpha data instead (`docs/games/lineage2.md`
+L2.11b) and only flags a texture the material is actually going to read.
+
+The general shape of the fix: a surface's blending belongs to the MATERIAL, not to the texture.
+Where the source says what it wants, carry the byte (`Shader.OutputBlending`); where it does not,
+decide once, in one place, and give the texture a `Shader` that states the answer.
+
+### 5.37 `UTexture` animates itself through `AnimNext`
+`AnimNext` plus `MinFrameRate`/`MaxFrameRate` is a flipbook the engine runs on its own - no emitter,
+no script, nothing per frame from the map. The last frame points back at the first. Any source
+engine of the UE2 family stores the same three fields, so a fire or a waterfall comes across as an
+animation rather than a still by carrying the ring of textures and their frame rate.
+
+Writing a ring means an export has to reference one that does not exist yet, so the reference is
+resolved at serialise time rather than when the export is registered.
+
 ## 6. LevelInfo / gameplay
 
 ### 6.0a "Navigation point imbedded in level geometry" means the BSP, not the spawn height

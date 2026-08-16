@@ -60,9 +60,13 @@ function readTerrain(client, pkg) {
       ];
     },
     // A quad is drawn unless its visibility bit is clear.
+    //
+    // The row stride is the map width, not the quad count: 8194 bytes for a 256x256 square is the
+    // array's 2-byte header and exactly 256x256 bits. Walking it 255 to the row shears the mask one
+    // bit further left on every row down.
     quadVisible(ix, iy) {
       if (!this.visibility) return true;
-      const bit = iy * (this.width - 1) + ix;
+      const bit = iy * this.width + ix;
       const byte = 2 + (bit >> 3);                  // the array's 2-byte header
       if (byte >= this.visibility.length) return true;
       return (this.visibility[byte] >> (bit & 7) & 1) !== 0;

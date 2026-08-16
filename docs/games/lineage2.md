@@ -111,17 +111,37 @@ the terrain (L2.9): what is under the ground is a dungeon built out of brushes, 
 the player on those.
 
 Consequence for the converter: **a spawn is only usable if it stands on something that was actually
-built.** Dropping the player on a Lineage 2 start without checking put him under the world, falling
-until KillZ. The rule is: take the brush floor under the spawn if there is one, else the terrain if
-the spawn is above it, else fall back to the highest ground in the middle of the square.
+built**, and its own height is worth more than any surface found beneath it. Dropping the player on a
+Lineage 2 start without checking put him under the world, falling until KillZ; then setting him down
+on the first brush floor below put him 212 units under 17_20's town, looking up at the underside of
+it, because in a town the floor is a static mesh and the brush under it is the ground it stands on.
+
+The starts sort into three piles and the biggest one wins:
+
+- **on the heightfield** (17_22: 8) — kept where they are, raised only if they are below it;
+- **a level below it** (16_12: 12, more than 1024 units down, with a brush floor) — a dungeon, and
+  the only thing that makes that square playable;
+- **buried just under it** (17_20: 66, 416 units down with the town on top) — junk heights that name
+  a real place, so the spot is kept and the ground above is put back under the player.
+
+Whichever pile is largest is where the square is played. 16_12 has one stray start up on the empty
+heightfield and twelve down in the dungeon that is the whole map; preferring ground level for its own
+sake spawned the player on bare hillside. Nothing at all in any pile falls back to the highest dry
+ground in the square.
+
+A start over water is not automatically drowned: 17_22's harbour town stands 74 units above its own
+sea on static meshes. Only one AT the surface with the seabed under it is rejected.
 
 ## L2.9 `QuadVisibilityBitmap` is 8192 bytes behind a 2-byte header
 
-One bit per quad, LSB first, row-major. A clear bit is a hole in the ground — a cave mouth, the
-inside of a basin.
+One bit per quad, LSB first, row-major — and the row stride is the map WIDTH (256), not the number
+of quads across it (255). 8194 bytes is the array's 2-byte header and exactly 256×256 bits. Walking
+it 255 to the row shears the mask one bit further left on every row down. A clear bit is a hole in
+the ground — a cave mouth, the inside of a basin.
 
-Measured on three squares: **all 65536 bits set on every one of them.** The terrain is drawn whole;
-holes are rarer than the field suggests.
+Holes are rare: 16_12 and 16_24 have none at all, 17_20 has 36, 17_22 has 2390. The terrain is
+drawn whole almost everywhere, which is why a structure below it is invisible from above rather than
+reachable — and why L2's own starts down there are editor leftovers, not spawn points (L2.8).
 
 ## L2.10 The layer blend is in the layers' AlphaMaps, not in TIntMap
 
@@ -147,6 +167,55 @@ Follow the graph one property at a time — `ColorModifier.Material`, `Shader.Di
 `Combiner.Material1` — down to the texture that does the painting. What is lost is the tint and the
 panning; what is gained is every surface having a picture. Before this, 3205 of a square's mesh
 actors resolved to nothing.
+
+## L2.11a The client says how a surface is blended, and it is worth more than the pixels
+
+A surface's blending is a property of the material graph — `Shader.OutputBlending`, or
+`FinalBlend.FrameBufferBlending` — and Killing Floor's `EOutputBlending` is the same enum in the same
+order (`Engine/Classes/Shader.uc`: Normal, Masked, Modulate, Translucent, Invisible, Brighten,
+Darken). Carry the byte across and the surface looks like it does in Lineage 2. `EFrameBufferBlending`
+is a different order and maps onto it: Overwrite→Normal, Modulate→Modulate, both AlphaBlend kinds and
+Translucent→Translucent, Darken→Darken, Brighten→Brighten, Invisible→Invisible.
+
+Skipping it is expensive. A torch flame is `FX_E_S.Default_Flame01`, two sections: the flame is a
+DXT1 with **no alpha at all**, drawn with `OB_Brighten` so its black background adds nothing, and the
+glow beside it is `OB_Translucent`. Read as textures they have nothing to say, and every torch in
+16_12 came out as a flame painted on a black slab.
+
+Where the client says nothing, the alpha decides — see L2.11b.
+
+## L2.11b A texture with an alpha channel is usually not transparent
+
+Half the client's DXT3/DXT5 textures have an alpha of 255 throughout: the format was picked for the
+compressor, not for transparency. Setting `bAlphaTexture` on those makes Killing Floor cut the
+surface out by an alpha that says nothing, and the engine draws that as a dither pattern — the
+"ripple" over 16_12's wall panels.
+
+Read the alpha and classify it, format be damned. A DXT5 block carries two alpha endpoints and every
+texel in it interpolates between them, so a hard cut-out has both at 0 or 255 whatever it looks like
+inside the block; a DXT3 block carries sixteen nibbles. Three answers:
+
+- **none** — 255 everywhere. Plain texture, no `bAlphaTexture`.
+- **mask** — hard 0/255. `OB_Masked`: a window in a wall, a leaf, a rope. This is nearly all of them
+  — 267 of 17_22's 275.
+- **blend** — a quarter or more of the samples mid-range. `OB_Translucent`: water, the sky haze.
+
+The test is deliberately biased toward **mask**. A gradient drawn masked has hard edges; a cut-out
+drawn translucent is a wall you can see through that sorts wrongly against everything behind it.
+
+## L2.11c A flame is sixteen textures, and `AnimNext` is all it takes
+
+`de_fire_0000` carries `AnimNext` → `de_fire_0001`, `MinFrameRate = 25`, `MaxFrameRate = 30`,
+`TotalFrameNum = 16`, and the last frame points back at the first. Killing Floor's `UTexture` has
+`AnimNext`, `MinFrameRate` and `MaxFrameRate` and animates them itself — carry the ring and the fire
+burns, no emitter needed. Measured in game: two frames three seconds apart differ by up to 355 of 765
+across the flame and are pixel-identical everywhere else.
+
+The chain is circular, so a frame's export has to be registered before the next one is carried or the
+recursion never ends; the reference is asked for at serialise time, once every frame has a ref.
+
+What still does not come across is the particle work: 16_12 has 352 `SpriteEmitter`s and 264
+`Emitter`s, and none of them is geometry.
 
 ## L2.12 A non-square texture's mip chain stops when the SHORT side reaches 1
 

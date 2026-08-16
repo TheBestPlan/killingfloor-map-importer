@@ -19,7 +19,7 @@ const { Client } = require("./package");
 const { readTerrain } = require("./terrain");
 const { buildTerrainMeshes } = require("./terrainmesh");
 const { layerMap } = require("./layers");
-const { readTexture, followMaterial } = require("./texture");
+const { readTexture, followMaterial, materialInfo, alphaMode } = require("./texture");
 const { readMesh, toKFMesh, readInstanceColors } = require("./mesh");
 const { readBrushes } = require("./brush");
 const { buildBrushMeshes } = require("./brushmesh");
@@ -103,6 +103,10 @@ function convert(o) {
   const ACTOR_ED = RF.Transactional | RF.LoadForEdit | RF.NotForClient | RF.NotForServer | RF.HasStack;
   const refs = {
     Texture: pkg.importClass("Engine", "Texture"),
+    // What a surface with an opacity is wrapped in - water, a flame, a grate. Missing from this list
+    // it was `undefined`, the export went out with a class reference of 0, and the engine read the
+    // object as a CLASS: "Assertion failed: GIsEditor || GetSuperClass()" before the first frame.
+    Shader: pkg.importClass("Engine", "Shader"),
     Model: pkg.importClass("Engine", "Model"),
     Polys: pkg.importClass("Engine", "Polys"),
     Brush: pkg.importClass("Engine", "Brush"),
@@ -158,33 +162,115 @@ function convert(o) {
     width: 8, height: 8, rgb: Buffer.alloc(8 * 8 * 3), alpha: Buffer.alloc(8 * 8),
   }, 1, { raw: true }).texRef;
 
-  const meshStats = { actors: 0, meshes: 0, textures: 0, triangles: 0, baked: 0, missingMesh: 0, missingTex: 0, failed: 0 };
+  const meshStats = { actors: 0, meshes: 0, textures: 0, masked: 0, blended: 0, frames: 0, triangles: 0, baked: 0, missingMesh: 0, missingTex: 0, failed: 0 };
   // One cache for every texture the square asks for, whatever asks: the brushes and the meshes share
   // packages, and a texture carried twice is megabytes twice.
   const texCache = new Map();                       // "pkg.name" -> { texRef, width, height } | null
-  const resolveTexture = (target) => {
-    if (!target || !target.pkg) return null;
-    const key = target.pkg + "." + target.name;
+  const matCache = new Map();                       // "pkg.name" -> the material a surface gets
+  // The texture an AnimNext points at, wherever it lives.
+  const frameHit = (from, ref) => {
+    const t = refTarget(from, ref);
+    if (!t) return null;
+    if (t.local) return { pkg: from, exp: t.local };
+    const other = t.pkg ? client.get(t.pkg) : null;
+    const e = other && other.exports.find((x) => x.name === t.name && other.classOf(x) === "Texture");
+    return e ? { pkg: other, exp: e } : null;
+  };
+
+  // One texture, carried across once however many surfaces ask for it.
+  const carry = (hit, fallbackName) => {
+    if (!hit) return null;
+    const id = (hit.pkg.pkgName || fallbackName) + "_" + hit.exp.name;
+    const key = id.toLowerCase();
     if (texCache.has(key)) return texCache.get(key);
     let out = null;
-    const tp = client.get(target.pkg);
-    // A surface points at a material, and half of them are a graph node rather than a texture -
-    // follow it down to whatever actually paints (see followMaterial).
-    const exp0 = tp && tp.exports.find((e) => e.name === target.name);
-    const hit = exp0 ? followMaterial(tp, exp0, (n) => client.get(n)) : null;
-    if (hit) {
-      try {
-        const t = readTexture(hit.pkg, hit.exp);
-        if (t.exact && t.mips.length) {
-          const id = (hit.pkg.pkgName || target.pkg) + "_" + t.name;
-          out = { texRef: addRawTexture(pkg, refs, "l2_" + id.replace(/\./g, "_"), t).texRef, width: t.width, height: t.height };
+    try {
+      const t = readTexture(hit.pkg, hit.exp);
+      if (t.exact && t.mips.length) {
+        const alpha = alphaMode(t);
+        // A flame is sixteen textures, not one. The frame this is followed by is carried after this
+        // one is in the cache, so the last frame's AnimNext finds the first already there and the
+        // ring closes instead of recursing for ever.
+        const link = { next: 0 };
+        out = {
+          texRef: addRawTexture(pkg, refs, "l2_" + id.replace(/\./g, "_"), t, {
+            alpha: alpha !== "none",
+            anim: t.animNext ? { next: () => link.next, minFrameRate: t.minFrameRate, maxFrameRate: t.maxFrameRate } : null,
+          }).texRef,
+          width: t.width, height: t.height, format: t.format, alpha,
+        };
+        if (t.animNext) {
+          texCache.set(key, out);
+          meshStats.textures++;
+          const nxt = carry(frameHit(hit.pkg, t.animNext), fallbackName);
+          if (nxt) { link.next = nxt.texRef; meshStats.frames++; }
+          return out;
         }
-      } catch (e) { /* falls through to the missing count */ }
-    }
-    if (!out) meshStats.missingTex++; else meshStats.textures++;
+      }
+    } catch (e) { /* falls through to the missing count */ }
     texCache.set(key, out);
+    if (out) meshStats.textures++;
     return out;
   };
+
+  // What a surface is painted with, and how it is blended.
+  //
+  // Following a material down to one texture is not enough: a Lineage 2 `Shader` with an `Opacity`
+  // is a surface you see THROUGH, and drawing it opaque is what put the flames on a black slab and
+  // laid an opaque sea over 16_24's terrain. Where the client has an opacity, so does the output -
+  // a Killing Floor `Shader` with the same two halves and an OutputBlending that says which kind.
+  const resolveMaterial = (target, opts) => {
+    if (!target || !target.pkg) return null;
+    const key = target.pkg + "." + target.name + (opts && opts.water ? "|water" : "");
+    if (matCache.has(key)) return matCache.get(key);
+    let out = null;
+    const tp = client.get(target.pkg);
+    const exp0 = tp && tp.exports.find((e) => e.name === target.name);
+    const info = exp0 ? materialInfo(tp, exp0, (n) => client.get(n)) : null;
+    const tex = info && carry(info.texture, target.pkg);
+    if (tex) {
+      // A surface is see-through when the client says so with an Opacity, and ALSO when the texture
+      // itself carries a real alpha channel and nothing else says what to do with it - a banner, a
+      // leaf, a window in a wall.
+      const mask = info.opacity ? carry(info.opacity, target.pkg) : (tex.alpha !== "none" ? tex : null);
+      // How it is blended, in this order: what the client says, then what the alpha looks like.
+      //
+      // The client's own OutputBlending is worth more than any guess from the pixels. A flame is a
+      // black picture with no alpha at all, drawn with OB_Brighten so the black adds nothing - read
+      // as a texture it has nothing to say, and that is how the torches came out as black slabs
+      // (Screenshot_14). Only where the client is silent does the alpha decide: OB_Translucent for
+      // a real gradient, OB_Masked for the cut-out that nearly every alpha channel here is.
+      const said = info.blending;
+      const blending = (opts && opts.water) ? 3
+        : said !== undefined && said !== 0 ? said
+          : mask ? (mask.alpha === "blend" ? 3 : 1) : 0;
+      out = { texRef: tex.texRef, width: tex.width, height: tex.height, blend: "opaque" };
+      if (blending) {
+        const shaderRef = pkg.addExport({
+          classRef: refs.Shader, name: sanitizeName("L2Sh_" + key.replace(/[^A-Za-z0-9_]/g, "_")),
+          flags: refs.flagsGame,
+          serialize: (p) => {
+            const w = new Writer(160);
+            const pr = p.props(w);
+            pr.object("Diffuse", tex.texRef);
+            // OB_Brighten and OB_Modulate take the whole picture; only the cut-out and see-through
+            // kinds read an opacity, and handing them one they do not want costs a texture fetch.
+            if (mask && (blending === 1 || blending === 3)) pr.object("Opacity", mask.texRef);
+            pr.byte("OutputBlending", blending);
+            pr.bool("TwoSided", true);
+            pr.end();
+            return w;
+          },
+        });
+        out = { texRef: shaderRef, width: tex.width, height: tex.height, blend: blending === 1 ? "masked" : "translucent" };
+        if (blending === 1) meshStats.masked++; else meshStats.blended++;
+      }
+    }
+    if (!out) meshStats.missingTex++;
+    matCache.set(key, out);
+    return out;
+  };
+  const resolveTexture = (target) => resolveMaterial(target);
 
   // --- the level's box ----------------------------------------------------------------------------
   const lo = terrain.vertex(0, 0), hi = terrain.vertex(terrain.width - 1, terrain.height - 1);
@@ -539,6 +625,9 @@ function convert(o) {
     }
     log("static meshes: " + meshStats.actors + " actor(s) over " + meshStats.meshes + " mesh(es), " +
       meshStats.triangles + " triangles, " + meshStats.textures + " texture(s)" +
+      (meshStats.masked ? ", " + meshStats.masked + " cut out by their alpha" : "") +
+      (meshStats.blended ? ", " + meshStats.blended + " blended (see-through, additive)" : "") +
+      (meshStats.frames ? ", " + meshStats.frames + " animation frame(s)" : "") +
       (meshStats.baked ? ", " + meshStats.baked + " with the square's own baked vertex light" : "") +
       (meshStats.missingMesh ? ", " + meshStats.missingMesh + " mesh(es) not in this client" : "") +
       (meshStats.failed ? ", " + meshStats.failed + " unreadable" : "") +
@@ -552,20 +641,47 @@ function convert(o) {
   // Coarse "is there a floor here" map, in Lineage 2 units: the highest brush surface in each cell.
   // The spawn picker needs it - a dungeon under the heightfield is solid ground, but only where the
   // brushes actually are.
-  const FLOOR_CELL = 256;
-  const brushTop = new Map();
-  const cellKey = (x, y) => Math.floor(x / FLOOR_CELL) + "," + Math.floor(y / FLOOR_CELL);
+  // Where the floors are, and where the sea is.
+  //
+  // Kept as a list of horizontal polygons with their own extent rather than as a grid of cells: a
+  // square's sea is ONE quad a kilometre across, and a cell map only ever hears about its four
+  // corners - which is why the first attempt let 16_24 spawn on the sea floor.
+  const floors = [], waters = [];
+  const spanOf = (poly) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, z = -Infinity;
+    for (const v of poly.vertices) {
+      if (v[0] < x0) x0 = v[0];
+      if (v[1] < y0) y0 = v[1];
+      if (v[0] > x1) x1 = v[0];
+      if (v[1] > y1) y1 = v[1];
+      if (v[2] > z) z = v[2];
+    }
+    return { x0, y0, x1, y1, z };
+  };
+  // The highest surface of that kind under (or at) this point, or null.
+  const surfaceAt = (list, v, ceiling) => {
+    let best = null;
+    for (const s of list) {
+      if (v[0] < s.x0 || v[0] > s.x1 || v[1] < s.y0 || v[1] > s.y1) continue;
+      if (ceiling !== undefined && s.z > ceiling) continue;
+      if (best === null || s.z > best) best = s.z;
+    }
+    return best;
+  };
   if (!o.noBrushes) {
     const read = readBrushes(src, { solidOnly: false });
     Object.assign(brushStats, read.stats);
     for (const poly of read.polys) {
-      // Only surfaces you could stand on: a wall's top edge is not a floor.
+      // Only surfaces you could stand on or swim under: a wall is neither.
       if (Math.abs(poly.normal[2]) < 0.5) continue;
-      for (const v of poly.vertices) {
-        const k = cellKey(v[0], v[1]);
-        const cur = brushTop.get(k);
-        if (cur === undefined || v[2] > cur) brushTop.set(k, v[2]);
-      }
+      const name = (poly.texture && ((poly.texture.pkg || "") + "." + (poly.texture.name || ""))) || "";
+      if (/antiportal/i.test(name)) continue;
+      if (/water|ocean/i.test(name)) { waters.push(spanOf(poly)); continue; }
+      // A polygon with no texture is structural - the underside and sides of the water box, mostly -
+      // and it is not drawn, so it is not something to stand on either. Counting it as a floor put
+      // 16_24's spawn on the invisible top of its sea.
+      if (!poly.texture) continue;
+      floors.push(spanOf(poly));
     }
     const built = buildBrushMeshes(read.polys, resolveTexture, { scale });
     brushStats.meshes = built.meshes.length;
@@ -600,14 +716,16 @@ function convert(o) {
           pr.bool("bStatic", true);
           pr.bool("bWorldGeometry", true);
           // The square's own sky - the haze ring and the cloud plane, twenty thousand units up -
-          // is drawn, not lit, and is not something to bump into.
+          // is drawn, not lit, and is not something to bump into. Neither is water: in Lineage 2 you
+          // swim through it, and a sea with collision is a glass floor over the whole square.
+          const solid = !mesh.sky && !mesh.water;
           if (mesh.sky) pr.bool("bUnlit", true); else pr.byte("AmbientGlow", glow);
-          pr.bool("bCollideActors", !mesh.sky);
-          pr.bool("bBlockActors", !mesh.sky);
-          pr.bool("bBlockPlayers", !mesh.sky);
-          pr.bool("bBlockZeroExtentTraces", !mesh.sky);
-          pr.bool("bBlockNonZeroExtentTraces", !mesh.sky);
-          pr.bool("bBlockKarma", !mesh.sky);
+          pr.bool("bCollideActors", solid);
+          pr.bool("bBlockActors", solid);
+          pr.bool("bBlockPlayers", solid);
+          pr.bool("bBlockZeroExtentTraces", solid);
+          pr.bool("bBlockNonZeroExtentTraces", solid);
+          pr.bool("bBlockKarma", solid);
           pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
           pr.vector("ColLocation", at);
           pr.vector("Location", at);
@@ -617,9 +735,13 @@ function convert(o) {
       }));
     });
     brushStats.skyMeshes = built.meshes.filter((m) => m.sky).length;
+    brushStats.waterMeshes = built.meshes.filter((m) => m.water).length;
+    brushStats.antiportal = built.antiportal;
     log("brushes: " + brushStats.add + " additive (" + brushStats.subtract + " subtractive skipped), " +
       brushStats.polys + " polygon(s) -> " + brushStats.meshes + " mesh(es), " + brushStats.triangles + " triangles" +
       (brushStats.skyMeshes ? ", " + brushStats.skyMeshes + " of them the square's own sky" : "") +
+      (brushStats.waterMeshes ? ", " + brushStats.waterMeshes + " water (see-through, no collision)" : "") +
+      (brushStats.antiportal ? ", " + brushStats.antiportal + " antiportal polygon(s) skipped" : "") +
       (brushStats.dropped ? ", " + brushStats.dropped + " dropped for want of a texture" : "") +
       (brushStats.unreadable ? ", " + brushStats.unreadable + " brush(es) unreadable" : ""));
   }
@@ -702,46 +824,89 @@ function convert(o) {
     // own are not always above the heightfield - 16_12's are two thousand units under it, with the
     // town down there on brush geometry that does not come across yet - and a player dropped there
     // falls through the world until KillZ takes him.
+    // The HIGHEST of the four corners of the quad the spawn stands on, not the nearest vertex. On a
+    // slope the nearest vertex can be a whole quad's drop below the ground under the player's feet -
+    // 128 units of it at this terrain scale - and a start set down there starts inside the hill.
     const ground = (v) => {
-      const ix = Math.round((v[0] - terrain.location[0]) / terrain.scale[0]);
-      const iy = Math.round((v[1] - terrain.location[1]) / terrain.scale[1]);
-      if (ix < 0 || iy < 0 || ix >= terrain.width || iy >= terrain.height) return null;
-      return terrain.vertex(ix, iy)[2];
+      const fx = (v[0] - terrain.location[0]) / terrain.scale[0];
+      const fy = (v[1] - terrain.location[1]) / terrain.scale[1];
+      const ix = Math.floor(fx), iy = Math.floor(fy);
+      if (ix < 0 || iy < 0 || ix + 1 >= terrain.width || iy + 1 >= terrain.height) return null;
+      return Math.max(
+        terrain.vertex(ix, iy)[2], terrain.vertex(ix + 1, iy)[2],
+        terrain.vertex(ix, iy + 1)[2], terrain.vertex(ix + 1, iy + 1)[2]);
     };
-    const own = [], sunk = [];
+    // Four piles: on the heightfield, a level below it on brush geometry, buried just under it, and
+    // nowhere at all. In that order of preference - a square's own ground-level starts first, its
+    // dungeon second, and only then the place a buried start names with the ground put back.
+    const own = [], under = [], lifted = [], sunk = [];
     for (const e of src.exports) {
       if (src.classOf(e) !== "PlayerStart" || !e.serialSize) continue;
       const { tags } = tagsOf(src, e);
       const L = pick(tags, "Location");
       if (!L) continue;
       const v = val.vector(src, L);
+      // The height stays the client's own. Lineage 2 authored it against the same geometry this
+      // converts, and what a player stands on in a town is a static mesh - a brush floor there is
+      // often the ground UNDER the building. On 17_20 every start was being set down 212 units onto
+      // one of those and arrived below the town, looking up at the underside of it. The surfaces
+      // below only ever raise a start that is beneath them, never lower one.
+      const floor = surfaceAt(floors, v, v[2] + 64);
+      const onBrush = floor !== null && v[2] > floor - 64 && v[2] < floor + 1024;
+      const sea = surfaceAt(waters, v);
+      // Under the sea with no floor is the seabed, looking up at a ceiling.
+      if (!onBrush && sea !== null && v[2] < sea - 16) { sunk.push(v); continue; }
       const g = ground(v);
-      // A brush floor under the spawn counts as ground too - that is what a dungeon below the
-      // heightfield is. Take whichever surface the spawn is actually standing on.
-      const floor = brushTop.get(cellKey(v[0], v[1]));
-      const onBrush = floor !== undefined && v[2] > floor - 64 && v[2] < floor + 1024;
-      if (onBrush) { own.push([v[0], v[1], floor]); continue; }
-      // Off the grid, or under a heightfield with nothing built beneath it.
-      if (g === null || v[2] < g - 32) { sunk.push(v); continue; }
-      // Keep the spot, drop the height: a start can sit hundreds of units above its ground and the
-      // player would arrive taking fall damage. The ground is what we built, so stand him on it.
-      own.push([v[0], v[1], g]);
+      if (g !== null && v[2] > g - 32) {
+        // Over water, with the seabed for ground. A start above the surface is a start on a pier -
+        // 17_22's harbour town stands 74 units over its own sea on static meshes - and it keeps its
+        // height. One AT the surface has nothing holding it up: 16_24's only start floats exactly at
+        // sea level, and the ground it would settle onto is the seabed, underwater.
+        if (sea !== null && g < sea - 16 && v[2] < sea + 16) { sunk.push(v); continue; }
+        own.push([v[0], v[1], Math.max(v[2], g)]);
+      } else if (onBrush && g !== null && g - v[2] > 1024) {
+        // A whole level below the heightfield, standing on brush geometry: a dungeon. 16_12's is
+        // two thousand units down and this is the only thing that keeps that square playable. It is
+        // still second choice - a square with ground-level starts wants those, not its cellar.
+        //
+        // The depth is what tells a sub-level from a buried start. All 67 of 17_20's sit 416 units
+        // under visible ground with the town standing on top of them: they are not a floor below,
+        // they are junk, and a player put there is a player under the map.
+        under.push([v[0], v[1], Math.max(v[2], floor)]);
+      } else if (g !== null && !(sea !== null && g < sea - 16)) {
+        // Buried, but the place it names is a place a player belongs - 17_20's are in the middle of
+        // the town. Keep the spot and take the ground it is buried under.
+        lifted.push([v[0], v[1], g]);
+      } else {
+        sunk.push(v);
+      }
     }
     let where, from;
-    if (own.length) {
-      where = own.slice(0, 16).map((v) => toKF(v));
-      from = own.length + " of the square's own" + (sunk.length ? ", " + sunk.length + " skipped as under the terrain" : "");
+    if (own.length || under.length || lifted.length) {
+      // Where MOST of the square's starts are is where the square is played. 16_12 has one stray
+      // start up on the empty heightfield and twelve down in the dungeon that is the whole map;
+      // taking the ground-level one because it is ground level puts the player on bare hillside.
+      const piles = [[own, ""], [under, ", all of them a level below the heightfield"],
+        [lifted, ", all of them buried and set back on the ground above"]];
+      const best = piles.reduce((a, b) => (b[0].length > a[0].length ? b : a));
+      const use = best[0], what = best[1];
+      const skipped = sunk.length + own.length + under.length + lifted.length - use.length;
+      where = use.slice(0, 16).map((v) => toKF(v));
+      from = use.length + " of the square's own" + what +
+        (skipped ? ", " + skipped + " skipped as under the terrain" : "");
     } else {
       if (sunk.length) {
-        log("note: all " + sunk.length + " of the square's spawns sit under its heightfield - what is " +
-          "down there is brush geometry, which this converter does not carry across yet");
+        log("note: none of the square's " + sunk.length + " spawns stands on anything this built - " +
+          "they are under the heightfield, or under the sea with no floor beneath them");
       }
-      const mid = Math.floor(terrain.width / 2);
+      // The highest dry ground anywhere in the square, not just in the middle: on a coastal square
+      // the middle is often the sea floor, and a start there is a start underwater.
       let best = null;
-      for (let y = mid - 8; y <= mid + 8; y++) {
-        for (let x = mid - 8; x <= mid + 8; x++) {
-          if (x < 0 || y < 0 || x >= terrain.width || y >= terrain.height) continue;
+      for (let y = 4; y < terrain.height - 4; y += 2) {
+        for (let x = 4; x < terrain.width - 4; x += 2) {
           const p = terrain.vertex(x, y);
+          const sea = surfaceAt(waters, p);
+          if (sea !== null && p[2] < sea) continue;
           if (!best || p[2] > best[2]) best = p;
         }
       }

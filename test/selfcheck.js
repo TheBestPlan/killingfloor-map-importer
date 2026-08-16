@@ -264,5 +264,23 @@ console.log("\nLanczos resample");
   ok("resample preserves the alpha mean", mean > 100 && mean < 155, "mean " + mean.toFixed(1));
 }
 
+// What a Lineage 2 texture's alpha channel is FOR decides how the surface is blended, and getting
+// it backwards is a wall you can see through. Three synthetic DXT5 mips, one of each answer.
+console.log("\nLineage 2 alpha classification");
+{
+  const { alphaMode, TEXF } = require("../src/lineage2/texture");
+  const blocks = (pairs) => {
+    const b = Buffer.alloc(pairs.length * 16);
+    pairs.forEach(([a0, a1], i) => { b[i * 16] = a0; b[i * 16 + 1] = a1; });
+    return { format: TEXF.DXT5, mips: [{ data: b, width: 16, height: 16 }] };
+  };
+  const opaque = Array.from({ length: 16 }, () => [255, 255]);
+  const cutout = Array.from({ length: 16 }, (_, i) => (i < 8 ? [0, 0] : [255, 255]));
+  const gradient = Array.from({ length: 16 }, () => [40, 200]);
+  ok("alpha of 255 everywhere is not transparency", alphaMode(blocks(opaque)) === "none", alphaMode(blocks(opaque)));
+  ok("a hard 0/255 alpha is a cut-out", alphaMode(blocks(cutout)) === "mask", alphaMode(blocks(cutout)));
+  ok("a mid-range alpha is a gradient", alphaMode(blocks(gradient)) === "blend", alphaMode(blocks(gradient)));
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
