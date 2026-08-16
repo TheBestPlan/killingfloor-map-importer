@@ -404,4 +404,117 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
   });
   return { texRef, name, width: img.width, height: img.height };
 }
-module.exports = { addTexture, addRgbTexture, sanitizeName, TEXF_P8 };
+// A texture carried across from another Unreal package with its pixels untouched.
+//
+// Killing Floor and the game it came from store the same block formats, so a DXT1/3/5 mip is the
+// bytes the GPU wants either way and re-encoding it would only lose a generation. What differs is
+// the wrapper: the older engine writes one INT between the properties and the mip array (see
+// lineage2/texture.js), and this writes the object the way 128/29 expects.
+//
+// `tex` is { format, width, height, mips: [{ data, width, height }] } - the shape the readers hand
+// back. The chain must reach 1x1: the engine derives the level count from USize/VSize, not from the
+// array, so a short chain makes it index past the end (GOTCHAS 5.33).
+// Bytes one mip level occupies. Block formats round up to whole 4x4 blocks and never go below one,
+// which is why every level under 4x4 is the same size as the 4x4 above it.
+function mipBytes(format, w, h) {
+  const blocks = Math.max(1, Math.ceil(w / 4)) * Math.max(1, Math.ceil(h / 4));
+  if (format === 3) return blocks * 8;                            // DXT1
+  if (format === 7 || format === 8) return blocks * 16;           // DXT3 / DXT5
+  if (format === 5) return w * h * 4;                             // RGBA8
+  if (format === 4) return w * h * 3;                             // RGB8
+  if (format === 2 || format === 10) return w * h * 2;            // RGB16 / G16
+  return w * h;                                                   // P8 / L8
+}
+
+// A chain that reaches 1x1. A non-square texture in an older client stops when its SHORT side hits
+// 1 - a 128x512 ends at 1x4 - but Killing Floor derives the level count from USize/VSize rather than
+// from the array, so it indexes past the end of a short one (GOTCHAS 5.33). Below 4x4 every level is
+// the same single block, so the missing tail is the last level repeated at the declared sizes.
+function padMipChain(format, width, height, mips) {
+  const want = Math.round(Math.log2(Math.max(width, height))) + 1;
+  if (!mips.length || mips.length >= want) return mips;
+  const out = mips.slice();
+  let w = out[out.length - 1].width, h = out[out.length - 1].height;
+  while (out.length < want) {
+    const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
+    const last = out[out.length - 1];
+    if (mipBytes(format, nw, nh) !== last.data.length) break;     // not a block-sized tail: leave it
+    out.push({ data: last.data, width: nw, height: nh });
+    w = nw; h = nh;
+  }
+  return out;
+}
+
+// The top level as tight RGB, for the textures that cannot be carried across untouched.
+function topAsRgb(tex) {
+  const m = tex.mips[0];
+  if (!m) return null;
+  const dxt = require("./dxt");
+  const { width, height } = tex;
+  if (tex.format === 3) return dxt.decodeDXT1(m.data, width, height);
+  if (tex.format === 7 || tex.format === 8) {
+    const rgba = dxt.decodeDXT3(m.data, width, height);
+    const rgb = Buffer.alloc(width * height * 3);
+    for (let i = 0; i < width * height; i++) { rgb[i * 3] = rgba[i * 4]; rgb[i * 3 + 1] = rgba[i * 4 + 1]; rgb[i * 3 + 2] = rgba[i * 4 + 2]; }
+    return rgb;
+  }
+  if (tex.format === 5) {                                          // RGBA8, stored BGRA
+    const rgb = Buffer.alloc(width * height * 3);
+    for (let i = 0; i < width * height; i++) { rgb[i * 3] = m.data[i * 4 + 2]; rgb[i * 3 + 1] = m.data[i * 4 + 1]; rgb[i * 3 + 2] = m.data[i * 4]; }
+    return rgb;
+  }
+  // Grey. G16 turns up where it has no business being - a terrain layer in 23_18 paints with the
+  // square's own heightmap - and it ships one mip, so without this the chain stays short.
+  if (tex.format === 9 || tex.format === 10) {
+    const rgb = Buffer.alloc(width * height * 3);
+    for (let i = 0; i < width * height; i++) {
+      const v = tex.format === 10 ? m.data[i * 2 + 1] : m.data[i];   // G16: the high byte is the value
+      rgb[i * 3] = v; rgb[i * 3 + 1] = v; rgb[i * 3 + 2] = v;
+    }
+    return rgb;
+  }
+  return null;
+}
+
+function addRawTexture(pkg, refs, name, tex, opts) {
+  const alpha = tex.format === 7 || tex.format === 8;             // DXT3 / DXT5 carry their own
+  const mips = padMipChain(tex.format, tex.width, tex.height, tex.mips);
+  // A texture shipped with ONE level cannot be padded - there is no tail to repeat - and a short
+  // chain is one the engine indexes past (GOTCHAS 5.33). Decode it and go out through the ordinary
+  // writer, which builds the whole chain. Costs a re-encode, and only these few pay it.
+  const want = Math.round(Math.log2(Math.max(tex.width, tex.height))) + 1;
+  if (mips.length < want) {
+    const rgb = topAsRgb(tex);
+    if (rgb) return addRgbTexture(pkg, refs, name, { width: tex.width, height: tex.height, rgb }, 1);
+  }
+  const texRef = pkg.addExport({
+    classRef: refs.Texture, name: sanitizeName(name), flags: refs.flagsGame,
+    serialize: (p) => {
+      const total = mips.reduce((n, m) => n + m.data.length, 0);
+      const w = new Writer(total + 1024);
+      const pr = p.props(w);
+      pr.byte("Format", tex.format);
+      pr.int("USize", tex.width);
+      pr.int("VSize", tex.height);
+      pr.byte("UBits", log2(tex.width));
+      pr.byte("VBits", log2(tex.height));
+      pr.int("UClamp", tex.width);
+      pr.int("VClamp", tex.height);
+      if (opts && opts.clamp) { pr.byte("UClampMode", 1); pr.byte("VClampMode", 1); }
+      if (alpha) pr.bool("bAlphaTexture", true);
+      if (opts && opts.paletteRef) pr.object("Palette", opts.paletteRef);
+      pr.end();
+      w.cidx(mips.length);
+      for (const m of mips) {
+        const rec = w.lazySkip();
+        w.cidx(m.data.length).bytes(m.data);
+        w.resolveLazy(rec);
+        w.i32(m.width).i32(m.height).u8(log2(m.width)).u8(log2(m.height));
+      }
+      return w;
+    },
+  });
+  return { texRef, name, width: tex.width, height: tex.height };
+}
+
+module.exports = { addTexture, addRgbTexture, addRawTexture, topAsRgb, sanitizeName, TEXF_P8 };

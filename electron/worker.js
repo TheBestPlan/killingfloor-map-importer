@@ -7,8 +7,40 @@ const { convert } = require("../src/convert");
 const { verify } = require("../src/verify");
 const { clientRoots } = require("../src/resources");
 
+// Lineage 2: the input is a client folder and the name of a world square, so it has its own
+// converter rather than a flag on the GoldSrc one. Everything downstream - the verifier, the
+// reporting, the child process - is shared.
+function convertL2(job, log) {
+  const l2 = require("../src/lineage2/convert");
+  const res = l2.convert({
+    clientDir: job.clientDir, square: job.square, mapName: job.name || null,
+    outDir: job.outDir || null,
+    scale: job.scale, terrainStep: job.terrainStep, ambient: job.ambient, glow: job.glow,
+    log,
+  });
+  const v = verify(res.out);
+  for (const line of v.report.split("\n")) log(line);
+  process.send({
+    kind: "done", ok: v.ok, out: res.out, mapName: res.mapName,
+    size: fs.statSync(res.out).size,
+    nodes: res.model ? res.model.nodes.length : 0,
+    surfs: res.model ? res.model.surfs.length : 0,
+    lightMaps: 0, atlases: 0,
+    textures: res.textures || 0, missingTextures: 0,
+    terrain: res.terrain,
+  });
+}
+
 process.on("message", (job) => {
   const log = (t) => process.send({ kind: "log", text: t });
+  if (job.game === "l2") {
+    try { convertL2(job, log); } catch (e) {
+      log("ERROR: " + e.message);
+      process.send({ kind: "done", ok: false, error: e.message });
+    }
+    process.exit(0);
+    return;
+  }
   // The picked Counter-Strike folder goes first: its stock WADs and gfx/env skyboxes are what a
   // downloaded .bsp is missing. convert() still adds the map's own neighbourhood after these.
   const wadDirs = [...clientRoots(job.csDir), ...(job.wadDirs || [])];

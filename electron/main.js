@@ -20,6 +20,12 @@ const DEFAULT_SETTINGS = {
   emitAse: false,
   emitPlayerStarts: true,
   lang: "en",          // UI language (Language picker in the header)
+  // Which game the maps come from. "cs" reads GoldSrc .bsp files, "l2" a Lineage 2 client.
+  game: "cs",
+  l2Dir: "",
+  terrainStep: 1,      // 1 keeps every terrain vertex, 2 halves the grid
+  l2Ambient: 32,       // the zone: the light on the player and the zeds
+  l2Glow: 40,          // AmbientGlow on the world's own actors
 };
 
 function loadSettings() {
@@ -39,6 +45,21 @@ function createWindow() {
   });
   win.setMenuBarVisibility(false);
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
+
+  // KF_SHOT=<file.png> captures the window and quits. Capturing the desktop instead gets whatever
+  // Windows has on top - the foreground lock means that is often not this app - so the picture has
+  // to come from the renderer itself. It is how the window gets checked without a person at it.
+  if (process.env.KF_SHOT) {
+    win.webContents.once("did-finish-load", () => {
+      setTimeout(async () => {
+        try {
+          const img = await win.webContents.capturePage();
+          fs.writeFileSync(process.env.KF_SHOT, img.toPNG());
+        } catch (e) { console.error("capture failed: " + e.message); }
+        app.quit();
+      }, Number(process.env.KF_SHOT_DELAY || 2500));
+    });
+  }
 }
 
 app.whenReady().then(() => {
@@ -65,6 +86,15 @@ ipcMain.handle("pick:dir", async (e, title) => {
 });
 
 ipcMain.handle("reveal", (e, file) => { if (file && fs.existsSync(file)) shell.showItemInFolder(file); });
+
+// The world squares a Lineage 2 client holds. Reading the folder is enough - the names are the grid
+// position - so this does not open a single package.
+ipcMain.handle("l2:squares", (e, dir) => {
+  try {
+    const { Client } = require("../src/lineage2/package");
+    return new Client(dir).squares().map((s) => ({ name: s.name, x: s.x, y: s.y }));
+  } catch (err) { return []; }
+});
 
 // One child process per map; progress lines stream back to the renderer.
 ipcMain.handle("convert", (e, job) => new Promise((resolve) => {

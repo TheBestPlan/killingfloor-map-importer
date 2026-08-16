@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld("api", {
   pickDir: (title) => ipcRenderer.invoke("pick:dir", title),
   reveal: (f) => ipcRenderer.invoke("reveal", f),
   convert: (job) => ipcRenderer.invoke("convert", job),
+  listSquares: (dir) => ipcRenderer.invoke("l2:squares", dir),
   onProgress: (cb) => ipcRenderer.on("progress", (e, m) => cb(m)),
 });

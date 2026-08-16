@@ -46,6 +46,14 @@ function parseArgs(argv) {
     else if (t === "--no-split-polys") a.noSplitPolys = true;
     else if (t === "--tree-translate") a.treeTranslate = true;
     else if (t === "--geometry") a.geometry = argv[++i];
+    // Which game the map comes from. "cs" is the GoldSrc .bsp route and the default; "l2" reads a
+    // Lineage 2 client instead, where a map is a square of the world rather than a file you point at.
+    else if (t === "--game") a.game = argv[++i];
+    else if (t === "--client") a.clientDir = argv[++i];
+    else if (t === "--square") a.square = argv[++i];
+    else if (t === "--terrain-step") a.terrainStep = parseInt(argv[++i], 10);
+    else if (t === "--ambient") a.ambient = parseInt(argv[++i], 10);
+    else if (t === "--glow") a.glow = parseInt(argv[++i], 10);
     else if (t === "--hull-max") a.hullMax = parseInt(argv[++i], 10);
     else if (t.startsWith("--")) throw new Error("unknown option " + t);
     else a._.push(t);
@@ -55,6 +63,33 @@ function parseArgs(argv) {
 
 function main() {
   const a = parseArgs(process.argv.slice(2));
+
+  // Lineage 2: the input is a client folder and the name of a world square, not a file.
+  if (/^(l2|lineage2?)$/i.test(a.game || "")) {
+    const l2 = require("./lineage2/convert");
+    const clientDir = a.clientDir || a._[0];
+    if (!clientDir || !a.square) {
+      console.log("usage: node src/cli.js --game l2 --client <Lineage 2 folder> --square 24_13");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 1] [--terrain-step 1] [--verify]");
+      process.exit(1);
+    }
+    if (a.out && !/\.rom$/i.test(a.out)) fs.mkdirSync(a.out, { recursive: true });
+    const res = l2.convert({
+      clientDir, square: a.square, mapName: a.name,
+      outFile: a.out && /\.rom$/i.test(a.out) ? a.out : null,
+      outDir: a.out && !/\.rom$/i.test(a.out) ? a.out : null,
+      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,
+      terrainStep: a.terrainStep, ambient: a.ambient, glow: a.glow,
+      log: (m) => console.log("  " + m),
+    });
+    if (a.verify) {
+      const v = verify(res.out);
+      console.log(v.report);
+      process.exit(v.ok ? 0 : 2);
+    }
+    return;
+  }
+
   if (!a._.length) {
     console.log("usage: node src/cli.js <map.bsp> [--out <dir|file>] [--name KF-Name] [--scale 2]");
     console.log("       [--lightmap-scale 32] [--wad <dir>]... [--verify] [--ase] [--no-spawns]");

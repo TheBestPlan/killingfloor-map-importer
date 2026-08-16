@@ -116,6 +116,64 @@ function decodeDXT3(data, width, height) {
   return out;
 }
 
+// DXT1 to tight RGB. The colour half of a DXT3 block with none of the alpha half in front of it -
+// the endpoints and the two-bit indices are the same eight bytes.
+function decodeDXT1(data, width, height) {
+  const bw = Math.ceil(width / 4), bh = Math.ceil(height / 4);
+  const out = Buffer.alloc(width * height * 3);
+  let o = 0;
+  for (let by = 0; by < bh; by++) {
+    for (let bx = 0; bx < bw; bx++) {
+      if (o + 8 > data.length) return out;
+      const c0 = data.readUInt16LE(o), c1 = data.readUInt16LE(o + 2);
+      const bits = data.readUInt32LE(o + 4);
+      const e0 = from565(c0), e1 = from565(c1);
+      const pal = c0 > c1
+        ? [e0, e1,
+          [(2 * e0[0] + e1[0]) / 3 | 0, (2 * e0[1] + e1[1]) / 3 | 0, (2 * e0[2] + e1[2]) / 3 | 0],
+          [(e0[0] + 2 * e1[0]) / 3 | 0, (e0[1] + 2 * e1[1]) / 3 | 0, (e0[2] + 2 * e1[2]) / 3 | 0]]
+        : [e0, e1, [(e0[0] + e1[0]) >> 1, (e0[1] + e1[1]) >> 1, (e0[2] + e1[2]) >> 1], [0, 0, 0]];
+      for (let k = 0; k < 16; k++) {
+        const x = bx * 4 + (k & 3), y = by * 4 + (k >> 2);
+        if (x >= width || y >= height) continue;
+        const c = pal[(bits >>> (k * 2)) & 3];
+        const d = (y * width + x) * 3;
+        out[d] = c[0]; out[d + 1] = c[1]; out[d + 2] = c[2];
+      }
+      o += 8;
+    }
+  }
+  return out;
+}
+
+// DXT1 to a single channel. Used for the terrain layer masks, which are grey images stored as
+// colour: what a layer is worth at a texel is the same in all three channels, so red is the weight
+// and there is no reason to expand to RGBA first.
+function decodeDXT1Gray(data, width, height) {
+  const bw = Math.ceil(width / 4), bh = Math.ceil(height / 4);
+  const out = Buffer.alloc(width * height);
+  let o = 0;
+  for (let by = 0; by < bh; by++) {
+    for (let bx = 0; bx < bw; bx++) {
+      if (o + 8 > data.length) return out;
+      const c0 = data.readUInt16LE(o), c1 = data.readUInt16LE(o + 2);
+      const bits = data.readUInt32LE(o + 4);
+      const e0 = from565(c0), e1 = from565(c1);
+      const g = (c) => (c[0] * 299 + c[1] * 587 + c[2] * 114) / 1000;
+      const pal = c0 > c1
+        ? [g(e0), g(e1), (2 * g(e0) + g(e1)) / 3, (g(e0) + 2 * g(e1)) / 3]
+        : [g(e0), g(e1), (g(e0) + g(e1)) / 2, 0];
+      for (let k = 0; k < 16; k++) {
+        const x = bx * 4 + (k & 3), y = by * 4 + (k >> 2);
+        if (x >= width || y >= height) continue;
+        out[y * width + x] = Math.max(0, Math.min(255, Math.round(pal[(bits >>> (k * 2)) & 3])));
+      }
+      o += 8;
+    }
+  }
+  return out;
+}
+
 // Box-filter an RGB8 image to half size (used to build the atlas's second mip).
 function halveRGB(rgb, w, h) {
   const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
@@ -133,4 +191,4 @@ function halveRGB(rgb, w, h) {
   return { rgb: out, width: nw, height: nh };
 }
 
-module.exports = { encodeDXT1, encodeDXT3, decodeDXT3, halveRGB, to565, from565 };
+module.exports = { encodeDXT1, encodeDXT3, decodeDXT3, decodeDXT1, decodeDXT1Gray, halveRGB, to565, from565 };

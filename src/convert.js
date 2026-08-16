@@ -1173,7 +1173,7 @@ function convert(opts) {
       const loc = [org[0] * o.scale, -org[1] * o.scale, org[2] * o.scale];
       // GoldSrc `angles` is "pitch yaw roll" in degrees; the Y mirror reverses the sense of a yaw.
       // A cycler_sprite draws its model a quarter turn past the yaw it declares - measured, not
-      // guessed: see GOTCHAS 5.31a and scripts/propyaw.js.
+      // guessed: see docs/games/goldsrc.md 5.31a and scripts/propyaw.js.
       const ang = (e.angles || "").trim().split(/\s+/).map(Number);
       const yawDeg = e.angle !== undefined ? parseFloat(e.angle) : (isFinite(ang[1]) ? ang[1] : 0);
       const deg = (d) => Math.round(((d || 0) / 360) * 65536);

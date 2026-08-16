@@ -67,13 +67,48 @@
 <body>
 <header>
   <h1>Killing Floor Map Importer</h1>
-  <span>Counter-Strike 1.6 &middot; GoldSrc BSP v30 &rarr; Unreal Engine 2.5 .rom</span>
+  <span id="sub" data-i18n="head.subCs">Counter-Strike 1.6 &middot; GoldSrc BSP v30 &rarr; Unreal Engine 2.5 .rom</span>
   <label class="lang"><span data-i18n="ui.language">Language</span><select id="lang"></select></label>
 </header>
 <main>
   <div class="side">
-    <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
-    <ul class="files" id="files"></ul>
+    <fieldset>
+      <legend data-i18n="legend.game">Source game</legend>
+      <select id="game">
+        <option value="cs" data-i18n="opt.gameCs">Counter-Strike 1.6 — GoldSrc .bsp</option>
+        <option value="l2" data-i18n="opt.gameL2">Lineage 2 — client world squares</option>
+      </select>
+    </fieldset>
+
+    <!-- Counter-Strike: a queue of files dropped or browsed for. -->
+    <div data-game="cs">
+      <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
+      <ul class="files" id="files"></ul>
+    </div>
+
+    <!-- Lineage 2: a client folder, and the squares of the world it holds. -->
+    <div data-game="l2">
+      <fieldset>
+        <legend data-i18n="legend.l2">Lineage 2 client</legend>
+        <label data-i18n="label.l2Dir">Client folder</label>
+        <div class="row"><input type="text" id="l2Dir" data-i18n-ph="ph.l2Dir" placeholder="…\Lineage 2 (folder with maps\)"><button id="pickL2">…</button></div>
+        <div class="hint" data-i18n="hint.l2Dir">The folder holding maps\, staticmeshes\ and textures\. Packages are read straight out of it, encryption and all.</div>
+        <label data-i18n="label.square">World squares</label>
+        <ul class="files" id="squares"></ul>
+        <div class="hint" data-i18n="hint.square">One square becomes one map. Click to pick; picked squares convert in order.</div>
+      </fieldset>
+      <fieldset>
+        <legend data-i18n="legend.l2Conv">Conversion</legend>
+        <label data-i18n="label.terrainStep">Terrain detail (1 = every vertex)</label>
+        <input type="number" id="terrainStep" step="1" min="1" max="8">
+        <div class="hint" data-i18n="hint.terrainStep">A square is 255×255 quads. 2 quarters the triangles and softens the ground.</div>
+        <label data-i18n="label.l2Ambient">Zone ambient (the player and the zeds)</label>
+        <input type="number" id="l2Ambient" step="1" min="0" max="255">
+        <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
+        <input type="number" id="l2Glow" step="1" min="0" max="254">
+        <div class="hint" data-i18n="hint.l2Light">The two add up to what a surface is lit by. Splitting them keeps the world right without the player glowing.</div>
+      </fieldset>
+    </div>
 
     <fieldset>
       <legend data-i18n="legend.output">Output</legend>
@@ -82,7 +117,7 @@
       <div class="hint" data-i18n="hint.outDir">Point this at KillingFloor\Maps to test straight away.</div>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-game="cs">
       <legend data-i18n="legend.resources">Resources</legend>
       <label data-i18n="label.csDir">Counter-Strike 1.6 client folder</label>
       <div class="row"><input type="text" id="csDir" data-i18n-ph="ph.csDir" placeholder="…\Counter-Strike 1.6 (folder with cstrike\)"><button id="pickCs">…</button></div>
@@ -94,7 +129,7 @@
       <div class="hint" data-i18n="hint.extraDirs">The map's own folder and the two above it are searched automatically.</div>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-game="cs">
       <legend data-i18n="legend.conversion">Conversion</legend>
       <label data-i18n="label.scale">Scale (Half-Life units &rarr; Unreal units ~ 1.9)</label>
       <input type="number" id="scale" step="0.05" min="0.1">
@@ -138,13 +173,56 @@ const $ = (id) => document.getElementById(id);
 const I18N = window.KFI18N;
 const t = (k, v) => I18N.t(k, v);
 let files = [];        // { path, name, stateKey }
+let squares = [];      // { name, x, y, picked, stateKey } - Lineage 2 world squares
 let settings = null;
 let lastOut = null;
+
+const isL2 = () => settings && settings.game === "l2";
+const queued = () => (isL2() ? squares.filter((s) => s.picked) : files);
 
 function renderFiles() {
   $("files").innerHTML = files.map((f, i) =>
     `<li><span class="n" title="${f.path}">${f.name}</span><span class="s ${f.cls || ""}">${t(f.stateKey || "state.queued")}</span></li>`).join("");
-  $("go").disabled = !files.length || busy;
+  $("go").disabled = !queued().length || busy;
+}
+
+// The square list doubles as the queue: clicking a row picks it, and the same status column the
+// file list uses reports what happened to it.
+function renderSquares() {
+  $("squares").innerHTML = squares.map((s, i) =>
+    `<li data-sq="${i}" style="cursor:pointer${s.picked ? ";color:var(--text)" : ""}">` +
+    `<span class="n">${s.picked ? "&#9679; " : "&#9675; "}${s.name}</span>` +
+    `<span class="s ${s.cls || ""}">${s.stateKey ? t(s.stateKey) : ""}</span></li>`).join("");
+  $("squares").querySelectorAll("[data-sq]").forEach((el) => {
+    el.onclick = () => { const s = squares[+el.dataset.sq]; s.picked = !s.picked; renderSquares(); renderFiles(); };
+  });
+  $("go").disabled = !queued().length || busy;
+}
+
+// Only the blocks belonging to the chosen game stay in the window.
+function applyGame() {
+  const g = (settings && settings.game) || "cs";
+  document.querySelectorAll("[data-game]").forEach((n) => { n.style.display = n.dataset.game === g ? "" : "none"; });
+  // The header and the greeting name the game as well - a window that says "GoldSrc BSP" while it
+  // is reading a Lineage 2 client is a window telling the user something false.
+  I18N.setText("sub", g === "l2" ? "head.subL2" : "head.subCs");
+  // The greeting carries markup, so it goes through data-i18n-html rather than setText.
+  const intro = $("intro");
+  if (intro) {
+    intro.dataset.i18nHtml = g === "l2" ? "log.introL2" : "log.intro";
+    intro.innerHTML = t(intro.dataset.i18nHtml);
+  }
+  renderFiles();
+}
+
+async function loadSquares() {
+  const dir = $("l2Dir").value.trim();
+  squares = [];
+  if (dir) {
+    const list = await window.api.listSquares(dir);
+    squares = list.map((s) => ({ ...s, picked: false }));
+  }
+  renderSquares();
 }
 function renderWads() {
   $("wads").innerHTML = (settings.wadDirs || []).map((d, i) =>
@@ -162,6 +240,11 @@ function log(text, cls) {
   el.scrollTop = el.scrollHeight;
 }
 function save() {
+  settings.game = $("game").value;
+  settings.l2Dir = $("l2Dir").value.trim();
+  settings.terrainStep = parseInt($("terrainStep").value, 10) || 1;
+  settings.l2Ambient = parseInt($("l2Ambient").value, 10);
+  settings.l2Glow = parseInt($("l2Glow").value, 10);
   settings.outDir = $("outDir").value.trim();
   settings.csDir = $("csDir").value.trim();
   settings.scale = parseFloat($("scale").value) || 2;
@@ -184,7 +267,8 @@ I18N.LANGS.forEach(([code, label]) => {
   $("lang").appendChild(o);
 });
 $("lang").addEventListener("change", () => { I18N.apply($("lang").value); settings.lang = $("lang").value; save(); });
-I18N.onChange(() => { renderFiles(); if (settings) renderWads(); });   // lists are rebuilt from state, not from the DOM
+// Lists are rebuilt from state, not from the DOM, so a language switch re-renders them too.
+I18N.onChange(() => { renderFiles(); renderSquares(); if (settings) renderWads(); });
 
 (async function init() {
   settings = await window.api.getSettings();
@@ -199,9 +283,18 @@ I18N.onChange(() => { renderFiles(); if (settings) renderWads(); });   // lists 
   $("lightScale").value = settings.lightScale === undefined ? 1 : settings.lightScale;
   $("ase").checked = !!settings.emitAse;
   $("spawns").checked = settings.emitPlayerStarts !== false;
-  renderWads(); renderFiles();
-  for (const el of ["outDir", "csDir", "scale", "lms", "health", "lighting", "lightScale"]) $(el).addEventListener("change", save);
+  $("game").value = settings.game || "cs";
+  $("l2Dir").value = settings.l2Dir || "";
+  $("terrainStep").value = settings.terrainStep === undefined ? 1 : settings.terrainStep;
+  $("l2Ambient").value = settings.l2Ambient === undefined ? 32 : settings.l2Ambient;
+  $("l2Glow").value = settings.l2Glow === undefined ? 40 : settings.l2Glow;
+  renderWads(); applyGame(); renderSquares();
+  if (settings.l2Dir) loadSquares();
+  for (const el of ["outDir", "csDir", "scale", "lms", "health", "lighting", "lightScale",
+    "terrainStep", "l2Ambient", "l2Glow"]) $(el).addEventListener("change", save);
   for (const el of ["ase", "spawns"]) $(el).addEventListener("change", save);
+  $("game").addEventListener("change", () => { save(); applyGame(); });
+  $("l2Dir").addEventListener("change", () => { save(); loadSquares(); });
 })();
 
 function addFiles(paths) {
@@ -225,6 +318,7 @@ document.body.ondragover = (e) => e.preventDefault();
 document.body.ondrop = (e) => { e.preventDefault(); addFiles(droppedPaths(e)); };
 
 $("pickOut").onclick = async () => { const d = await window.api.pickDir(t("dlg.outDir")); if (d) { $("outDir").value = d; save(); } };
+$("pickL2").onclick = async () => { const d = await window.api.pickDir(t("dlg.l2Dir")); if (d) { $("l2Dir").value = d; save(); loadSquares(); } };
 $("pickCs").onclick = async () => { const d = await window.api.pickDir(t("dlg.csDir")); if (d) { $("csDir").value = d; save(); } };
 $("pickWad").onclick = async () => {
   const typed = $("wadDir").value.trim();
@@ -237,38 +331,54 @@ window.api.onProgress((m) => log("  " + m.text, m.type === "err" ? "bad" : (/^\s
 
 $("go").onclick = async () => {
   save();
-  busy = true; renderFiles();
+  const jobs = queued();
+  const redraw = () => { if (isL2()) renderSquares(); else renderFiles(); };
+  busy = true; redraw();
   let okCount = 0;
-  for (const f of files) {
-    f.stateKey = "state.converting"; f.cls = "run"; renderFiles();
-    I18N.setText("status", "status.converting", { name: f.name });
+  for (const f of jobs) {
+    const label = isL2() ? f.name : f.name;
+    f.stateKey = "state.converting"; f.cls = "run"; redraw();
+    I18N.setText("status", "status.converting", { name: label });
     log("");
-    log("== " + f.name, "hdr");
-    const res = await window.api.convert({
-      bspFile: f.path,
-      outDir: settings.outDir || null, csDir: settings.csDir || null,
-      scale: settings.scale, lightMapScale: settings.lightMapScale, healthScale: settings.healthScale,
-      lighting: settings.lighting, lightScale: settings.lightScale,
-      wadDirs: settings.wadDirs || [], emitAse: settings.emitAse,
-      emitPlayerStarts: settings.emitPlayerStarts,
-    });
+    log("== " + label, "hdr");
+    const job = isL2()
+      ? {
+        game: "l2", clientDir: settings.l2Dir, square: f.name,
+        outDir: settings.outDir || null,
+        terrainStep: settings.terrainStep, ambient: settings.l2Ambient, glow: settings.l2Glow,
+      }
+      : {
+        bspFile: f.path,
+        outDir: settings.outDir || null, csDir: settings.csDir || null,
+        scale: settings.scale, lightMapScale: settings.lightMapScale, healthScale: settings.healthScale,
+        lighting: settings.lighting, lightScale: settings.lightScale,
+        wadDirs: settings.wadDirs || [], emitAse: settings.emitAse,
+        emitPlayerStarts: settings.emitPlayerStarts,
+      };
+    const res = await window.api.convert(job);
     if (res.ok) {
       okCount++;
       f.stateKey = "state.done"; f.cls = "ok";
       lastOut = res.out; $("reveal").disabled = false;
-      log(t("log.mapDone", {
-        name: res.mapName, size: (res.size / 1048576).toFixed(2), surfs: res.surfs,
-        lightmaps: res.lightMaps, atlases: res.atlases, textures: res.textures,
-        missing: res.missingTextures ? t("log.missing", { n: res.missingTextures }) : "",
-      }), "ok");
+      log(res.terrain
+        ? t("log.l2Done", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          grid: res.terrain.width + "×" + res.terrain.height,
+          meshes: res.terrain.meshes, triangles: res.terrain.triangles,
+        })
+        : t("log.mapDone", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2), surfs: res.surfs,
+          lightmaps: res.lightMaps, atlases: res.atlases, textures: res.textures,
+          missing: res.missingTextures ? t("log.missing", { n: res.missingTextures }) : "",
+        }), "ok");
     } else {
       f.stateKey = "state.failed"; f.cls = "bad";
       log(t("log.failed", { error: res.error || t("err.verify") }), "bad");
     }
-    renderFiles();
+    redraw();
   }
-  busy = false; renderFiles();
-  I18N.setText("status", "status.done", { ok: okCount, total: files.length });
+  busy = false; redraw();
+  I18N.setText("status", "status.done", { ok: okCount, total: jobs.length });
 };
 </script>
 </body>
