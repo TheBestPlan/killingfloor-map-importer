@@ -21,7 +21,7 @@ const PATCH = 32;
 const OVERLAY_MIN = 8;
 
 function patchMesh(terrain, x0, y0, w, h, step, opts) {
-  const { baseLayer, materialOf, overlays, weightAt } = opts;
+  const { baseLayer, layerAt, materialOf, overlays, weightAt } = opts;
   const at = (ix, iy) => terrain.vertex(Math.min(terrain.width - 1, ix), Math.min(terrain.height - 1, iy));
 
   const c0 = at(x0, y0), c1 = at(x0 + w * step, y0 + h * step);
@@ -88,7 +88,10 @@ function patchMesh(terrain, x0, y0, w, h, step, opts) {
       // One opaque pass under everything, then a pass per layer that paints here. Without the base
       // an unpainted quad has nothing at all under it; with it, every overlay is a blend rather than
       // a replacement, which is what makes the seams go away.
-      const base = groupFor(baseLayer, false);
+      // With the layers blended the base is the one they are painted over - Lineage 2's own layer 0.
+      // Without them there is nothing to paint over, so the quad takes the layer that WINS it, which
+      // is the best a single material per quad can do.
+      const base = groupFor(overlays.length ? baseLayer : layerAt(ix, iy), false);
       if (base) quad(base, ix, iy);
       for (const layer of overlays || []) {
         if (base && layer === base.layer) continue;
@@ -138,6 +141,7 @@ function buildTerrainMeshes(terrain, opts) {
   const materialOf = opts.materialOf;
   // The layer everything else is painted over. Lineage 2 calls it the base and it is layer 0.
   const baseLayer = (opts && opts.baseLayer) || 0;
+  const layerAt = (opts && opts.layerAt) || (() => baseLayer);
   // The layers that get a blended pass of their own, and how strongly each one paints a vertex.
   // Without them this falls back to what it did before: one material per quad, hard edges and all.
   const overlays = (opts && opts.overlays) || [];
@@ -150,7 +154,7 @@ function buildTerrainMeshes(terrain, opts) {
       const w = Math.min(patch, Math.ceil((quads - x0) / step));
       const h = Math.min(patch, Math.ceil((quads - y0) / step));
       if (w <= 0 || h <= 0) continue;
-      const m = patchMesh(terrain, x0, y0, w, h, step, { baseLayer, materialOf, overlays, weightAt });
+      const m = patchMesh(terrain, x0, y0, w, h, step, { baseLayer, layerAt, materialOf, overlays, weightAt });
       if (!m) { holes++; continue; }
       triangles += m.indices.length / 3;
       sections += m.sections.length;

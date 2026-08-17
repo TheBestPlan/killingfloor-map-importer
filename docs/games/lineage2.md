@@ -542,3 +542,134 @@ converter emits, which is why it is a checkbox (`--no-grass` on the command line
 The cap that keeps it to that has to THIN the field, not fill up and stop. A limit that stops leaves
 the grass in whichever rows the scatter happened to walk first and bare ground for the rest of the
 square, so the density is summed first and every quad's count multiplied by `limit / total`.
+
+
+## L2.29 What seals a cave mouth, measured
+
+25_14's Dragon Valley entrance is open in the client and walled in the conversion (Screenshot_59).
+Ray-cast against everything the converter emits, through the arch at (168900, y, z) along +X:
+
+```
+z= -2400 ###########      # = something is hit,  . = open
+z= -2200 ###########      y from -116700 to -115700, step 100
+z= -2000 ###########
+z= -1800 ###########
+```
+
+Two different things do the sealing:
+
+- **the entrance mesh itself.** `godad_fireentrance_S.godad_fire_entrance` has eight sections, and
+  section 7 `wall_ent` (181 faces, a 312x553x681 block) sits exactly in the opening, with `Wall` and
+  `wall_top` around it. Nothing marks it hidden: the mesh's `Materials` entries carry only
+  `bNoDynamicShadowCast`, `EnableCollisionforShadow` and `EnableCollision` (all normal), the actor has
+  no `Skins`, its `StaticMeshInstance` is an empty property block over baked colours, and
+  `TexModifyInfo` is `bUseModify=false`.
+- **a brush behind it.** With the mesh alone the ray at y=-116300, z=-2000 passes straight through;
+  with the brushes in, a `Godad_DC_field` polygon stops it at 1451.
+
+The brush half of that is now cut (L2.29's rules below). The MESH half is left alone on purpose:
+`wall_ent` is the outer shell of the rock, not a plug in front of it, and taking it out opens the sky
+(L2.31). The 96-unit flood fill that made this section read "sealed" was too coarse to see the gap -
+at 32 units the cave is reachable with the brush carve alone.
+
+Re-deriving CSG from the brushes was tried and does not stand up:
+
+| square | polys | ordered carve | ignoring order |
+|---|---|---|---|
+| 16_12 | 627 | 42 removed, 57/57 starts keep a floor | 609 removed, 0/57 |
+| 19_21 | 970 | 195 removed, 8/8 | 952 removed, 0/8 |
+| 17_22 | 948 | 39 removed, 12/12 | 930 removed, 0/12 |
+| 17_20 | 1524 | **1311 removed, 22/68** | 1506 removed, 0/68 |
+| 25_14 | 188 | 77 removed - and the cave stays sealed | 170 removed |
+
+Ignoring the order collapses every square to 18 polygons, because the first brush of a level is one
+huge subtract that hollows the world out of solid rock and everything else sits inside it. Keeping
+the order (export order) works on three squares and destroys 17_20, where export order is evidently
+not the order CSG ran in.
+
+**What works without knowing the order at all**: ask what the cut LOOKS like.
+
+- A volume that swallows a whole face is a room being hollowed out. This converter already draws
+  those rooms - from the inside of the block they were carved from - so the face stays and the volume
+  is ignored. That one rule disarms the world-hollowing subtract every level starts with.
+- A volume that leaves a ring of the face behind is a doorway, a window, a tunnel mouth. That is the
+  cut to keep.
+- And only on a WALL. 16_12's dungeon floor is a single face far larger than the hall carved into it,
+  so a hole punched through it left 2 of 57 spawns with anything to stand on. Faces whose normal is
+  more vertical than horizontal are never carved.
+
+Measured with those three rules. OFF by default - it re-derives what the client already compiled,
+so a square wants a look before it ships. The panel’s "Open the doorways and cave mouths", or
+`--carve` on the command line:
+
+| square | brush polys | wall faces opened | spawns keeping a brush floor |
+|---|---|---|---|
+| 16_12 | 627 → 653 | 156 | 57 → 57 |
+| 20_21 | 1275 → 1474 | 132 | 4 → 4 |
+| 17_22 | 948 → 1206 | 77 | 12 → 12 |
+| 19_21 | 970 → 1130 | 42 | 8 → 8 |
+| 25_14 | 188 → 208 | 19 | 1 → 1 |
+| 17_20 | 1524 → 1535 | 16 | 62 → 62 |
+
+Not one polygon is deleted - the operation only ever adds pieces - so nothing a player stood on can
+vanish.
+
+
+## L2.30 A carve is a hole only if the face survives it
+
+The rules in L2.29 opened 25_14's cave and then ate the inside of it: walls with holes onto the void,
+lava showing through rock (Screenshot_65/67). Measured per face, one volume was taking **98%** of a
+wall and leaving a sliver - which passed the "it left something behind, so it is a doorway" test.
+
+The bound that fixes it is on the AREA. A volume may take at most 40% of a face; past that it is a
+room being hollowed out and is ignored, sliver or no sliver. On 25_14 the real doorway costs its wall
+1%. After the bound, the worst single face on any square measured loses 27-40%, and the cave still
+opens:
+
+| square | wall faces opened | worst face loses |
+|---|---|---|
+| 20_21 | 151 | 37% |
+| 16_12 | 70 | 39% |
+| 19_21 | 58 | 40% |
+| 17_22 | 50 | 39% |
+| 25_14 | 21 | 36% |
+| 17_20 | 16 | 27% |
+
+The bound is the idea that a doorway is small compared to what it goes through. Nothing in the file
+says which volumes are doorways, so the size is what says it.
+
+
+## L2.31 Clearing mesh geometry out of a passage mouth: tried, measured, reverted
+
+The other half of L2.30 took static-mesh geometry out where a carved volume punches through a wall -
+the "plug" of L2.28. It is gone. It cost real rock and bought no reachability.
+
+**What it cost.** On 25_14 the mouth caught four sections, and taking any of them opened the sky:
+
+| section | material | faces in the mouth | size |
+|---|---|---|---|
+| `godad_fire_entrance#7` | `wall_ent` | 172/181 | 312x555x681 |
+| `godad_fire_entrance#6` | `godad_wall_e2` | 86/87 | 508x646x494 |
+| `Godad_DC_pillar02#1` | `Godad_BBOOL` | 40/40 | 184x153x240 |
+| `godad_fire_entsmall#2` | `godad_stonetree02_bark01` | 40/40 | 28x29x132 |
+
+Built one at a time and photographed from the square's own start: with `godad_wall_e2` alone gone the
+wall is whole and nothing opens; with `wall_ent` gone the arch opens AND a rectangle of sky appears
+above it, because `wall_ent` is not a plug in front of the mountain - it IS the mountain's outer
+shell there, and behind it is nothing. Cutting per TRIANGLE instead of per section (913 triangles)
+made the rectangle bigger, not smaller: the carved volume is 775x580 and the rock it stands in is
+thinner than that.
+
+**What it bought.** Nothing. A flood fill through the free space from the start (`scratchpad/flood.js`),
+counting a cell free only when no triangle touches it:
+
+| voxel | no carve at all | brush carve only | brush carve + mesh clearing |
+|---|---|---|---|
+| 96 | 174508 | 174508 | 175948 |
+| 48 | 174604 | **175996** | 175996 |
+| 32 | 174636 | **175980** | 175980 |
+
+The 96-unit grid is what said the cave was sealed, and it was wrong: the gap into it is about 160
+units across, and a conservative 96-unit voxelisation closes a 160-unit gap. At 48 and 32 the brush
+carve alone reaches the same depth as the mesh clearing did. The passage into 25_14's cave is open
+without touching a single mesh triangle.

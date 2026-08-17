@@ -85,6 +85,10 @@ function brushPolysOf(pkg, model) {
 function readBrushes(pkg, opts) {
   const out = [], carved = [];
   const stats = { add: 0, subtract: 0, skipped: 0, polys: 0, rotated: 0, scaled: 0, unreadable: 0 };
+  // The order the brushes appear in is the order CSG applied them, and it decides what is solid: an
+  // additive brush placed after a subtract fills that hole back in. Carrying the position lets the
+  // carve (carve.js) subtract only the volumes that came BEFORE the wall they are cutting.
+  let seq = 0;
   for (const e of pkg.exports) {
     const cls = pkg.classOf(e);
     if (!/Brush$/.test(cls) || !e.serialSize) continue;
@@ -116,6 +120,7 @@ function readBrushes(pkg, opts) {
     if (pick(tags, "MainScale") || pick(tags, "PostScale")) stats.scaled++;
 
     const index = op === 2 ? stats.subtract - 1 : stats.add;
+    const order = seq++;
     for (const poly of polys) {
       // Invisible, portal and backdrop faces are not surfaces - they are how a mapper tells the
       // compiler what to do. Carrying them across would put grey slabs across the level. A carved
@@ -126,7 +131,7 @@ function readBrushes(pkg, opts) {
         v[0] + loc[0] - pp[0], v[1] + loc[1] - pp[1], v[2] + loc[2] - pp[2],
       ]);
       sink.push({
-        brush: index,
+        brush: index, seq: order,
         vertices,
         base: [poly.base[0] + loc[0] - pp[0], poly.base[1] + loc[1] - pp[1], poly.base[2] + loc[2] - pp[2]],
         normal: poly.normal, textureU: poly.textureU, textureV: poly.textureV,

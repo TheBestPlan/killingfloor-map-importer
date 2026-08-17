@@ -18,7 +18,7 @@ function convertL2(job, log) {
     // The Lineage 2 panel has a scale of its own: the two games' rulers differ by a different amount
     // than Half-Life's and Unreal's do.
     scale: job.l2Scale, terrainStep: job.terrainStep, ambient: job.ambient, glow: job.glow,
-    grass: job.grass,
+    grass: job.grass, blend: job.blend, carve: job.carve,
     log,
   });
   const v = verify(res.out);

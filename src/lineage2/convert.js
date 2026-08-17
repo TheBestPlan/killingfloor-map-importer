@@ -25,6 +25,7 @@ const { readBrushes } = require("./brush");
 const { buildBrushMeshes } = require("./brushmesh");
 const { readEmitters, resolveObjects, writeBlock } = require("./emitter");
 const { readDecoLayers, scatter, bakeInstances } = require("./deco");
+const { carve, hullsOf } = require("./carve");
 const { tagsOf, pick, val, refTarget } = require("./props");
 const { Package, RF } = require("../unreal/package");
 const { Writer, writeStateFrame } = require("../unreal/writer");
@@ -59,6 +60,10 @@ const DEFAULTS = {
 // unfilled hole is the previous frame smeared over the screen (GOTCHAS 5.7b).
 const FLAT_SKY = [120, 148, 188];
 const SKY_GAIN = 1 / 2.4;
+
+// Cells a side on each face of the sky cube. One quad per face is one pair of triangles the renderer
+// drops whole when its corners are past the far plane; 8 makes the loss a cell rather than a face.
+const SKY_GRID = 8;
 
 // The sea takes no glow of its own. `OB_Translucent` in this engine ADDS rather than mixes, so a lit
 // water surface washes out: at the world's glow 16_24's ocean was a black band, unlit 17_22's harbour
@@ -327,6 +332,22 @@ function convert(o) {
     if (L) meshSpots.push(val.vector(src, L));
   }
   const brushRead = o.noBrushes ? null : readBrushes(src, { solidOnly: false });
+  // Take the carved volumes out of the polygons that are drawn. A doorway and a cave mouth are not
+  // modelled: the wall is one additive brush and the hole through it is a subtractive brush the
+  // compiler cut out, so without this every one of them comes across filled in (carve.js).
+  //
+  // Only the brush polygons. Taking mesh geometry out where a volume punches through a wall was
+  // tried and reverted: on 25_14 the mesh at the cave mouth is the mountain's outer shell, so
+  // clearing it opened the sky above the arch (Screenshot_68), and a flood fill through the free
+  // space proves it bought nothing - with the brush carve alone the cave interior is reachable to
+  // x=175980, against 174636 with no carve at all and 175996 with the mesh clearing on top.
+  const carveStats = { cut: 0, removed: 0, gaveUp: 0, volumes: 0 };
+  if (brushRead && o.carve === true && brushRead.carved.length) {
+    const hulls = hullsOf(brushRead.carved);
+    const r = carve(brushRead.polys, hulls, {});
+    brushRead.polys = r.polys;
+    Object.assign(carveStats, { cut: r.cut, removed: r.removed, gaveUp: r.gaveUp, volumes: hulls.length });
+  }
 
   // --- the level's box ----------------------------------------------------------------------------
   //
@@ -588,9 +609,13 @@ function convert(o) {
     return out;
   };
   const baseLayer = lmap.used[0] || 0;
-  const overlays = o.flatTerrain ? [] : lmap.used.filter((i) => i !== baseLayer && lmap.layers[i].alpha);
+  // Off, the ground is one material per quad again - the square patchwork, and a third of the
+  // triangles. It is the same trade as the grass: the prettier answer is the expensive one.
+  const overlays = o.blend === false ? [] : lmap.used.filter((i) => i !== baseLayer && lmap.layers[i].alpha);
   const terrainMesh = buildTerrainMeshes(terrain, {
-    step, materialOf, baseLayer, overlays, weightAt: (i, x, y) => lmap.weightAt(i, x, y),
+    step, materialOf, baseLayer, overlays,
+    layerAt: (x, y) => lmap.at(x, y),
+    weightAt: (i, x, y) => lmap.weightAt(i, x, y),
   });
   log("terrain layers: " + lmap.used.length + " of " + terrain.layers.length + " paint anything (" +
     lmap.used.map((i) => (terrain.layers[i].texture ? terrain.layers[i].texture.name : "?")).join(", ") + ")" +
@@ -722,28 +747,37 @@ function convert(o) {
     const meshCache = new Map();                    // "pkg.name" -> KF mesh ref, or null
     const textureRef = (target) => (resolveTexture(target) || {}).texRef || 0;
 
+    const rawCache = new Map();
+    const rawOf = (target) => {
+      const key = target.pkg + "." + target.name;
+      if (rawCache.has(key)) return rawCache.get(key);
+      const src2 = client.get(target.pkg);
+      const exp = src2 && src2.exports.find((e) => e.name === target.name && src2.classOf(e) === "StaticMesh");
+      let raw = null;
+      if (exp) { try { raw = readMesh(src2, exp); } catch (e) { meshStats.failed++; } }
+      else meshStats.missingMesh++;
+      rawCache.set(key, raw);
+      return raw;
+    };
     const meshRefOf = (target) => {
       const key = target.pkg + "." + target.name;
       if (meshCache.has(key)) return meshCache.get(key);
       let out = null;
-      const src2 = client.get(target.pkg);
-      const exp = src2 && src2.exports.find((e) => e.name === target.name && src2.classOf(e) === "StaticMesh");
-      if (!exp) meshStats.missingMesh++;
-      else {
-        try {
-          const raw = readMesh(src2, exp);
-          // One material ref per section; a section whose texture could not be read keeps the flat
-          // grey rather than dropping the geometry, so a hole in the client is visible, not silent.
-          const mats = raw.sections.map((_, i) => textureRef((raw.materials[i] || {}).material) || groundRef);
-          const kf = toKFMesh(raw, mats, { scale });
+      const use = rawOf(target);
+      if (use) {
+        // One material ref per section; a section whose texture could not be read keeps the flat
+        // grey rather than dropping the geometry, so a hole in the client is visible, not silent.
+        if (use.sections.length) {
+          const mats = use.sections.map((_, i) => textureRef((use.materials[i] || {}).material) || groundRef);
+          const kf = toKFMesh(use, mats, { scale });
           const mRef = pkg.addExport({
-            classRef: refs.StaticMesh, name: sanitizeName("L2_" + key.replace(/\./g, "_")), flags: refs.flagsGame,
+            classRef: refs.StaticMesh, name: sanitizeName("L2_" + key.replace(/[^A-Za-z0-9_]/g, "_")), flags: refs.flagsGame,
             serialize: (p) => buildMeshExport(p, kf),
           });
           out = { meshRef: mRef, mesh: kf };
           meshStats.meshes++;
-          meshStats.triangles += raw.indices.length / 3;
-        } catch (e) { meshStats.failed++; }
+          meshStats.triangles += use.sections.reduce((n, sec) => n + sec.numFaces, 0);
+        }
       }
       meshCache.set(key, out);
       return out;
@@ -756,19 +790,21 @@ function convert(o) {
       if (!smTag) continue;
       const target = refTarget(src, val.ref(src, smTag));
       if (!target || !target.pkg) { meshStats.missingMesh++; continue; }
-      const hit = meshRefOf(target);
-      if (!hit) continue;
 
       const locTag = pick(tags, "Location");
       const rotTag = pick(tags, "Rotation");
       const dsTag = pick(tags, "DrawScale");
       const ds3Tag = pick(tags, "DrawScale3D");
       const ppTag = pick(tags, "PrePivot");
-      const at = toKF(locTag ? val.vector(src, locTag) : [0, 0, 0]);
+      const where = locTag ? val.vector(src, locTag) : [0, 0, 0];
+      const at = toKF(where);
       const rot = rotTag ? val.rotator(src, rotTag) : null;
       const drawScale = dsTag ? val.float(src, dsTag) : null;
       const ds3 = ds3Tag ? val.vector(src, ds3Tag) : null;
       const pp = ppTag ? val.vector(src, ppTag) : null;
+
+      const hit = meshRefOf(target);
+      if (!hit) continue;
 
       // One instance per ACTOR, not per mesh: it is per-instance data - where a Build in KFEd writes
       // that actor's own lighting - so two actors sharing an instance would share their light. If
@@ -975,7 +1011,10 @@ function convert(o) {
       (brushStats.waterMeshes ? ", " + brushStats.waterMeshes + " water (see-through, no collision)" : "") +
       (brushStats.antiportal ? ", " + brushStats.antiportal + " antiportal polygon(s) skipped" : "") +
       (brushStats.dropped ? ", " + brushStats.dropped + " dropped for want of a texture" : "") +
-      (brushStats.unreadable ? ", " + brushStats.unreadable + " brush(es) unreadable" : ""));
+      (brushStats.unreadable ? ", " + brushStats.unreadable + " brush(es) unreadable" : "") +
+      (carveStats.volumes ? ", " + carveStats.volumes + " carved volume(s) cut " + carveStats.cut +
+        " polygon(s) open" + (carveStats.removed ? " and removed " + carveStats.removed : "") +
+        (carveStats.gaveUp ? ", " + carveStats.gaveUp + " left whole for want of pieces" : "") : ""));
   }
 
   // --- the square's particle effects --------------------------------------------------------------
@@ -1093,9 +1132,18 @@ function convert(o) {
     // 2 that put the cube's floor 14000 units over the player's head, who then stood outside his own
     // sky and saw black at the horizon. Centre it on the terrain and make it big enough to hold the
     // whole box, corners included.
-    const R = Math.max(4096, Math.min(+(process.env.KF_SKY_R || 200000), Math.hypot(half[0], half[1]) * 1.08));
+    //
+    // Sized to the GROUND, not to the world box, and as a cube's half-side rather than its diagonal.
+    // The box is 8192 units wider than the terrain on every side and the cube only has to enclose
+    // where a player can stand; the diagonal is another sqrt(3) on top of that. Sized off the box's
+    // diagonal the cube's corners were 108000 units out on a scale-2 square, past whatever the
+    // renderer will draw, and the faces pointing that way were dropped whole - the white wedges in
+    // the sky, with the un-cleared backbuffer showing through them (Screenshot_56/58). Off the
+    // ground's widest half that is 34000, which draws. The faces are cut into a grid as well, so a
+    // cell that is genuinely too far costs a cell and not half a face.
+    const R = Math.max(4096, Math.max(hi[0] - lo[0], hi[1] - lo[1]) / 2 * scale * 1.04);
     const at = [0, 0, ((zMin + zMax) / 2 - centre[2]) * scale];
-    const sky = buildSkyboxMesh([0, 0, 0], R, sides);
+    const sky = buildSkyboxMesh([0, 0, 0], R, sides, { grid: SKY_GRID });
     const skyMeshRef = pkg.addExport({
       classRef: refs.StaticMesh, name: "SkyBox", flags: refs.flagsGame,
       serialize: (p) => buildMeshExport(p, sky),

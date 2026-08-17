@@ -34,10 +34,15 @@ const FACES = [
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 // center: cube centre in UE space. R: half-size. skySides: { side -> { texRef, width, height } }.
-function buildSkyboxMesh(center, R, skySides) {
+//
+// `opts.grid` splits every face into that many cells a side. A face as one quad is one pair of
+// triangles whose corners are R*sqrt(3) from the middle of the cube, and the renderer drops a
+// triangle whose vertices are past the far plane rather than clipping it to the plane - so on a
+// world big enough to need a big cube, whole half-faces vanish and leave the un-cleared backbuffer
+// showing through as white wedges. Cut the face up and only the cells that are really too far go.
+function buildSkyboxMesh(center, R, skySides, opts) {
+  const grid = Math.max(1, Math.round((opts && opts.grid) || 1));
   const vertices = [], uvs = [], colors = [], indices = [], sections = [], materials = [];
-  // (u, v) of the four corners, v = 0 at the top of the image.
-  const CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]];
 
   for (const f of FACES) {
     const tex = skySides[f.side];
@@ -47,8 +52,7 @@ function buildSkyboxMesh(center, R, skySides) {
     // draws a bright line along every cube edge.
     const inset = 0.5 / (tex.width || 256);
     const firstIndex = indices.length, firstVertex = vertices.length;
-
-    for (const [u, v] of CORNERS) {
+    const at = (u, v) => {
       const su = u * 2 - 1;                     // -1 left .. +1 right
       const sv = 1 - v * 2;                     // +1 top .. -1 bottom
       const hl = [0, 1, 2].map((a) => f.d[a] * R + right[a] * su * R + f.up[a] * sv * R);
@@ -59,15 +63,25 @@ function buildSkyboxMesh(center, R, skySides) {
       });
       uvs.push([u * (1 - 2 * inset) + inset, v * (1 - 2 * inset) + inset]);
       colors.push([255, 255, 255, 255]);
-    }
+      return vertices.length - 1;
+    };
 
     // ONE winding, and it must be this one. Emitting both was meant as insurance against getting
     // the convention wrong; it caused the white flashes instead. Two exactly coplanar triangles
     // z-fight, and wherever the back-facing copy wins the depth test the pixel is culled and left
     // showing an un-cleared backbuffer - white, moving as the view turns. Measured: with only the
     // other winding the whole sky is white, with this one it draws. See ../../docs/GOTCHAS.md 5.25.
-    indices.push(firstVertex + 2, firstVertex + 1, firstVertex, firstVertex + 3, firstVertex + 2, firstVertex);
-    sections.push({ f0: 0, firstIndex, firstVertex, lastVertex: firstVertex + 3, u4: 0, numFaces: 2 });
+    for (let j = 0; j < grid; j++) {
+      for (let i = 0; i < grid; i++) {
+        const u0 = i / grid, u1 = (i + 1) / grid, v0 = j / grid, v1 = (j + 1) / grid;
+        const a = at(u0, v0), b = at(u1, v0), c = at(u1, v1), d = at(u0, v1);
+        indices.push(c, b, a, d, c, a);
+      }
+    }
+    sections.push({
+      f0: 0, firstIndex, firstVertex,
+      lastVertex: vertices.length - 1, u4: 0, numFaces: 2 * grid * grid,
+    });
     materials.push(tex.texRef);
   }
 
