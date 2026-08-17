@@ -371,6 +371,10 @@ function convert(opts) {
   // time. Unreal has no such per-actor alpha for world geometry, so the same texture gets a second
   // material - a Shader that blends it - and only the faces of that entity use it.
   const shaders = new Map();
+  // What each of those Shaders was built from. The lightmap route has to take one apart again: the
+  // atlas multiplies a TEXTURE, and a Shader wrapped in that Combiner loses the blending that made
+  // it glass in the first place.
+  const shaderParts = new Map();                   // shader ref -> { texRef, opacityRef, additive }
   const shaderFor = (texRef, alpha, additive) => {
     const key = texRef + "|" + alpha + "|" + (additive ? "a" : "t");
     if (shaders.has(key)) return shaders.get(key);
@@ -401,6 +405,7 @@ function convert(opts) {
       },
     });
     shaders.set(key, ref);
+    shaderParts.set(ref, { texRef, opacityRef, additive });
     return ref;
   };
   // rendermode: 0 normal, 1 colour, 2 texture, 3 glow, 4 solid (colour key), 5 additive. Only 1/2
@@ -1504,31 +1509,43 @@ function convert(opts) {
       return ref;
     };
 
-    // A cut-out texture cannot just be multiplied. Masking in this engine is a property of the
-    // MATERIAL's output, and Combiner has no such mode - so a ladder wrapped in one draws its
-    // transparent half opaque, which is the red slab where gg_trs_aim_churches has rungs. Hang the
-    // combiner off a Shader instead: Diffuse carries the lit texture, Opacity carries the same
-    // texture for its alpha, and OB_Masked is what puts the holes back.
-    const litMasked = new Map();
-    const litMaterialFor = (texRef, page) => {
+    // Anything that draws with its own blending cannot just be multiplied. How a material blends is
+    // a property of its OUTPUT and a Combiner has none, so wrapping one hands the engine an opaque
+    // slab: a ladder's cut-out half went solid red on gg_trs_aim_churches, and gg_33_shudder's roof
+    // - eight `rendermode 2` panes of glass_med - came out a concrete lid. Hang the combiner off a
+    // Shader instead, with the blending the material had before the atlas got involved:
+    //   masked  - Opacity = the texture's own alpha, OB_Masked, and the holes are back.
+    //   glass   - Opacity = the ConstantColor built for the entity's `renderamt`, OB_Translucent
+    //             (OB_Brighten for `rendermode 5`). The Shader itself is gone by now: it IS the
+    //             material the mesh arrived with, so take it apart through shaderParts.
+    //   water   - a liquid texture carries its own flat alpha and Style, and Style is a property of
+    //             a TEXTURE that a Combiner around it never reads. Same treatment.
+    const litBlend = new Map();
+    const litMaterialFor = (matRef, page) => {
+      const glass = shaderParts.get(matRef);
+      const texRef = glass ? glass.texRef : matRef;
       const rec = texByRef.get(texRef);
+      const kind = glass ? "glass" : rec && rec.kind;
       const combined = litMaterial(texRef, page);
-      if (!rec || rec.kind !== "masked") return combined;
-      const key = texRef + "@" + page;
-      if (litMasked.has(key)) return litMasked.get(key);
+      if (kind !== "glass" && kind !== "masked" && kind !== "liquid") return combined;
+      const key = matRef + "@" + page;
+      if (litBlend.has(key)) return litBlend.get(key);
       const ref = pkg.addExport({
-        classRef: refs.Shader, name: "LitMasked" + litMasked.size, flags: refs.flagsGame,
+        classRef: refs.Shader, name: (kind === "masked" ? "LitMasked" : "LitBlend") + litBlend.size,
+        flags: refs.flagsGame,
         serialize: (p) => {
           const w = new Writer(128);
           const pr = p.props(w);
           pr.object("Diffuse", combined);
-          pr.object("Opacity", texRef);
-          pr.byte("OutputBlending", 1);              // OB_Masked
+          pr.object("Opacity", glass ? glass.opacityRef : texRef);
+          pr.byte("OutputBlending", kind === "masked" ? 1 : glass && glass.additive ? 5 : 3);
+          // A pane and a water surface are drawn from both sides in GoldSrc; a cut-out is not.
+          if (kind !== "masked") pr.bool("TwoSided", true);
           pr.end();
           return w;
         },
       });
-      litMasked.set(key, ref);
+      litBlend.set(key, ref);
       return ref;
     };
     if (lightmap) {
@@ -1538,7 +1555,7 @@ function convert(opts) {
       }
       log("lightmap materials: " + lmCombiner.size + " Combiner(s) over " + lmPageTex.length +
         " atlas texture(s), on " + (unlitWorld ? "unlit" : "lit") + " actors" +
-        (litMasked.size ? ", " + litMasked.size + " of them behind a masked Shader" : ""));
+        (litBlend.size ? ", " + litBlend.size + " of them behind a Shader that keeps the blending" : ""));
     }
 
     meshBuild.meshes.forEach((mesh, i) => {
