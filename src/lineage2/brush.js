@@ -24,6 +24,18 @@ const PF_INVISIBLE = 0x00000001;
 const PF_NOT_SOLID = 0x00000008;
 const PF_PORTAL = 0x04000000;
 const PF_FAKE_BACKDROP = 0x00000080;
+// A zone boundary. `PF_SpecialPoly | PF_ForceViewZone` is how Lineage 2 marks the "field" planes it
+// divides a place up with - 25_14's cave is crossed by 61 of them and the client draws none. Carried
+// across they are big flat pale slabs hanging in the room with gaps between them, which is what the
+// hole in that cave's floor looked like (Screenshot_84).
+//
+// The FLAGS say it, not the texture: 61 `Godad_DC_field` polygons carry them and another 24 wearing
+// the same texture do not - and those 24 are the floor the player walks in on. Skipping by name took
+// the floor with them and opened the hole for real (Screenshot_86).
+const PF_ZONE_FIELD = 0x00002000 | 0x00008000;
+// How wide a horizontal zone boundary may be and still be a floor patch rather than the zone's own
+// lid: the patch inside 25_14's cave is 194x664, the lid over it is 4329x9715.
+const ZONE_PATCH = 2048;
 
 function readPolys(pkg, exp) {
   const r = new Rd(pkg.buf, exp.serialOffset);
@@ -84,7 +96,7 @@ function brushPolysOf(pkg, model) {
 // piece in the wrong place rather than silently - the count is logged.
 function readBrushes(pkg, opts) {
   const out = [], carved = [];
-  const stats = { add: 0, subtract: 0, skipped: 0, polys: 0, rotated: 0, scaled: 0, unreadable: 0 };
+  const stats = { add: 0, subtract: 0, skipped: 0, polys: 0, rotated: 0, scaled: 0, unreadable: 0, field: 0, patched: 0 };
   // The order the brushes appear in is the order CSG applied them, and it decides what is solid: an
   // additive brush placed after a subtract fills that hole back in. Carrying the position lets the
   // carve (carve.js) subtract only the volumes that came BEFORE the wall they are cutting.
@@ -126,19 +138,51 @@ function readBrushes(pkg, opts) {
       // compiler what to do. Carrying them across would put grey slabs across the level. A carved
       // volume keeps them: it is not drawn, and a hall missing a wall is a hall that leaks.
       if (sink === out && (poly.polyFlags & (PF_INVISIBLE | PF_PORTAL | PF_FAKE_BACKDROP))) continue;
+      // Kept, not dropped: it is not drawn, but the carve still needs its plane. A doorway is cut
+      // flush with the wall it goes through, and if that wall is one of these the passage has no
+      // other plane to recognise the cut by - which is how the cave mouth got sealed from inside.
+      let hidden = sink === out && (poly.polyFlags & PF_ZONE_FIELD) === PF_ZONE_FIELD;
       if (sink === out && opts && opts.solidOnly && (poly.polyFlags & PF_NOT_SOLID)) continue;
       const vertices = poly.vertices.map((v) => [
         v[0] + loc[0] - pp[0], v[1] + loc[1] - pp[1], v[2] + loc[2] - pp[2],
       ]);
-      sink.push({
-        brush: index, seq: order,
+      // Except a small horizontal one. A zone box has a lid and a floor as well as its four sides,
+      // and where the floor of that box is what the player stands on it is the only surface there:
+      // just inside 25_14's cave mouth it is a 194x664 patch at z=-2159 and nothing else is under
+      // the ground at all (Screenshot_86/88). The lid and floor of the zone itself are 4329x9715 and
+      // are not that - the bound is what tells them apart.
+      //
+      // Drawn BOTH ways round: it is the underside of the box, so its normal points away from the
+      // player walking on it and one winding alone would leave it see-through from above.
+      const flat = Math.abs(poly.normal[2]) > 0.5;
+      let span = 0;
+      if (hidden && flat) {
+        for (let a = 0; a < 2; a++) {
+          let lo = Infinity, hi = -Infinity;
+          for (const v of vertices) { if (v[a] < lo) lo = v[a]; if (v[a] > hi) hi = v[a]; }
+          span = Math.max(span, hi - lo);
+        }
+      }
+      const patch = hidden && flat && span <= ZONE_PATCH;
+      if (patch) { hidden = false; stats.patched++; }
+      if (hidden) stats.field++;
+      const made = {
+        brush: index, seq: order, hidden,
         vertices,
         base: [poly.base[0] + loc[0] - pp[0], poly.base[1] + loc[1] - pp[1], poly.base[2] + loc[2] - pp[2]],
         normal: poly.normal, textureU: poly.textureU, textureV: poly.textureV,
         polyFlags: poly.polyFlags,
         texture: poly.texture ? refTarget(pkg, poly.texture) : null,
-      });
-      if (sink === out) stats.polys++;
+      };
+      sink.push(made);
+      if (patch) {
+        sink.push(Object.assign({}, made, {
+          vertices: vertices.slice().reverse(),
+          normal: [-poly.normal[0], -poly.normal[1], -poly.normal[2]],
+        }));
+        stats.polys++;
+      }
+      if (sink === out && !hidden) stats.polys++;
     }
     if (sink === out) stats.add++;
   }

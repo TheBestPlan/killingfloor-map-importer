@@ -25,7 +25,7 @@ const { readBrushes } = require("./brush");
 const { buildBrushMeshes } = require("./brushmesh");
 const { readEmitters, resolveObjects, writeBlock } = require("./emitter");
 const { readDecoLayers, scatter, bakeInstances } = require("./deco");
-const { carve, hullsOf } = require("./carve");
+const { carve, interiors, hullsOf } = require("./carve");
 const { tagsOf, pick, val, refTarget } = require("./props");
 const { Package, RF } = require("../unreal/package");
 const { Writer, writeStateFrame } = require("../unreal/writer");
@@ -188,7 +188,7 @@ function convert(o) {
     width: 8, height: 8, rgb: Buffer.alloc(8 * 8 * 3), alpha: Buffer.alloc(8 * 8),
   }, 1, { raw: true }).texRef;
 
-  const meshStats = { actors: 0, meshes: 0, textures: 0, masked: 0, blended: 0, frames: 0, triangles: 0, baked: 0, missingMesh: 0, missingTex: 0, failed: 0 };
+  const meshStats = { actors: 0, meshes: 0, textures: 0, masked: 0, blended: 0, frames: 0, triangles: 0, baked: 0, missingMesh: 0, missingTex: 0, failed: 0, water: 0 };
   // One cache for every texture the square asks for, whatever asks: the brushes and the meshes share
   // packages, and a texture carried twice is megabytes twice.
   const texCache = new Map();                       // "pkg.name" -> { texRef, width, height } | null
@@ -251,7 +251,14 @@ function convert(o) {
   // a Killing Floor `Shader` with the same two halves and an OutputBlending that says which kind.
   const resolveMaterial = (target, opts) => {
     if (!target || !target.pkg) return null;
-    const key = target.pkg + "." + target.name + (opts && opts.water ? "|water" : "");
+    // Water is see-through whether it is a brush or a mesh. 25_14's dragon cave has two of them -
+    // flat 2669x2702 quads over the lava at -4033 and -5256 - and their material is a bare
+    // TexOscillator with no opacity at all, so nothing downstream had any reason to guess. Drawn
+    // solid they are pale grey slabs across the cave with black gaps between them, which is what the
+    // "holes in the ground" of Screenshot_69/81/82 are.
+    const water = !!(opts && opts.water) || /water|ocean/i.test(target.name);
+    opts = water ? Object.assign({}, opts, { water: true }) : opts;
+    const key = target.pkg + "." + target.name + (water ? "|water" : "");
     if (matCache.has(key)) return matCache.get(key);
     let out = null;
     const tp = client.get(target.pkg);
@@ -341,12 +348,21 @@ function convert(o) {
   // clearing it opened the sky above the arch (Screenshot_68), and a flood fill through the free
   // space proves it bought nothing - with the brush carve alone the cave interior is reachable to
   // x=175980, against 174636 with no carve at all and 175996 with the mesh clearing on top.
-  const carveStats = { cut: 0, removed: 0, gaveUp: 0, volumes: 0 };
+  const carveStats = { cut: 0, removed: 0, gaveUp: 0, volumes: 0, inside: 0, capped: 0 };
   if (brushRead && o.carve === true && brushRead.carved.length) {
     const hulls = hullsOf(brushRead.carved);
+    // Not the zone boundaries: a zone box is not rock, and its hull spans the whole cave - every
+    // room face inside it read as buried and vanished.
+    const solids = hullsOf(brushRead.polys.filter((q) => !q.hidden));
     const r = carve(brushRead.polys, hulls, {});
-    brushRead.polys = r.polys;
-    Object.assign(carveStats, { cut: r.cut, removed: r.removed, gaveUp: r.gaveUp, volumes: hulls.length });
+    // And the rooms those volumes hollowed out, seen from inside: without them a cave is open to the
+    // sky wherever the meshes standing in it happen not to cover.
+    const inner = interiors(brushRead.carved, solids, hulls, r.opened, {});
+    brushRead.polys = r.polys.concat(inner.polys);
+    Object.assign(carveStats, {
+      cut: r.cut, removed: r.removed, gaveUp: r.gaveUp + inner.gaveUp,
+      volumes: hulls.length, inside: inner.faces, capped: inner.capped,
+    });
   }
 
   // --- the level's box ----------------------------------------------------------------------------
@@ -805,6 +821,13 @@ function convert(o) {
 
       const hit = meshRefOf(target);
       if (!hit) continue;
+      // A mesh that is nothing but water is counted, not treated: it keeps its collision. In
+      // Lineage 2 the player swims through it, but Killing Floor has no water volume here and a
+      // surface with no floor under it is a fall into the lava - see-through is enough.
+      const raw0 = rawOf(target);
+      const allWater = !!raw0 && raw0.materials.length > 0 && raw0.materials.every(
+        (m) => m.material && /water|ocean/i.test(m.material.name));
+      if (allWater) meshStats.water++;
 
       // One instance per ACTOR, not per mesh: it is per-instance data - where a Build in KFEd writes
       // that actor's own lighting - so two actors sharing an instance would share their light. If
@@ -858,6 +881,7 @@ function convert(o) {
       (meshStats.frames ? ", " + meshStats.frames + " animation frame(s)" : "") +
       (meshStats.baked ? ", " + meshStats.baked + " with the square's own baked vertex light" : "") +
       (meshStats.missingMesh ? ", " + meshStats.missingMesh + " mesh(es) not in this client" : "") +
+      (meshStats.water ? ", " + meshStats.water + " water (see-through)" : "") +
       (meshStats.failed ? ", " + meshStats.failed + " unreadable" : "") +
       (meshStats.missingTex ? ", " + meshStats.missingTex + " texture(s) missing" : ""));
   }
@@ -865,7 +889,7 @@ function convert(o) {
   // --- the brushes --------------------------------------------------------------------------------
   // The other half of a built-up square. In 16_12 the dungeon under the heightfield is 174 additive
   // brushes: without them its floor does not exist and everything standing on it hangs in the air.
-  const brushStats = { add: 0, subtract: 0, polys: 0, meshes: 0, triangles: 0, dropped: 0, unreadable: 0 };
+  const brushStats = { add: 0, subtract: 0, polys: 0, meshes: 0, triangles: 0, dropped: 0, unreadable: 0, field: 0 };
   // Coarse "is there a floor here" map, in Lineage 2 units: the highest brush surface in each cell.
   // The spawn picker needs it - a dungeon under the heightfield is solid ground, but only where the
   // brushes actually are.
@@ -1005,15 +1029,19 @@ function convert(o) {
     brushStats.skyMeshes = built.meshes.filter((m) => m.sky).length;
     brushStats.waterMeshes = built.meshes.filter((m) => m.water).length;
     brushStats.antiportal = built.antiportal;
+    brushStats.field = brushRead ? brushRead.stats.field : 0;
     log("brushes: " + brushStats.add + " additive (" + brushStats.subtract + " subtractive skipped), " +
       brushStats.polys + " polygon(s) -> " + brushStats.meshes + " mesh(es), " + brushStats.triangles + " triangles" +
       (brushStats.skyMeshes ? ", " + brushStats.skyMeshes + " of them the square's own sky" : "") +
       (brushStats.waterMeshes ? ", " + brushStats.waterMeshes + " water (see-through, no collision)" : "") +
       (brushStats.antiportal ? ", " + brushStats.antiportal + " antiportal polygon(s) skipped" : "") +
+      (brushStats.field ? ", " + brushStats.field + " zone-boundary polygon(s) skipped" : "") +
       (brushStats.dropped ? ", " + brushStats.dropped + " dropped for want of a texture" : "") +
       (brushStats.unreadable ? ", " + brushStats.unreadable + " brush(es) unreadable" : "") +
       (carveStats.volumes ? ", " + carveStats.volumes + " carved volume(s) cut " + carveStats.cut +
         " polygon(s) open" + (carveStats.removed ? " and removed " + carveStats.removed : "") +
+        (carveStats.inside ? " and gave those rooms " + carveStats.inside + " inside face(s)" +
+          (carveStats.capped ? " (" + carveStats.capped + " left off a wall that is drawn)" : "") : "") +
         (carveStats.gaveUp ? ", " + carveStats.gaveUp + " left whole for want of pieces" : "") : ""));
   }
 

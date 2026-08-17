@@ -36,6 +36,7 @@ function buildBrushMeshes(polys, resolve, opts) {
   let antiportal = 0;
   for (const p of polys) {
     if (p.vertices.length < 3) continue;
+    if (p.hidden) continue;                  // a zone boundary: read for its plane, never drawn
     if (isAntiportal(p.texture)) { antiportal++; continue; }
     const key = p.texture ? p.texture.pkg + "." + p.texture.name : "(none)";
     if (!groups.has(key)) groups.set(key, { target: p.texture, polys: [] });

@@ -16,6 +16,8 @@
 // to the wall, and putting them in would need the CSG this deliberately is not.
 "use strict";
 
+// PF_Invisible | PF_Portal | PF_FakeBackdrop - the three that mean "not a surface" (brush.js).
+const NOT_A_SURFACE = 0x00000001 | 0x04000000 | 0x00000080;
 const EPS = 0.5;                                   // half a unit: a face lying ON the cut stays
 // How much of a face a single volume may take before it stops counting as a hole through it.
 const KEEP = 0.6;
@@ -65,7 +67,10 @@ function hullsOf(polys) {
     });
     const all = [];
     for (const p of list) for (const v of p.vertices) all.push(v);
-    out.push({ planes, box: boxOf(all), seq: list[0].seq === undefined ? -1 : list[0].seq });
+    out.push({
+      planes, box: boxOf(all), brush: list[0].brush,
+      seq: list[0].seq === undefined ? -1 : list[0].seq,
+    });
   }
   return out;
 }
@@ -120,9 +125,10 @@ function carve(polys, hulls, opts) {
   // A volume that leaves a ring of the face behind is a DOORWAY. Keeping only the second kind is
   // what makes the operation safe without knowing the order CSG ran in.
   const holesOnly = !(opts && opts.removeWhole);
-  if (!hulls.length) return { polys, cut: 0, removed: 0, gaveUp: 0, whole: 0 };
+  if (!hulls.length) return { polys, opened: [], cut: 0, removed: 0, gaveUp: 0, whole: 0 };
   const out = [];
   let cut = 0, removed = 0, gaveUp = 0, whole = 0;
+  const opened = [];                               // the walls a volume really punched through
   for (const poly of polys) {
     if (poly.vertices.length < 3) { out.push(poly); continue; }
     // Walls only. A doorway is a hole through something vertical; a hole through a floor is a room
@@ -185,7 +191,109 @@ function carve(polys, hulls, opts) {
     cut++;
     for (const ring of pieces) out.push(Object.assign({}, poly, { vertices: ring }));
   }
-  return { polys: out, cut, removed, gaveUp, whole };
+  return { polys: out, opened, cut, removed, gaveUp, whole };
 }
 
-module.exports = { carve, hullsOf, split, boxOf };
+// The walls, floor and ceiling of a carved room.
+//
+// `carve` above only takes material away. The other half is that a subtractive brush's own polygons
+// ARE the surfaces of the room it hollowed out, and without them a cave is open to the sky wherever
+// the static meshes standing in it happen not to cover (Screenshot_85).
+//
+// A Lineage 2 square is a SUBTRACTIVE world, the Unreal default: solid rock until a brush carves it
+// away - 25_14 spends 210 subtractive brushes against 49 additive. So a void's face borders rock
+// everywhere EXCEPT where something else already took that rock away:
+//
+//   - another void overlapping it. There is no material between two carved volumes, and a face drawn
+//     there is a wall across an open passage;
+//   - an additive brush - rock put back, and the face is buried inside it;
+//   - another void it lies FLUSH against, facing into it. Two rooms carved edge to edge share a wall
+//     plane with no rock in it; the clip cannot see that (every vertex reads as "in front of" the
+//     plane), so the two normals decide.
+//
+// And never in the plane of a wall the carve OPENED. A doorway is cut flush with its wall, so the
+// volume's cap sits exactly in the wall's plane - emitted, it seals the doorway again, and because
+// it faces into the rock it is invisible from outside: the cave mouth became an invisible wall.
+// Those are the doorway planes, and only those - matching every wall instead capped everything.
+function interiors(carved, addHulls, subHulls, addPolys, opts) {
+  const maxPieces = (opts && opts.maxPieces) || 64;
+  // Every Unreal level opens by subtracting the universe, and 25_14's is 655360 x 524288 x 32768
+  // around the origin. It is not a room: used as a remover it swallows all 210 of the others, and
+  // its own six faces are a box around the world. A square is 32768 across.
+  const huge = (opts && opts.huge) || 32768;
+  const isWorld = (b) => b.max[0] - b.min[0] > huge && b.max[1] - b.min[1] > huge;
+  const rooms = subHulls.filter((h) => !isWorld(h.box));
+  const world = new Set(subHulls.filter((h) => isWorld(h.box)).map((h) => h.brush));
+  const walls = (addPolys || []).map((p) => ({
+    plane: [p.normal[0], p.normal[1], p.normal[2],
+      p.normal[0] * p.vertices[0][0] + p.normal[1] * p.vertices[0][1] + p.normal[2] * p.vertices[0][2]],
+    box: boxOf(p.vertices),
+  }));
+  const out = [];
+  let faces = 0, gaveUp = 0, capped = 0, upright = 0;
+  const onPlane = (pl, vertices) => {
+    for (const v of vertices) {
+      if (Math.abs(pl[0] * v[0] + pl[1] * v[1] + pl[2] * v[2] - pl[3]) > EPS) return false;
+    }
+    return true;
+  };
+  for (const poly of carved) {
+    if (poly.vertices.length < 3) continue;
+    // A volume's own faces carry the mapper's instructions to the compiler the same way an additive
+    // brush's do: invisible, portal and backdrop faces are not surfaces.
+    if (poly.polyFlags & NOT_A_SURFACE) continue;
+    if (world.has(poly.brush)) continue;
+    // Floors and ceilings only. A horizontal face can close a hole in the ground and can never
+    // block a passage; a vertical one is a wall, and a wall in the wrong place is the invisible
+    // barrier that sealed 25_14's cave mouth twice over.
+    if (Math.abs(poly.normal[2]) <= 0.5) { upright++; continue; }
+    const box = boxOf(poly.vertices);
+    let inWall = false;
+    for (const w of walls) {
+      if (!overlaps(box, w.box, EPS)) continue;
+      if (onPlane(w.plane, poly.vertices)) { inWall = true; break; }
+    }
+    if (inWall) { capped++; continue; }
+    let pieces = [poly.vertices];
+    let bailed = false;
+    for (const list of [addHulls]) {
+      for (const hull of list) {
+        if (!pieces.length) break;
+
+        if (!overlaps(box, hull.box, EPS)) continue;
+        let flush = 0;
+        for (const pl of hull.planes) {
+          if (!onPlane(pl, poly.vertices)) continue;
+          flush = pl[0] * poly.normal[0] + pl[1] * poly.normal[1] + pl[2] * poly.normal[2] < 0 ? -1 : 1;
+          break;
+        }
+        if (flush < 0) { pieces = []; break; }
+        if (flush > 0) continue;
+        const next = [];
+        for (const ring of pieces) {
+          let remaining = ring;
+          for (const plane of hull.planes) {
+            if (!remaining) break;
+            const s = split(remaining, plane);
+            if (s.front) next.push(s.front);
+            remaining = s.back;
+          }
+        }
+        pieces = next;
+        if (pieces.length > maxPieces) { bailed = true; break; }
+      }
+      if (bailed) break;
+    }
+    if (bailed) { gaveUp++; continue; }
+    for (const ring of pieces) {
+      out.push(Object.assign({}, poly, {
+        vertices: ring.slice().reverse(),
+        normal: [-poly.normal[0], -poly.normal[1], -poly.normal[2]],
+      }));
+      faces++;
+    }
+  }
+  return { polys: out, faces, gaveUp, capped, upright };
+}
+
+module.exports = { carve, interiors, hullsOf, split, boxOf };

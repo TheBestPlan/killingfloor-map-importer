@@ -392,5 +392,38 @@ console.log("\nLineage 2 decoration scatter");
     capped.length + " plants, " + far + " of them past 70% of the square");
 }
 
+// --- Lineage 2: the floor of a carved room -------------------------------------------------------
+//
+// A subtractive brush hollows a room out, and the room has a floor: the brush's own bottom face,
+// turned to face up. Only the horizontal ones are emitted - a vertical one is a wall, and a wall in
+// the wrong place is an invisible barrier across a passage.
+{
+  const { interiors, hullsOf } = require("../src/lineage2/carve");
+  const box = (brush, lo, hi) => {
+    const f = [
+      { n: [-1, 0, 0], v: [[lo[0], lo[1], lo[2]], [lo[0], hi[1], lo[2]], [lo[0], hi[1], hi[2]], [lo[0], lo[1], hi[2]]] },
+      { n: [1, 0, 0], v: [[hi[0], lo[1], lo[2]], [hi[0], lo[1], hi[2]], [hi[0], hi[1], hi[2]], [hi[0], hi[1], lo[2]]] },
+      { n: [0, -1, 0], v: [[lo[0], lo[1], lo[2]], [lo[0], lo[1], hi[2]], [hi[0], lo[1], hi[2]], [hi[0], lo[1], lo[2]]] },
+      { n: [0, 1, 0], v: [[lo[0], hi[1], lo[2]], [hi[0], hi[1], lo[2]], [hi[0], hi[1], hi[2]], [lo[0], hi[1], hi[2]]] },
+      { n: [0, 0, -1], v: [[lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]]] },
+      { n: [0, 0, 1], v: [[lo[0], lo[1], hi[2]], [lo[0], hi[1], hi[2]], [hi[0], hi[1], hi[2]], [hi[0], lo[1], hi[2]]] },
+    ];
+    return f.map((x) => ({ brush, seq: brush, vertices: x.v, normal: x.n, polyFlags: 0, base: x.v[0] }));
+  };
+  const carved = box(0, [0, 0, 0], [512, 512, 256]).concat(box(1, [512, 0, 0], [1024, 512, 256]));
+  const r = interiors(carved, [], hullsOf(carved), [], {});
+  ok("a carved room gets a floor and a ceiling, and no walls", r.faces === 4 && r.upright === 8,
+    r.faces + " flat, " + r.upright + " upright left off");
+  ok("the room is seen from inside it", r.polys.every((q) => Math.abs(q.normal[2]) > 0.5) &&
+    r.polys.filter((q) => q.normal[2] > 0).length === 2, "two floors up, two ceilings down");
+  // The brush that hollows out the universe is not a room - it would floor the whole world.
+  const world = box(2, [-400000, -400000, -16384], [400000, 400000, 16384]);
+  const both = interiors(carved.concat(world), [], hullsOf(carved.concat(world)), [], {});
+  ok("the brush that hollows out the world is not a room", both.faces === 4, both.faces + " flat faces with it in");
+  // Rock put back over a floor buries it.
+  const rock = box(3, [0, 0, -64], [512, 512, 64]);
+  const buried = interiors(box(0, [0, 0, 0], [512, 512, 256]), hullsOf(rock), hullsOf(box(0, [0, 0, 0], [512, 512, 256])), [], {});
+  ok("a floor buried in an additive brush is not drawn", buried.faces === 1, buried.faces + " flat face(s), the ceiling");
+}
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

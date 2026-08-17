@@ -673,3 +673,83 @@ The 96-unit grid is what said the cave was sealed, and it was wrong: the gap int
 units across, and a conservative 96-unit voxelisation closes a 160-unit gap. At 48 and 32 the brush
 carve alone reaches the same depth as the mesh clearing did. The passage into 25_14's cave is open
 without touching a single mesh triangle.
+
+
+## L2.32 The "holes in the ground" inside 25_14's cave are its water, drawn solid
+
+Two of them: `Godad_Dragoncave_S.Godad_DC_water`, a flat 2669 x 2702 quad, once at z -4033 and once
+at -5256, straight across the lava chamber the player walks through. Their material is
+`FX_E_T.ssq_water_01_tex` - a bare `TexOscillator` with no `Opacity` and no `OutputBlending` - so
+nothing in the material said "see-through" and the surface came across opaque. That is the stack of
+pale grey plates with black gaps between them in Screenshot_69/81/82: it reads as a broken floor with
+a pit in it.
+
+Confirmed by ray-casting the chamber from `171400,-115436,-3800`: `Godad_DC_water#0` is the first
+thing hit over the entire lower half of the view.
+
+The brush route already knew this - a square's sea is `/water|ocean/i` on the package or object name
+and is drawn see-through (L2.14) - and the mesh route did not. Now both do: a material whose name
+says water is `OB_Translucent` whether it arrived on a brush polygon or on a mesh section.
+
+**Collision stays.** In Lineage 2 the player swims through it; Killing Floor has no water volume
+here, so a surface with no floor under it is a fall into the lava - measured, 35 health on the way
+down. See-through is the whole fix.
+
+## L2.33 A zone boundary is not a surface, and the FLAGS are what say so
+
+25_14's cave had a hole in its floor a few steps inside the entrance, and it took five rounds in the
+game to pin down because three different things looked like it.
+
+`PF_SpecialPoly | PF_ForceViewZone` is how a Lineage 2 brush polygon says "I am a zone boundary".
+The client divides a place up with them and draws none of them. Carried across as geometry they are
+big flat pale slabs hanging in the room with gaps between them, which is the "stack of plates" of
+Screenshot_81/84.
+
+**The flags say it, the texture does not.** On 25_14, 61 polygons wearing `Godad_DC_field` carry
+those flags and another 24 wearing the same texture do not - and those 24 are the floor the player
+walks in on. A first attempt skipped by name, took the floor with them, and turned the plates into a
+hole straight out to the sky (Screenshot_86).
+
+Three rules came out of it:
+
+- **Skipped by flags**, and only where both are set. 51 polygons on 25_14, 252 on 19_21, 163 on
+  17_22, and none of them ever a surface.
+- **Kept in the file, not dropped.** A doorway is cut flush with the wall it goes through, and when
+  that wall is one of these the carve has no other plane to recognise the cut by - drop it and the
+  cave mouth seals itself from inside with a face the player cannot see (twice, Screenshot_88).
+- **Except a small horizontal one.** A zone box has a floor as well as four sides, and where that
+  floor is the only thing under the player it IS the ground: 194x664 at z=-2159 just inside the cave.
+  Drawn both ways round - it is the underside of a box, so one winding alone is see-through from
+  above. The zone's own lid and floor are 4329x9715 and are not that; the bound is 2048.
+
+## L2.34 The floor of a carved room
+
+The hole that survived all of the above is a real pit: at 170800,-116675 the only drawn thing in the
+whole column is a ceiling piece at z=-1179, and the bottom of the carved volume - the floor of that
+pit - is at -4643 and was never emitted. A subtractive brush's own polygons ARE the surfaces of the
+room it hollowed out, and this converter drew only the additive ones.
+
+`interiors()` in `carve.js` emits them, and what it took to make that safe:
+
+- **Horizontal faces only.** A floor or a ceiling can close a hole in the ground and can never block
+  a passage. Every vertical face is left off: emitted, they are walls, and a wall in the wrong place
+  is the invisible barrier that sealed the cave mouth twice.
+- **A face is buried only by ROCK**, meaning an additive brush - not by the room next door. Two
+  carved volumes that overlap are one room with two floors, and the lower one is still what a player
+  would land on.
+- **A zone box is not rock.** Its hull spans the whole cave, and while it counted as solid every
+  room face inside it read as buried: 11 faces came through against 418 once it was left out.
+- **Never the brush that hollows out the universe.** Every Unreal level opens with one - 25_14's is
+  655360 x 524288 x 32768 around the origin - and its bottom face would floor the whole world.
+
+| square | inside faces | brush triangles |
+|---|---|---|
+| 25_14 | 418 | 376 -> 1082 |
+| 17_22 | 345 | 2119 -> 2504 |
+| 16_12 | 277 | 1340 -> 1884 |
+| 19_21 | 197 | 2252 -> 2176 |
+| 17_20 | 115 | 4278 -> 4480 |
+| 20_21 | 26 | 3230 -> 3206 |
+
+Both rides on the carve switch - it is the same operation on the same brushes - except the zone
+boundary itself, which is never a surface and is skipped whether the carve runs or not.
