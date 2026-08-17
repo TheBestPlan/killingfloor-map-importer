@@ -2,6 +2,28 @@
 
 All notable changes to Killing Floor Map Importer are documented here. The format follows [Conventional Commits](https://www.conventionalcommits.org/) and the version scheme is [Semantic Versioning](https://semver.org/).
 
+## [0.1.4](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.3...v0.1.4) (2026-08-17)
+
+
+### Features
+
+* **karma:** let corpses rest on a converted floor ([f8afc9c](https://github.com/geekrainian/killingfloor-map-importer/commit/f8afc9ca4d8b60dca9f771102545c13b9d5ae19e))
+* **lighting:** floor the atlas, ship the ambient split ([e8e80f1](https://github.com/geekrainian/killingfloor-map-importer/commit/e8e80f1121cb731d94627f686707aba6fb42997e))
+* **lighting:** keep the lightmapped world lit, so the torch reaches it ([0dd3044](https://github.com/geekrainian/killingfloor-map-importer/commit/0dd3044b535e7e2f546bd9f9e751cf8d0f6afbb6))
+* **lighting:** split the world's ambient off the player's ([e2e29db](https://github.com/geekrainian/killingfloor-map-importer/commit/e2e29db2419d9960323e4c2c1bbbfd058da93074))
+* **lineage2:** open the carved doorways, mend the sky, toggle the blend ([58c485b](https://github.com/geekrainian/killingfloor-map-importer/commit/58c485b493e1389ba2bada996f85b2ca86d1dd63))
+* **lineage2:** read a client's world square into a Killing Floor level ([dbcade2](https://github.com/geekrainian/killingfloor-map-importer/commit/dbcade28408110ce42bad679ddd6c06a12489050))
+* **lineage2:** scale the world to the pawn, blend the ground, plant the grass ([8399565](https://github.com/geekrainian/killingfloor-map-importer/commit/839956528efadfb7730a078f002dabb6759ee8dd))
+* **sky:** stand a flat sky in when the map's own images are missing ([0ec0bb9](https://github.com/geekrainian/killingfloor-map-importer/commit/0ec0bb95db6b182b5861322bad0825fd7358941f))
+
+
+### Bug Fixes
+
+* **glass:** stop bullet decals repainting a see-through pane ([7a58051](https://github.com/geekrainian/killingfloor-map-importer/commit/7a58051e12714c6e1782ea2380e790ba863acc83))
+* **lighting:** keep glass and water see-through under the lightmap atlas ([b37950d](https://github.com/geekrainian/killingfloor-map-importer/commit/b37950d6f747927fae6ca0f5bd4b946c85fa6976))
+* **lineage2:** blend surfaces the way the client says, and spawn on ground ([5611d58](https://github.com/geekrainian/killingfloor-map-importer/commit/5611d5862a3ae96ad51c5933aba2c519493f7bc1))
+* **lineage2:** give a carved room its floor, and skip the zone boundaries ([27307ae](https://github.com/geekrainian/killingfloor-map-importer/commit/27307ae9ef0d4cd756ec2a32f4803a6db43d98b8))
+
 ## [0.1.3](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.2...v0.1.3) (2026-08-11)
 
 
