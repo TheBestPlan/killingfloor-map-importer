@@ -337,6 +337,10 @@ function convert(opts) {
 
   const texByMiptex = new Map();
   const texByRef = new Map();
+  // Every material the player can see through - water's own texture, the Shader a `rendermode`
+  // entity gets, and whatever the lightmap route rebuilds them into. The actor wearing one has to
+  // refuse projectors; see the bAcceptsProjectors note where the mesh actors are written.
+  const seeThrough = new Set();
   let missingTex = 0, embeddedTex = 0, wadTex = 0, potResized = 0;
   for (const idx of usedMiptex) {
     const mt = map.miptex[idx];
@@ -361,6 +365,7 @@ function convert(opts) {
     };
     texByMiptex.set(idx, rec);
     texByRef.set(t.texRef, rec);
+    if (kind === "liquid") seeThrough.add(t.texRef);
   }
   log("textures: " + texByMiptex.size + " used (" + embeddedTex + " embedded, " + wadTex + " from wad, " +
     missingTex + " missing -> placeholder, " + potResized + " resampled to power-of-two)");
@@ -406,6 +411,7 @@ function convert(opts) {
     });
     shaders.set(key, ref);
     shaderParts.set(ref, { texRef, opacityRef, additive });
+    seeThrough.add(ref);
     return ref;
   };
   // rendermode: 0 normal, 1 colour, 2 texture, 3 glow, 4 solid (colour key), 5 additive. Only 1/2
@@ -1546,6 +1552,7 @@ function convert(opts) {
         },
       });
       litBlend.set(key, ref);
+      if (kind !== "masked") seeThrough.add(ref);
       return ref;
     };
     if (lightmap) {
@@ -1633,6 +1640,9 @@ function convert(opts) {
                 // CS glass is drawn with renderamt; without this it converts to an opaque slab.
                 pr.byte("Style", 3);                    // STY_Translucent
                 pr.float("ScaleGlow", Math.max(0.15, (parseFloat(item.e.renderamt) || 150) / 255));
+                // Same reason as the see-through static meshes: a bullet decal projected onto a
+                // translucent surface repaints the whole pane instead of marking it.
+                pr.bool("bAcceptsProjectors", false);
               } else {
                 // A cinderblock wall is a KFGlassMover too - it is the only actor in KFMod that
                 // takes damage, disappears and clears its collision - but glass shards off concrete
@@ -1691,6 +1701,15 @@ function convert(opts) {
             // that makes the engine ignore every light in favour of a bake nobody performed.
             pr.bool("bStatic", true);
             pr.bool("bStaticLighting", !meshDynLit);
+            // A projector - KF's bullet decal, the torch's own spot - drawn onto a see-through
+            // surface does not land as a mark ON the pane: it repaints the whole pane, which is the
+            // white flash that faded through grey to black every time gg_33_shudder's roof was shot
+            // (Screenshot_92). The shipped maps do the same thing: 12581 of their 114731 static mesh
+            // actors turn projectors off, and a mark on glass is not worth the artefact anyway.
+            // KF_GLASS_PROJ=1 lets them through again, which is what the artefact looks like.
+            if (!process.env.KF_GLASS_PROJ && mesh.materials.some((r) => seeThrough.has(r))) {
+              pr.bool("bAcceptsProjectors", false);
+            }
             // The map's own lightmap is in the material's SelfIllumination, so the actor stays LIT:
             // bUnlit would draw the same picture but shut the torch and the muzzle flash out of the
             // level entirely. What static lighting adds on top is a bake nobody performed - black -
