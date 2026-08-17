@@ -8,7 +8,7 @@
 const { Rd } = require("../unreal/read");
 
 const SIZE = { 0: 1, 1: 2, 2: 4, 3: 12, 4: 16 };
-const TYPE = { Byte: 1, Int: 2, Bool: 3, Float: 4, Object: 5, Name: 6, Str: 8, Array: 9, Struct: 10 };
+const TYPE = { Byte: 1, Int: 2, Bool: 3, Float: 4, Object: 5, Name: 6, Class: 8, Array: 9, Struct: 10, Str: 13 };
 const RF_HasStack = 0x02000000;
 
 // `end` bounds the walk; without it a misread size runs off into the next object.

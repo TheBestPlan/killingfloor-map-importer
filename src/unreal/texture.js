@@ -478,9 +478,10 @@ function topAsRgb(tex) {
 
 function addRawTexture(pkg, refs, name, tex, opts) {
   // `bAlphaTexture` is not "this format has an alpha channel", it is "cut this surface out by it",
-  // and the engine draws that with a dither pattern. Half a Lineage 2 client's DXT5 textures have an
-  // alpha of 255 throughout, so the caller decides - see lineage2/texture.js alphaMode.
-  const alpha = !!(opts && opts.alpha);
+  // and the engine draws that with a dither pattern (GOTCHAS 5.36). Half a Lineage 2 client's walls
+  // carry an alpha nobody reads, so the caller decides - and may not know until every material that
+  // uses the texture has been resolved, hence the thunk.
+  const alpha = opts && typeof opts.alpha === "function" ? opts.alpha : () => !!(opts && opts.alpha);
   const mips = padMipChain(tex.format, tex.width, tex.height, tex.mips);
   // A texture shipped with ONE level cannot be padded - there is no tail to repeat - and a short
   // chain is one the engine indexes past (GOTCHAS 5.33). Decode it and go out through the ordinary
@@ -504,7 +505,7 @@ function addRawTexture(pkg, refs, name, tex, opts) {
       pr.int("UClamp", tex.width);
       pr.int("VClamp", tex.height);
       if (opts && opts.clamp) { pr.byte("UClampMode", 1); pr.byte("VClampMode", 1); }
-      if (alpha) pr.bool("bAlphaTexture", true);
+      if (alpha()) pr.bool("bAlphaTexture", true);
       // One frame of a flipbook. The next frame's export does not exist yet when this one is
       // registered - the last frame points back at the first - so the reference is asked for at
       // serialise time, once every frame in the chain has a ref.

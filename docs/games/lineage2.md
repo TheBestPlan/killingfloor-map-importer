@@ -56,13 +56,30 @@ wireframe stream and the difference costs nothing.
 Measured: 47 of 47 meshes a town square references, and 28 more across five other packages, read
 with zero failures.
 
-## L2.4 UPolys writes PanU/PanV as INTs, not WORDs
+## L2.4 The four bytes after a poly's iBrushPoly are `ShadowMapScale`, and there is no PanU/PanV
 
-The brush polygon object is otherwise the one this tool already emits. The difference was found by
-counting rather than by guessing: a six-poly object measures **114 bytes per poly** against the 110
-that the WORD reading accounts for, and the four are these.
+The brush polygon object is otherwise the one this tool already emits, but its tail is not Killing
+Floor's. A six-poly object measures **114 bytes per poly** against the 110 that Killing Floor's
+`WORD PanU, WORD PanV` accounts for, and the extra four were first read as "the pan, widened to
+INTs". They are not. `FPoly` here has no pan at all - the offset lives in `Base` - and the eight
+bytes after `iBrushPoly` are `FLOAT ShadowMapScale` and a sentinel word:
 
-Get it wrong and the first poly reads correctly, the second is garbage.
+| square | first word | as a float | second word |
+|---|---|---|---|
+| 19_21 | 1107296256 / 1132462080 / 1115684864 | **32 / 256 / 64** | always -1 |
+| 16_12 | 1132462080 / 1107296256 | **256 / 32** | always -1 |
+| 17_22 | 1107296256 / 1132462080 / 1124073472 | **32 / 256 / 128** | always -1 |
+
+Three squares, 2545 polygons, four distinct values between them - a per-poly texture offset does not
+look like that; a lightmap resolution does.
+
+Added to a texture coordinate the damage is total: 0x42000000 read as an integer is 1 107 296 256
+texels, and at that magnitude a 32-bit float has no bits left for the polygon's own extent. Every
+brush surface in every town collapsed into smeared horizontal streaks - the "distorted, overlaid"
+floors and walls, which read as a texture bug and were a parsing bug.
+
+The stride is unaffected either way, which is why it never crashed: the bytes are consumed, only
+their meaning was wrong.
 
 ## L2.5 A brush names its Polys in the model's BODY, not in a property
 
@@ -76,6 +93,9 @@ props(1) | FBox(25) | FSphere(16) | five empty arrays(5) | INT NumSharedSides | 
 Walked out of a real 72-byte model rather than assumed. All five geometry arrays are empty on a
 brush — that is what makes it a brush and not compiled geometry.
 
+Subtractive brushes are not drawn (CSG is a subsystem of its own), but they are read: the volume a
+building was hollowed out with is the only way to tell a hall from a rock. See L2.25.
+
 ## L2.6 The compiled world BSP is NOT readable with the 128 layout
 
 `FBspNode`'s field list moved between 123 and 128 and a brute force over the plausible shapes — the
@@ -87,6 +107,34 @@ It does not matter. **Read the brushes' own polygons instead** (L2.4, L2.5). The
 compiler ran on, they carry their own texture mapping, and they are a format this tool already knows.
 Subtractive brushes are skipped rather than carved: CSG is a subsystem of its own, and an
 additive-only town is a town with its floor.
+
+## L2.6a `TerrainInfo.Location` is the MIDDLE of the heightfield
+
+Not its corner. A vertex is at
+
+```
+Location + (ix - USize/2) * TerrainScale.X,  Location + (iy - VSize/2) * TerrainScale.Y
+```
+
+Read as a corner, every square's ground is half a square - 16384 units at 256x128 - out of place in
+BOTH axes. What that looks like: the terrain cuts through the town at the wrong height, buildings
+stand with their feet buried and their roofs poking out of a hillside, and half the square's mesh
+actors fall outside the grid entirely (19_21: 808 of 1548). Worse, it is silent - the ground still
+looks like ground, so every question of the form "what is under this spawn" gets a confident answer
+about a place sixteen thousand units away.
+
+The client names the square in `MapX`/`MapY`, and the world grid is `(MapX-20, MapY-18) * 32768`.
+Measured on four squares, centred lands on that square exactly and every one of the square's own
+PlayerStarts falls inside it; read as a corner, all four are off by +16384 in x and y:
+
+| square | grid square | as a corner | centred |
+|---|---|---|---|
+| 19_21 | x -32768..0 | -16384..16256 | **-32768..-128** |
+| 16_12 | x -131072..-98304 | -114688..-82048 | **-131072..-98432** |
+| 17_20 | x -98304..-65536 | -81920..-49280 | **-98304..-65664** |
+| 23_18 | x 98304..131072 | 114688..147328 | **98304..130944** |
+
+`test/selfcheck.js` checks this against the client when there is one.
 
 ## L2.7 The terrain is a G16 heightfield, and the formula is the engine's
 
@@ -105,8 +153,10 @@ for 16_12 that box reads `Z = -4687.7` against the -4688 the formula gives.
 
 ## L2.8 A square's town can sit BELOW its own terrain
 
-16_12's heightfield is flat at -4688 and its 1907 mesh actors are at -6823…-6414, with 56 of its 57
-player starts down there with them. It is not a bug in the height formula (L2.7) and not a hole in
+16_12's heightfield is flat at -4688 over the whole town and its 1907 mesh actors are at
+-6823…-6414, with 56 of its 57 player starts down there with them - a median of 2010 units under the
+ground. (Measured with the terrain in the right place; see L2.6a, which moved every earlier ground
+reading by half a square.) 17_20 is the same shape: its starts sit a median of 2244 below. It is not a bug in the height formula (L2.7) and not a hole in
 the terrain (L2.9): what is under the ground is a dungeon built out of brushes, and the client walks
 the player on those.
 
@@ -121,8 +171,9 @@ The starts sort into three piles and the biggest one wins:
 - **on the heightfield** (17_22: 8) — kept where they are, raised only if they are below it;
 - **a level below it** (16_12: 12, more than 1024 units down, with a brush floor) — a dungeon, and
   the only thing that makes that square playable;
-- **buried just under it** (17_20: 66, 416 units down with the town on top) — junk heights that name
-  a real place, so the spot is kept and the ground above is put back under the player.
+- **buried just under it** — junk heights that name a real place, so the spot is kept and the ground
+  above is put back under the player. (17_20 read this way while the terrain was half a square out
+  of place; with L2.6a fixed its starts are a real level below, not buried.)
 
 Whichever pile is largest is where the square is played. 16_12 has one stray start up on the empty
 heightfield and twelve down in the dungeon that is the whole map; preferring ground level for its own
@@ -152,10 +203,12 @@ The real data is `Layers[i].AlphaMap`, an ordinary texture per layer: DXT1 1024�
 ones, P8 512×512 and DXT5 for others. Decode it and the paint map is obvious — layer 1 in the middle
 of Dion's fields, 2 and 5 around the edges, the base at the borders.
 
-A static mesh has one material per section, so the ground takes the layer that **wins** each quad
-rather than blending: hard edges where the original fades, and every layer's own tiling kept. The
-alternative — baking one texture for the whole square — gives 4×4 texels per quad at 1024², which is
-mud.
+A static mesh has one material per section, so the first version took the layer that **won** each
+quad: hard edges where the original fades, and every layer's own tiling kept. Baking one texture for
+the whole square was the other option and is worse — 4×4 texels per quad at 1024², which is mud.
+
+**Superseded by L2.27**, which blends after all: a pass per layer, weighted by the mesh's own vertex
+alpha. The dominant-layer map is still what picks the base.
 
 ## L2.11 Half of what a surface points at is not a texture
 
@@ -182,7 +235,7 @@ DXT1 with **no alpha at all**, drawn with `OB_Brighten` so its black background 
 glow beside it is `OB_Translucent`. Read as textures they have nothing to say, and every torch in
 16_12 came out as a flame painted on a black slab.
 
-Where the client says nothing, the alpha decides — see L2.11b.
+Where the client says nothing, see L2.24 for the order the answer is looked for in.
 
 ## L2.11b A texture with an alpha channel is usually not transparent
 
@@ -202,6 +255,10 @@ inside the block; a DXT3 block carries sixteen nibbles. Three answers:
 
 The test is deliberately biased toward **mask**. A gradient drawn masked has hard edges; a cut-out
 drawn translucent is a wall you can see through that sorts wrongly against everything behind it.
+
+**Superseded in part by L2.24.** Classifying the alpha is still how an `Opacity` node's kind is
+decided, but it is no longer allowed to make a bare texture see-through on its own: the client says
+what it wants, and a wall with a soft-alpha window pane is a wall.
 
 ## L2.11c A flame is sixteen textures, and `AnimNext` is all it takes
 
@@ -299,3 +356,189 @@ converter takes a client folder rather than a file: a `.unr` on its own is a lis
 
 Packages are held open once indexed — a town square comes back to the same few `.usx` hundreds of
 times and each one costs a decrypt of the whole file.
+
+## L2.19 The particle systems come across as settings, not as geometry
+
+An `Emitter` is an ordinary actor holding an `Emitters` array of `SpriteEmitter` objects, and both
+engines call the fields the same things. Of the 43 property names the client's emitters actually use,
+**39 are declared on Killing Floor's own `ParticleEmitter`** — `ColorScale`, `StartSizeRange`,
+`LifetimeRange`, `StartVelocityRange`, `SizeScale`, `FadeIn`/`FadeOut`, `DrawStyle`, `Texture`,
+`MaxParticles`, `SpinsPerSecondRange`… The four that are not (`WeatherSoundCheck`,
+`UseMeshBlendMode`, `RenderTwoSided`, and `StaticMesh` on `MeshEmitter`) the loader skips on its own,
+because a property tag carries its own size.
+
+So nothing here interprets the effect. The property block is read into a tree and written back out;
+the other engine runs it. 16_12 has 260 emitters over 352 particle systems, 17_20 has 69 over 106.
+
+Two things do have to be rewritten:
+
+- **object references.** A name index means nothing outside the package it came from, so every
+  `Texture` is resolved through the same material path the surfaces use — which also gets it the
+  client's own `OutputBlending` (L2.11a).
+- **when.** Carrying a texture registers new exports, and an export added while the package's bodies
+  are already being serialised is one the export table never hears about — the writer walks a list it
+  snapshotted. Resolve first, serialise second.
+
+The tree is generic rather than a schema: a `RangeVector` is three `Range`s, each its own tagged
+block, and `ColorScale` is an array of blocks. Reading blocks and writing blocks needs nothing that
+has to be kept in step with two engines. The one thing the file does not say is what a dynamic
+array's ELEMENTS are — the property's declared type is not stored — so the reader tries tagged blocks
+first and falls back to compact object indices, and keeps whichever consumes the span exactly.
+
+`MeshEmitter` is not carried yet (4 in 16_12, 29 in 17_20): its `StaticMesh` needs the mesh cache,
+which lives inside the mesh pass. It is reported, not dropped silently.
+
+## L2.20 A start needs something BUILT under it, not just a height that looks right
+
+Lineage 2's own `PlayerStart`s are editor leftovers, and the checks that keep them honest have to ask
+what this converter actually produced. Two more, after the piles in L2.8:
+
+- **Over water.** 17_22's harbour town stands above its own sea and is fine, because the piers under
+  it are static meshes. 16_24's single start floated over its bay with the nearest mesh actor 680
+  away — the water has no collision, so the player falls through it and dies
+  on the seabed. The test is whether any mesh actor stands within 400 units in XY and 1024 in Z.
+- **High in the air.** Same test, for a start more than 512 units above the heightfield. Nothing
+  holding it up means it is set down on the ground rather than dropped from a height.
+
+Mesh actor ORIGINS answer this, not their triangles: the question is coarse — "on the town, or over
+open sea" — and triangles would need every actor's rotation matrix rebuilt. A start hanging over a
+courtyard with meshes around its edges reads as held up; triangle-accurate ground is the upgrade if
+that ever bites.
+
+## L2.21 `OB_Translucent` is ADDITIVE, so the sea takes no glow at all
+
+Killing Floor's translucent output blending adds rather than mixes — black is transparent and
+brightness is opacity. That makes a lit water surface wash out: at the world's `AmbientGlow` (40)
+16_24's ocean was a black band across the bay, at `bUnlit` 17_22's harbour was white glare, and at a
+half-way glow of 128 it was still 223,211,205 over a seabed of 64.
+
+Water gets no glow of its own. The zone's ambient alone leaves the sheen the additive pass is for,
+and the seabed shows through it. The sky stays `bUnlit`; that one really is drawn, not lit.
+
+## L2.22 The level's box has to enclose the DUNGEON, not just the ground
+
+`KillZ` comes from the floor of the world box, and the box was drawn around the heightfield. Cruma
+Tower on 20_21 is brush geometry down at -12016 with the terrain 8000 units above it, so the box
+floor landed at -8109 and `KillZ` at -9109 — nearly three thousand units above the only spawn the
+square has. The player appeared in the dungeon and died at `Elapsed Time: 00:01`.
+
+Size the box around everything the level will hold: the heightfield, the brush vertices, and the mesh
+actors' origins. On 20_21 that moves the floor from -8109 to -20320. It costs one extra pass over
+data already read, and the brushes are read once and used twice rather than twice over.
+
+Squares where this was already fine (16_12's dungeon is only 2000 below its ground) hid the bug.
+
+## L2.23 A particle takes a texture, not a material
+
+`ParticleEmitter.Texture` is declared as a `Material` and a `Shader` IS one, so it loads clean and
+verifies clean — and then the D3D9 renderer walks into it and dies the moment a particle is on
+screen:
+
+```
+General protection fault!
+History: FD3D9RenderInterface::SetParticleMaterial <- FD3D9RenderInterface::SetMaterial
+      <- USpriteEmitter::RenderParticles <- AEmitter::Render <- FDynamicActor::Render
+```
+
+Resolve an emitter's texture straight to the `Texture`, not through the material path the surfaces
+use. Nothing is lost: the particle system does its own blending through `DrawStyle`, which the client
+sets per emitter.
+
+A system whose texture could not be carried is dropped rather than left to the class default — the
+default is an editor sprite, and a system painting with that is a grid of question marks in the air.
+
+## L2.24 `AlphaTest` outranks the alpha channel, and a bare texture is opaque
+
+Lineage 2's `Shader` carries two fields Killing Floor's does not: `AlphaTest` and `AlphaRef`. They
+are the client saying "this alpha is a CUT-OUT", and they outrank anything the pixels look like.
+Foliage and window glass are `AlphaTest=true, AlphaRef=10` over an alpha that is half mid-range;
+classified from the histogram they read as gradients, were drawn `OB_Translucent`, and came out as
+**glowing white trees and walls you could see through**.
+
+The order that works, most direct statement first:
+
+1. `Shader.OutputBlending` — a flame is `OB_Brighten`; a fence is the `_m` twin of its texture, a
+   Shader whose entire content is `OutputBlending=OB_Masked` (`Gl_C_fence_m`, `GL_p_net_m`, …).
+2. `AlphaTest` — a cut-out, however soft the alpha.
+3. An `Opacity` node — then ITS alpha decides which kind: a gradient is water or the sky's haze ring,
+   a hard 0/255 is a flag, a carpet, a dagger.
+4. The texture's own `bMasked` / `bAlphaTexture` (`SSQ_netalpa02` has `bMasked=true`).
+5. Otherwise **opaque**. A bare texture's alpha channel is not an instruction: `Gl_CV_wall_win03` is
+   a DXT3 wall with a soft-alpha window pane and the client draws it solid.
+
+On 19_21 that takes the non-opaque surfaces from "everything with an alpha" down to seven: two flame
+materials, the indoor water, a rope the client explicitly marks translucent, the sea, and the sky's
+two layers.
+
+## L2.25 A building is a block with its rooms subtracted, so "inside a brush" is not "inside rock"
+
+Subtractive brushes are skipped (L2.5's note), and that has a consequence for spawns: a castle is one
+additive block with its halls carved out, so EVERY start in it is geometrically inside an additive
+brush. 16_12's dungeon is the same shape - all 55 of its starts are inside one 11840x14592x832 box.
+
+So the test has two halves: inside an additive hull AND inside none of the subtractive ones. The
+first alone threw away every dungeon start on the map; the pair keeps them and still refuses a start
+buried in a wall (19_21 had one inside a 300x1192x512 block of `GL_CA_wall02`).
+
+A start in a carved room is kept, but ranked last. The room is really there and looks right from the
+inside - what is missing is the doorway, because the doorway was carved too, so the player is sealed
+in. A square with anywhere outdoors to stand uses that instead, whatever the counts: on 19_21 one
+start in the street beats seven in houses.
+
+## L2.26 The two games do not measure with the same ruler
+
+A Lineage 2 character is about half the height of a Killing Floor pawn, so a town carried across 1:1
+fits the world and not the player: the player stands as tall as a house door (Screenshot_53). The
+squares go through the same `scale` knob the Counter-Strike route uses to turn Half-Life units into
+Unreal ones, with a default of **2**.
+
+One thing has to move with it. The world box reaches 24000 units above the highest ground so the sky
+has somewhere to be, and the sky cube was centred on the box's middle — which is up there with it. At
+scale 2 that put the cube's floor 14000 units over the player's head: he stood outside his own sky
+and saw black at the horizon with the last frame smeared across it. The cube is centred on the ground
+and sized to hold the whole box, corners included; at scale 2 that is a half-size of about 62000, and
+the renderer draws it.
+
+## L2.27 The layer blend fits on a static mesh after all — as vertex alpha
+
+The client blends its terrain layers per texel through each layer's `AlphaMap`. A static mesh section
+has one material and one set of UVs, so the first version took the layer that WON each quad, and a
+field came out as a patchwork of hard squares (Screenshot_54/55).
+
+What makes it work is `Engine.VertexColor`: a material that hands the mesh's own vertex colour to
+whatever asks. So each layer above the base gets a pass of its own over the same ground —
+
+```
+FinalBlend { FrameBufferBlending = FB_AlphaBlend, ZWrite = false, ZTest = true
+             Material = Shader { Diffuse = the layer's texture, Opacity = VertexColor } }
+```
+
+— and the mesh carries that layer's weight in the alpha of every vertex. The blend lands on the
+terrain's own grid, a quarter the resolution of the alpha map and enough to turn the squares into a
+gradient. `ZWrite` is off because the pass is coplanar with the base under it, and the base section
+is written first so the overlays blend in the order they are laid down.
+
+It is not free: 19_21 goes from 127 668 triangles of ground to 372 558, and the file from 62 MB to
+95. A quad joins an overlay only if the layer reaches one of its corners with a weight of 8 or more,
+which is what keeps that from being worse.
+
+## L2.28 The grass is in the map, as a density map and a seed
+
+`TerrainInfo.DecoLayers` is a list of decoration layers, and each one is a static mesh plus a grey
+`DensityMap` over the whole square: 19_21 has three (`Grass009`, `Gludio_General_grass001`,
+`Gludio_General_grass014`), 512×512 maps with 0.7–2.4% of their texels painted, `MaxPerQuad` 20/8/7,
+and a `ScaleMultiplier` range per layer.
+
+What is NOT in the file is where any single blade stands — the client scatters them at run time from
+`Seed`. So the converter scatters its own to the same density, deterministically, and since Killing
+Floor has no decoration layer the result has to be geometry. A blade is 5 to 20 triangles and a square
+wants tens of thousands of them, which is hopeless as actors and ordinary as merged meshes: the
+instances are baked into one static mesh per 18000 triangles, non-colliding, so a player walks through
+grass rather than into it.
+
+19_21: 31 964 plants over 15 meshes, 240 110 triangles, +41 MB. It is the heaviest single thing the
+converter emits, which is why it is a checkbox (`--no-grass` on the command line).
+
+The cap that keeps it to that has to THIN the field, not fill up and stop. A limit that stops leaves
+the grass in whichever rows the scatter happened to walk first and bare ground for the rest of the
+square, so the density is summed first and every quad's count multiplied by `limit / total`.

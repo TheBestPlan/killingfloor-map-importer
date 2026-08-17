@@ -78,8 +78,8 @@ function buildBrushMeshes(polys, resolve, opts) {
         const rel = sub(v, p.base);
         cur.vertices.push({ pos, normal: p.normal });
         cur.uvs.push([
-          (dot(rel, p.textureU) + (p.panU || 0)) / tex.width,
-          (dot(rel, p.textureV) + (p.panV || 0)) / tex.height,
+          dot(rel, p.textureU) / tex.width,
+          dot(rel, p.textureV) / tex.height,
         ]);
         cur.colors.push([0, 0, 0, 255]);
       }

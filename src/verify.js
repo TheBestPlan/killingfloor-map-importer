@@ -334,6 +334,57 @@ function verify(file) {
     }
     check("actor property blocks terminate inside the object", mismatched === 0,
       walked + " actors" + (mismatched ? ", " + mismatched + " broken: " + first : ""));
+
+    // A spawn below KillZ kills the player the moment the level starts.
+    //
+    // The engine drops any actor under `LevelInfo.KillZ`, and the converter sets it from the floor of
+    // the world box - so a level whose box was drawn round the wrong thing spawns the player straight
+    // into it. On 20_21 the box was sized around the heightfield and the only spawn is in a dungeon
+    // 2900 units below its floor: "Elapsed Time: 00:01" and a corpse. Nothing else catches this - the
+    // file is structurally perfect.
+    const scalar = (exp, want) => {
+      const end = exp.serialOffset + exp.serialSize;
+      const r = new R.Rd(pkg.buf, exp.serialOffset);
+      const node = r.cidx(); r.cidx(); r.skip(12);
+      if (node !== 0) r.cidx();
+      for (;;) {
+        if (r.pos >= end) return null;
+        const name = pkg.names[r.cidx()];
+        if (name === "None" || name === undefined) return null;
+        const info = pkg.buf[r.pos++];
+        const type = info & 0x0f, sizeCode = (info >> 4) & 0x07;
+        if (type === 10) r.cidx();
+        let size = type === 3 ? 0 : SIZE[sizeCode];
+        if (sizeCode === 5) size = pkg.buf[r.pos++];
+        else if (sizeCode === 6) { size = pkg.buf.readUInt16LE(r.pos); r.pos += 2; }
+        else if (sizeCode === 7) { size = pkg.buf.readUInt32LE(r.pos); r.pos += 4; }
+        if ((info & 0x80) !== 0 && type !== 3) r.pos++;
+        if (name === want) return { type, at: r.pos, size };
+        r.pos += size;
+      }
+    };
+    let killZ = null;
+    for (const e of pkg.exports) {
+      if (pkg.classOf(e) !== "LevelInfo" || !e.serialSize) continue;
+      const t = scalar(e, "KillZ");
+      if (t && t.type === 4) killZ = pkg.buf.readFloatLE(t.at);
+      break;
+    }
+    if (killZ !== null) {
+      let starts = 0, doomed = 0, lowest = Infinity;
+      for (const e of pkg.exports) {
+        if (pkg.classOf(e) !== "PlayerStart" || !e.serialSize) continue;
+        const t = scalar(e, "Location");
+        if (!t || t.size < 12) continue;
+        starts++;
+        const z = pkg.buf.readFloatLE(t.at + 8);
+        if (z < lowest) lowest = z;
+        if (z <= killZ) doomed++;
+      }
+      check("every spawn is above KillZ", doomed === 0,
+        starts + " start(s), lowest at " + Math.round(lowest) + ", KillZ " + Math.round(killZ) +
+        (doomed ? ", " + doomed + " below it" : ""));
+    }
   }
 
   return { ok, report: lines.join("\n"), model: m, pkg };

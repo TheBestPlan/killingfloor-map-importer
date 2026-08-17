@@ -54,6 +54,7 @@ function parseArgs(argv) {
     else if (t === "--terrain-step") a.terrainStep = parseInt(argv[++i], 10);
     else if (t === "--ambient") a.ambient = parseInt(argv[++i], 10);
     else if (t === "--glow") a.glow = parseInt(argv[++i], 10);
+    else if (t === "--no-grass") a.grass = false;
     else if (t === "--hull-max") a.hullMax = parseInt(argv[++i], 10);
     else if (t.startsWith("--")) throw new Error("unknown option " + t);
     else a._.push(t);
@@ -70,7 +71,7 @@ function main() {
     const clientDir = a.clientDir || a._[0];
     if (!clientDir || !a.square) {
       console.log("usage: node src/cli.js --game l2 --client <Lineage 2 folder> --square 24_13");
-      console.log("       [--out <dir>] [--name KF-Name] [--scale 1] [--terrain-step 1] [--verify]");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 2] [--terrain-step 1] [--no-grass] [--verify]");
       process.exit(1);
     }
     if (a.out && !/\.rom$/i.test(a.out)) fs.mkdirSync(a.out, { recursive: true });
@@ -78,8 +79,8 @@ function main() {
       clientDir, square: a.square, mapName: a.name,
       outFile: a.out && /\.rom$/i.test(a.out) ? a.out : null,
       outDir: a.out && !/\.rom$/i.test(a.out) ? a.out : null,
-      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,
-      terrainStep: a.terrainStep, ambient: a.ambient, glow: a.glow,
+      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the L2 one
+      terrainStep: a.terrainStep, ambient: a.ambient, glow: a.glow, grass: a.grass,
       log: (m) => console.log("  " + m),
     });
     if (a.verify) {

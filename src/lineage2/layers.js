@@ -76,6 +76,16 @@ function layerMap(client, pkg, terrain) {
     quads, map, used: [...used].sort((a, b) => a - b), painted,
     layers: terrain.layers.map((l, i) => ({ ...l, usable: usable[i], alpha: !!alphas[i] })),
     at(x, y) { return this.map[Math.min(this.quads - 1, y) * this.quads + Math.min(this.quads - 1, x)]; },
+    // How strongly layer `i` paints the terrain VERTEX (x, y), 0..255. The alpha map covers the whole
+    // square, so a vertex is one texel of it scaled by its own size - the same lookup `at` does per
+    // quad, asked per corner instead, which is what a blend needs.
+    weightAt(i, x, y) {
+      const a = alphas[i];
+      if (!a) return 0;
+      const ax = Math.min(a.width - 1, Math.round((x / quads) * a.width));
+      const ay = Math.min(a.height - 1, Math.round((y / quads) * a.height));
+      return a.data[ay * a.width + ax];
+    },
   };
 }
 

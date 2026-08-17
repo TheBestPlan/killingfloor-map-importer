@@ -169,7 +169,7 @@ The notes are split the way the converter is: one file for the target, one per s
 - **[docs/RESEARCH.md](./docs/RESEARCH.md)** — the format research: what was measured on both sides, the `UModel` v128 serialization order, the three possible architectures and why this one, how the existing `KF-CS-*` ports were actually made.
 - **[docs/GOTCHAS.md](./docs/GOTCHAS.md)** — the Killing Floor side: every measured pitfall of writing UE2.5, including the invariants whose violation crashes the engine. Required reading before changing the writer, whatever you are reading from.
 - **[docs/games/goldsrc.md](./docs/games/goldsrc.md)** — what reading a Counter-Strike 1.6 `.bsp` costs: WADs, palettes and masking, sky images, brush entities, `.mdl` props, water.
-- **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields and their layer blend, brush polygons, and why the sky cannot be carried across.
+- **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields, their layer blend and their grass, brush polygons, how a surface says it is blended, animated textures and particle systems, and why the sky cannot be carried across.
 - **[harness/README.md](./harness/README.md)** — checking a converted map in the real client.
 
 ## Legal

@@ -282,5 +282,115 @@ console.log("\nLineage 2 alpha classification");
   ok("a mid-range alpha is a gradient", alphaMode(blocks(gradient)) === "blend", alphaMode(blocks(gradient)));
 }
 
+// A particle system travels as a property block, and the two halves have to agree: what the reader
+// decodes out of a Lineage 2 package is what the writer puts into a Killing Floor one. Nested structs
+// and dynamic arrays are where that goes wrong, so the round trip is the check.
+console.log("\nParticle property blocks round-trip");
+{
+  const { Props } = require("../src/unreal/writer");
+  const { Package } = require("../src/unreal/package");
+  const { readBlock, writeBlock } = require("../src/lineage2/emitter");
+  const pkg = new Package();
+  const w = new Writer(512);
+  const pr = new Props(w, pkg.names);
+  pr.int("MaxParticles", 12);
+  pr.bool("FadeOut", true);
+  pr.float("FadeOutStartTime", 0.48);
+  pr.structBlock("LifetimeRange", "Range", (s) => { s.float("Min", 3); s.float("Max", 5); s.end(); });
+  pr.structBlock("StartSizeRange", "RangeVector", (s) => {
+    for (const axis of ["X", "Y", "Z"]) s.structBlock(axis, "Range", (a) => { a.float("Min", 15); a.float("Max", 20); a.end(); });
+    s.end();
+  });
+  pr.arrayProp("SizeScale", 2, (raw, s) => {
+    for (const [t, v] of [[0, 1], [1, 0.5]]) { s.float("RelativeTime", t); s.float("RelativeSize", v); s.end(); }
+  });
+  pr.structRaw("SpinCCWorCW", "Vector", Buffer.alloc(12));
+  pr.end();
+  const buf = Buffer.from(w.out());
+  const fake = { buf, names: pkg.names.list };
+  const block = readBlock(fake, 0, buf.length);
+  ok("a block with nested structs and arrays reads back", !!block, block ? block.length + " properties" : "walk did not land on the end");
+  if (block) {
+    const by = Object.fromEntries(block.map((p) => [p.name, p]));
+    ok("scalars survive", by.MaxParticles.value === 12 && by.FadeOut.value === true &&
+      Math.abs(by.FadeOutStartTime.value - 0.48) < 1e-6, "12 / true / 0.48");
+    const axes = by.StartSizeRange && by.StartSizeRange.block;
+    ok("a RangeVector is three Ranges", !!axes && axes.length === 3 && axes[0].block[1].value === 20,
+      axes ? axes.map((a) => a.name).join(",") : "-");
+    ok("an array keeps its elements", by.SizeScale.kind === "array" && by.SizeScale.items.length === 2 &&
+      by.SizeScale.items[1][1].value === 0.5, by.SizeScale.kind + " x" + (by.SizeScale.items || []).length);
+    ok("an atomic struct stays raw", by.SpinCCWorCW.kind === "structRaw" && by.SpinCCWorCW.bytes.length === 12,
+      by.SpinCCWorCW.kind);
+    // ...and writing it again produces the same bytes, which is what the converter relies on.
+    const w2 = new Writer(512);
+    const pr2 = new Props(w2, pkg.names);
+    writeBlock(pr2, block);
+    pr2.end();
+    ok("writing the tree back reproduces the block", Buffer.from(w2.out()).equals(buf),
+      Buffer.from(w2.out()).length + " vs " + buf.length + " bytes");
+  }
+}
+
+// The heightfield has to land on the square of the world grid the client itself names in MapX/MapY.
+// `TerrainInfo.Location` is the middle of it, and read as a corner every square's ground was half a
+// square out of place in both axes - the town sank into it and every ground query answered about
+// somewhere 16 thousand units away. Needs the client; skipped without one.
+{
+  const L2 = process.env.L2_CLIENT_DIR || "D:/games/L2 Interlude CUZUS";
+  if (fs.existsSync(path.join(L2, "maps"))) {
+    console.log("\nLineage 2 terrain lands on the world grid");
+    const { Client } = require("../src/lineage2/package");
+    const { readTerrain } = require("../src/lineage2/terrain");
+    const client = new Client(L2);
+    for (const name of ["19_21", "16_12", "23_18"]) {
+      let t = null;
+      try { t = readTerrain(client, client.get(name)); } catch (e) { }
+      if (!t || t.mapX === null) continue;
+      const c0 = t.vertex(0, 0);
+      const want = [(t.mapX - 20) * 32768, (t.mapY - 18) * 32768];
+      ok(name + " starts on its own grid square",
+        Math.abs(c0[0] - want[0]) < 1 && Math.abs(c0[1] - want[1]) < 1,
+        Math.round(c0[0]) + "," + Math.round(c0[1]) + " vs " + want.join(","));
+    }
+  }
+}
+
+// The grass is scattered rather than read: the client keeps a density map and a seed, not positions.
+// What has to hold is that the density is what decides the count, that the same square scatters the
+// same way twice, and that a blade lands on the ground rather than beside it.
+console.log("\nLineage 2 decoration scatter");
+{
+  const { scatter } = require("../src/lineage2/deco");
+  const N = 17;
+  const terrain = {
+    width: N, height: N,
+    vertex(ix, iy) { return [ix * 128, iy * 128, ix * 4 + iy * 8]; },
+    quadVisible() { return true; },
+  };
+  const grey = (v) => ({ width: 8, height: 8, data: Buffer.alloc(64, v) });
+  const layer = { maxPerQuad: 4, seed: 5, randomYaw: true, scale: { min: 1, max: 2 }, showOnInvisible: true };
+  const half = scatter(terrain, layer, grey(128), {});
+  const full = scatter(terrain, layer, grey(255), {});
+  ok("an empty density map grows nothing", scatter(terrain, layer, grey(0), {}).length === 0,
+    scatter(terrain, layer, grey(0), {}).length + " plants");
+  ok("twice the density is about twice the plants", full.length > half.length * 1.6 && full.length < half.length * 2.4,
+    half.length + " -> " + full.length);
+  ok("the same square scatters the same way twice",
+    JSON.stringify(scatter(terrain, layer, grey(128), {})) === JSON.stringify(half), half.length + " plants");
+  const off = half.filter((p) => {
+    const want = (p.pos[0] / 128) * 4 + (p.pos[1] / 128) * 8;
+    return Math.abs(p.pos[2] - want) > 0.01;
+  });
+  ok("every plant stands on the heightfield", off.length === 0, off.length + " of " + half.length + " off it");
+  const sizes = half.map((p) => p.size);
+  ok("the scale stays inside the layer's range",
+    Math.min(...sizes) >= 1 && Math.max(...sizes) <= 2, Math.min(...sizes).toFixed(2) + ".." + Math.max(...sizes).toFixed(2));
+  // A cap that fills up and stops leaves the whole far half of the square bare.
+  const capped = scatter(terrain, layer, grey(255), { limit: 100 });
+  const far = capped.filter((p) => p.pos[1] > (N - 2) * 128 * 0.7).length;
+  ok("a capped field still reaches the far side", capped.length <= 130 && far > 0,
+    capped.length + " plants, " + far + " of them past 70% of the square");
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

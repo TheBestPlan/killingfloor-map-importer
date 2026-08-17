@@ -51,11 +51,20 @@ function readTerrain(client, pkg) {
     mapX: pick(tags, "MapX") ? val.int(pkg, pick(tags, "MapX")) : null,
     mapY: pick(tags, "MapY") ? val.int(pkg, pick(tags, "MapY")) : null,
     // World position of terrain vertex (ix, iy), in Unreal units.
+    //
+    // `Location` is the CENTRE of the heightfield, not its corner. Read as a corner, every square's
+    // ground came out half a square - 16384 units - out of place in both x and y: the terrain cut
+    // through the town at the wrong height, the buildings' feet were buried, and every spawn check
+    // that asked "what is the ground here" was answering about a place 16 thousand units away.
+    //
+    // Measured on four squares against the world grid the client itself uses, `(MapX-20, MapY-18) *
+    // 32768`: centred, the footprint lands on that square exactly, and every one of the square's own
+    // PlayerStarts falls inside it. Read as a corner, all four are off by +16384 in both axes.
     vertex(ix, iy) {
       const h = this.heights[iy * this.width + ix];
       return [
-        this.location[0] + ix * this.scale[0],
-        this.location[1] + iy * this.scale[1],
+        this.location[0] + (ix - this.width / 2) * this.scale[0],
+        this.location[1] + (iy - this.height / 2) * this.scale[1],
         this.location[2] + (h - HEIGHT_MID) * HEIGHT_UNIT * this.scale[2],
       ];
     },

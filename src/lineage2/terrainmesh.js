@@ -16,8 +16,12 @@
 // different layer.
 const PATCH = 32;
 
+// Below this the layer is not really there, and a quad carrying it costs a whole extra pass over the
+// same ground. 8 of 255 is the same margin the dominant-layer map uses to beat the base.
+const OVERLAY_MIN = 8;
+
 function patchMesh(terrain, x0, y0, w, h, step, opts) {
-  const { layerAt, materialOf } = opts;
+  const { baseLayer, materialOf, overlays, weightAt } = opts;
   const at = (ix, iy) => terrain.vertex(Math.min(terrain.width - 1, ix), Math.min(terrain.height - 1, iy));
 
   const c0 = at(x0, y0), c1 = at(x0 + w * step, y0 + h * step);
@@ -48,8 +52,32 @@ function patchMesh(terrain, x0, y0, w, h, step, opts) {
     const idx = g.vertices.length;
     g.vertices.push({ pos, normal: [nx / len, ny / len, nz / len] });
     g.uvs.push([ix * g.uv[0], iy * g.uv[1]]);
+    // White for the base pass, and for an overlay the layer's own weight in the alpha - that is what
+    // its material blends by, and it interpolates across the quad the way the client's blend does.
+    g.colors.push(g.overlay ? [255, 255, 255, weightAt(g.layer, ix, iy)] : [255, 255, 255, 255]);
     g.index.set(key, idx);
     return idx;
+  };
+
+  const groupFor = (layer, overlay) => {
+    const key = layer + (overlay ? "|o" : "|b");
+    let g = groups.get(key);
+    if (g) return g;
+    const mat = materialOf(layer, overlay);
+    if (!mat) return null;
+    g = {
+      layer, mat, overlay, uv: [mat.uScale, mat.vScale],
+      vertices: [], uvs: [], colors: [], indices: [], index: new Map(),
+    };
+    groups.set(key, g);
+    return g;
+  };
+  const quad = (g, ix, iy) => {
+    const a = vertexOf(g, ix, iy), b = vertexOf(g, ix + step, iy);
+    const c = vertexOf(g, ix, iy + step), d = vertexOf(g, ix + step, iy + step);
+    // Wound so the face points up: Unreal draws front faces clockwise in a left-handed space, and
+    // the terrain is read row by row in +X/+Y.
+    g.indices.push(a, c, b, b, c, d);
   };
 
   for (let j = 0; j < h; j++) {
@@ -57,32 +85,36 @@ function patchMesh(terrain, x0, y0, w, h, step, opts) {
       const ix = x0 + i * step, iy = y0 + j * step;
       // A cleared visibility bit is a hole in the ground - a cave mouth, the inside of a basin.
       if (!terrain.quadVisible(ix, iy)) continue;
-      const layer = layerAt(ix, iy);
-      const mat = materialOf(layer);
-      if (!mat) continue;
-      let g = groups.get(layer);
-      if (!g) {
-        g = { layer, mat, uv: [mat.uScale, mat.vScale], vertices: [], uvs: [], indices: [], index: new Map() };
-        groups.set(layer, g);
+      // One opaque pass under everything, then a pass per layer that paints here. Without the base
+      // an unpainted quad has nothing at all under it; with it, every overlay is a blend rather than
+      // a replacement, which is what makes the seams go away.
+      const base = groupFor(baseLayer, false);
+      if (base) quad(base, ix, iy);
+      for (const layer of overlays || []) {
+        if (base && layer === base.layer) continue;
+        // A quad joins an overlay if the layer reaches ANY of its corners: leave one out and the
+        // blend has a hard edge exactly where it was trying not to have one.
+        const w0 = weightAt(layer, ix, iy), w1 = weightAt(layer, ix + step, iy);
+        const w2 = weightAt(layer, ix, iy + step), w3 = weightAt(layer, ix + step, iy + step);
+        if (Math.max(w0, w1, w2, w3) < OVERLAY_MIN) continue;
+        const g = groupFor(layer, true);
+        if (g) quad(g, ix, iy);
       }
-      const a = vertexOf(g, ix, iy), b = vertexOf(g, ix + step, iy);
-      const c = vertexOf(g, ix, iy + step), dd = vertexOf(g, ix + step, iy + step);
-      // Wound so the face points up: Unreal draws front faces clockwise in a left-handed space, and
-      // the terrain is read row by row in +X/+Y.
-      g.indices.push(a, c, b, b, c, dd);
     }
   }
   if (!groups.size) return null;
 
-  // Concatenate the groups: one section each, in the order they are laid down.
+  // Concatenate the groups: one section each. The base goes first - an overlay draws over what is
+  // already in the frame buffer, so the order the sections are laid down is the order they blend in.
+  const order = [...groups.values()].sort((a, b) => (a.overlay ? 1 : 0) - (b.overlay ? 1 : 0));
   const vertices = [], uvs = [], colors = [], indices = [], sections = [], materials = [];
-  for (const g of groups.values()) {
+  for (const g of order) {
     if (!g.indices.length) continue;
     const vBase = vertices.length, iBase = indices.length;
     for (const v of g.vertices) vertices.push(v);
     for (const t of g.uvs) uvs.push(t);
     for (const i of g.indices) indices.push(vBase + i);
-    for (let k = 0; k < g.vertices.length; k++) colors.push([255, 255, 255, 255]);
+    for (const cc of g.colors) colors.push(cc);
     sections.push({
       firstIndex: iBase, firstVertex: vBase,
       lastVertex: vertices.length - 1, numFaces: g.indices.length / 3,
@@ -103,8 +135,13 @@ function patchMesh(terrain, x0, y0, w, h, step, opts) {
 function buildTerrainMeshes(terrain, opts) {
   const step = Math.max(1, Math.round((opts && opts.step) || 1));
   const patch = Math.max(4, Math.round((opts && opts.patch) || PATCH));
-  const layerAt = (opts && opts.layerAt) || (() => 0);
   const materialOf = opts.materialOf;
+  // The layer everything else is painted over. Lineage 2 calls it the base and it is layer 0.
+  const baseLayer = (opts && opts.baseLayer) || 0;
+  // The layers that get a blended pass of their own, and how strongly each one paints a vertex.
+  // Without them this falls back to what it did before: one material per quad, hard edges and all.
+  const overlays = (opts && opts.overlays) || [];
+  const weightAt = (opts && opts.weightAt) || (() => 0);
   const meshes = [];
   const quads = terrain.width - 1;
   let triangles = 0, holes = 0, sections = 0;
@@ -113,7 +150,7 @@ function buildTerrainMeshes(terrain, opts) {
       const w = Math.min(patch, Math.ceil((quads - x0) / step));
       const h = Math.min(patch, Math.ceil((quads - y0) / step));
       if (w <= 0 || h <= 0) continue;
-      const m = patchMesh(terrain, x0, y0, w, h, step, { layerAt, materialOf });
+      const m = patchMesh(terrain, x0, y0, w, h, step, { baseLayer, materialOf, overlays, weightAt });
       if (!m) { holes++; continue; }
       triangles += m.indices.length / 3;
       sections += m.sections.length;

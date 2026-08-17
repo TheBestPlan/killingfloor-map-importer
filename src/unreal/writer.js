@@ -144,6 +144,19 @@ class Props {
     const b = Buffer.from([c[2] & 255, c[1] & 255, c[0] & 255, c.length > 3 ? c[3] & 255 : 255]);
     return this._tag(name, PropType.Struct, b, "Color");
   }
+  // Struct whose value is raw bytes - Vector, Rotator, Color and the rest of the atomic ones, which
+  // the engine writes as their fields back to back with no tags around them.
+  structRaw(name, structName, bytes, index) {
+    return this._tag(name, PropType.Struct, Buffer.from(bytes), structName, index);
+  }
+  // A dynamic array: the count, then each element's VALUE with no tag of its own. What an element
+  // looks like comes from the property's declared type, which is not in the file - the caller knows.
+  arrayProp(name, count, fill) {
+    const inner = new Writer(256);
+    inner.cidx(count);
+    fill(inner, new Props(inner, this.names));
+    return this._tag(name, PropType.Array, Buffer.from(inner.out()));
+  }
   // Struct whose value is itself a tagged property block (how the engine stores PointRegion, Scale…).
   structBlock(name, structName, fill) {
     const inner = new Writer(64);

@@ -73,6 +73,18 @@ screen RED for months. `build/mesh.js` and `build/propmesh.js` had it right for 
 
 ---
 
+### 1.9 An export added while the bodies are being written is an export the table never hears about
+`Package.build` snapshots the export list, serialises every body, then writes the table from the same
+snapshot. A serializer that registers a NEW export - carrying a texture, say - appends to the list
+after the snapshot, and the table walk then indexes past the bodies it has: `Cannot read properties
+of undefined (reading 'buf')`, thrown from the export table loop rather than from anything to do with
+the actual mistake.
+
+Anything a serializer needs must exist before `build()` runs. Resolve object references while the
+level is being assembled and close over the ref, not over the thing that would create it. The
+late-binding that IS safe is a ref that will be filled in by then - a flipbook's `AnimNext` reads its
+value through a thunk at serialise time, but the export it points at was registered long before.
+
 ## 2. UModel (the world BSP)
 
 ### 2.1 Field order after `Verts` is the UT2004 one
@@ -766,12 +778,19 @@ paper-thin sheet with no edges. Entity meshes stay whole and multi-section.
 It does not mean "this texture has an alpha channel", it means "cut this surface out by it", and the
 D3D renderer draws that as a dither pattern. Setting it from the format - DXT3/DXT5 have alpha, so
 flag them - puts a stipple over every wall whose alpha the artist never used, which is most of them
-in a Lineage 2 client. The importer classifies the alpha data instead (`docs/games/lineage2.md`
-L2.11b) and only flags a texture the material is actually going to read.
+in a Lineage 2 client.
 
-The general shape of the fix: a surface's blending belongs to the MATERIAL, not to the texture.
-Where the source says what it wants, carry the byte (`Shader.OutputBlending`); where it does not,
-decide once, in one place, and give the texture a `Shader` that states the answer.
+Nor can it be set from the alpha DATA, which was the second attempt: a wall texture with a soft-alpha
+window pane looks exactly like something that wants blending, and is not. The flag belongs to the
+material. The rule that holds: set it where some material turns out to READ the alpha - as a
+`Shader`'s `Opacity`, or as its `Diffuse` under a masked or translucent `OutputBlending` - and never
+on a texture that ends up straight on a surface. That is known only after every material has been
+resolved, so the flag goes out through a thunk at serialise time rather than being decided when the
+texture is registered.
+
+The general shape: a surface's blending belongs to the MATERIAL, not to the texture. Where the source
+says what it wants, carry the byte (`Shader.OutputBlending`); where it does not, decide once, in one
+place, and give the texture a `Shader` that states the answer (`docs/games/lineage2.md` L2.24).
 
 ### 5.37 `UTexture` animates itself through `AnimNext`
 `AnimNext` plus `MinFrameRate`/`MaxFrameRate` is a flipbook the engine runs on its own - no emitter,
@@ -781,6 +800,18 @@ animation rather than a still by carrying the ring of textures and their frame r
 
 Writing a ring means an export has to reference one that does not exist yet, so the reference is
 resolved at serialise time rather than when the export is registered.
+
+### 5.38 `VertexColor` is how a static mesh blends two materials over the same ground
+`Engine.VertexColor` is a material with no properties at all: it hands the mesh's own vertex colour to
+whatever asks for it. As a `Shader`'s `Opacity`, under a `FinalBlend` set to `FB_AlphaBlend` with
+`ZWrite=false`, it gives a second coplanar pass that blends by a weight the mesh carries per vertex -
+which is a terrain layer blend on a mesh that has one material and one set of UVs per section.
+
+`OB_Translucent` cannot do this: it ADDS. The alpha blend has to come from the `FinalBlend`, and the
+Shader under it only says which two things are being mixed.
+
+Section order is blend order. The opaque base is written first and the overlays after it, because a
+static mesh's sections are drawn in the order the file lists them.
 
 ## 6. LevelInfo / gameplay
 

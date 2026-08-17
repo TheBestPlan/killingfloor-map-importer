@@ -99,9 +99,14 @@
       </fieldset>
       <fieldset>
         <legend data-i18n="legend.l2Conv">Conversion</legend>
+        <label data-i18n="label.l2Scale">Scale (Lineage 2 units &rarr; Killing Floor units)</label>
+        <input type="number" id="l2Scale" step="0.1" min="0.1">
+        <div class="hint" data-i18n="hint.l2Scale">2 puts a Killing Floor pawn next to a Lineage 2 door the way a Lineage 2 character stands next to it.</div>
         <label data-i18n="label.terrainStep">Terrain detail (1 = every vertex)</label>
         <input type="number" id="terrainStep" step="1" min="1" max="8">
         <div class="hint" data-i18n="hint.terrainStep">A square is 255×255 quads. 2 quarters the triangles and softens the ground.</div>
+        <div class="check"><input type="checkbox" id="l2Grass"><span data-i18n="label.l2Grass">Carry the grass across</span></div>
+        <div class="hint" data-i18n="hint.l2Grass">The square's own decoration layers, scattered to their own density. Tens of thousands of plants: pretty, and the heaviest thing on the map.</div>
         <label data-i18n="label.l2Ambient">Zone ambient (the player and the zeds)</label>
         <input type="number" id="l2Ambient" step="1" min="0" max="255">
         <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
@@ -243,6 +248,8 @@ function save() {
   settings.game = $("game").value;
   settings.l2Dir = $("l2Dir").value.trim();
   settings.terrainStep = parseInt($("terrainStep").value, 10) || 1;
+  settings.l2Scale = parseFloat($("l2Scale").value) || 2;
+  settings.l2Grass = $("l2Grass").checked;
   settings.l2Ambient = parseInt($("l2Ambient").value, 10);
   settings.l2Glow = parseInt($("l2Glow").value, 10);
   settings.outDir = $("outDir").value.trim();
@@ -286,12 +293,15 @@ I18N.onChange(() => { renderFiles(); renderSquares(); if (settings) renderWads()
   $("game").value = settings.game || "cs";
   $("l2Dir").value = settings.l2Dir || "";
   $("terrainStep").value = settings.terrainStep === undefined ? 1 : settings.terrainStep;
+  $("l2Scale").value = settings.l2Scale === undefined ? 2 : settings.l2Scale;
+  $("l2Grass").checked = settings.l2Grass !== false;
   $("l2Ambient").value = settings.l2Ambient === undefined ? 32 : settings.l2Ambient;
   $("l2Glow").value = settings.l2Glow === undefined ? 40 : settings.l2Glow;
   renderWads(); applyGame(); renderSquares();
   if (settings.l2Dir) loadSquares();
   for (const el of ["outDir", "csDir", "scale", "lms", "health", "lighting", "lightScale",
-    "terrainStep", "l2Ambient", "l2Glow"]) $(el).addEventListener("change", save);
+    "terrainStep", "l2Scale", "l2Ambient", "l2Glow"]) $(el).addEventListener("change", save);
+  $("l2Grass").addEventListener("change", save);
   for (const el of ["ase", "spawns"]) $(el).addEventListener("change", save);
   $("game").addEventListener("change", () => { save(); applyGame(); });
   $("l2Dir").addEventListener("change", () => { save(); loadSquares(); });
@@ -346,6 +356,7 @@ $("go").onclick = async () => {
         game: "l2", clientDir: settings.l2Dir, square: f.name,
         outDir: settings.outDir || null,
         terrainStep: settings.terrainStep, ambient: settings.l2Ambient, glow: settings.l2Glow,
+        l2Scale: settings.l2Scale, grass: settings.l2Grass !== false,
       }
       : {
         bspFile: f.path,

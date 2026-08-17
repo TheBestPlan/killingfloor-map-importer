@@ -15,7 +15,10 @@ function convertL2(job, log) {
   const res = l2.convert({
     clientDir: job.clientDir, square: job.square, mapName: job.name || null,
     outDir: job.outDir || null,
-    scale: job.scale, terrainStep: job.terrainStep, ambient: job.ambient, glow: job.glow,
+    // The Lineage 2 panel has a scale of its own: the two games' rulers differ by a different amount
+    // than Half-Life's and Unreal's do.
+    scale: job.l2Scale, terrainStep: job.terrainStep, ambient: job.ambient, glow: job.glow,
+    grass: job.grass,
     log,
   });
   const v = verify(res.out);

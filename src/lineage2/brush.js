@@ -10,7 +10,8 @@
 // self-consistent), while UPolys is the same object the Killing Floor writer already emits:
 //
 //   props(None) | INT Num | INT Max | per poly: cidx numVerts, FVector base/normal/textureU/
-//   textureV, the vertices, DWORD polyFlags, cidx actor/texture/itemName/iLink/iBrushPoly, PanU/PanV
+//   textureV, the vertices, DWORD polyFlags, cidx actor/texture/itemName/iLink/iBrushPoly,
+//   FLOAT ShadowMapScale, DWORD -1
 //
 // Subtractive brushes are skipped rather than carved: CSG is a whole subsystem, and an additive-only
 // town is a town with its floor, which is what the player needs to stand on.
@@ -42,11 +43,16 @@ function readPolys(pkg, exp) {
     const polyFlags = r.u32();
     const actor = r.cidx(), texture = r.cidx(), itemName = r.cidx();
     r.cidx(); r.cidx();                            // iLink, iBrushPoly
-    // PanU/PanV are INTs here, not the WORDs Killing Floor writes: a six-poly object measured 114
-    // bytes per poly against the 110 the WORD reading accounts for, and the four are these.
-    const panU = r.i32(), panV = r.i32();
+    // The eight bytes after iBrushPoly are NOT PanU/PanV. This FPoly has no pan at all - the offset
+    // lives in Base - and what is here is `FLOAT ShadowMapScale` and a sentinel word.
+    //
+    // Read as a pan they were catastrophic: measured over three squares, the first is only ever the
+    // float 32, 64, 128 or 256 and the second is always -1. Added to a texture coordinate, 0x42000000
+    // read as an integer is 1 107 296 256 texels, which collapses the float precision of the whole
+    // surface - that is the smeared brown streaking over every brush floor and wall in a town.
+    r.f32(); r.i32();                              // ShadowMapScale, and -1
     void actor; void itemName;
-    polys.push({ vertices, base, normal, textureU, textureV, polyFlags, texture, panU, panV });
+    polys.push({ vertices, base, normal, textureU, textureV, polyFlags, texture });
   }
   return polys;
 }
@@ -77,7 +83,7 @@ function brushPolysOf(pkg, model) {
 // identity on a level brush, so only the two that matter are applied. Anything else shows up as a
 // piece in the wrong place rather than silently - the count is logged.
 function readBrushes(pkg, opts) {
-  const out = [];
+  const out = [], carved = [];
   const stats = { add: 0, subtract: 0, skipped: 0, polys: 0, rotated: 0, scaled: 0, unreadable: 0 };
   for (const e of pkg.exports) {
     const cls = pkg.classOf(e);
@@ -85,7 +91,12 @@ function readBrushes(pkg, opts) {
     const { tags } = tagsOf(pkg, e);
     const opTag = pick(tags, "CsgOper");
     const op = opTag ? val.byte(pkg, opTag) : 1;     // CSG_Active(0)/Add(1)/Subtract(2)
-    if (op === 2) { stats.subtract++; continue; }
+    // A subtractive brush is not geometry - it is the space a block was hollowed out with - so it is
+    // kept apart from the polygons that get drawn. What it is good for is knowing where the inside
+    // of a building IS: a dungeon is one big additive block with its halls subtracted out of it, and
+    // without the second list "inside a brush" cannot tell a hall from a rock.
+    if (op === 2) stats.subtract++;
+    const sink = op === 2 ? carved : out;
     const brushTag = pick(tags, "Brush");
     if (!brushTag) { stats.skipped++; continue; }
     const target = refTarget(pkg, val.ref(pkg, brushTag));
@@ -104,26 +115,29 @@ function readBrushes(pkg, opts) {
     if (pick(tags, "Rotation")) stats.rotated++;
     if (pick(tags, "MainScale") || pick(tags, "PostScale")) stats.scaled++;
 
+    const index = op === 2 ? stats.subtract - 1 : stats.add;
     for (const poly of polys) {
       // Invisible, portal and backdrop faces are not surfaces - they are how a mapper tells the
-      // compiler what to do. Carrying them across would put grey slabs across the level.
-      if (poly.polyFlags & (PF_INVISIBLE | PF_PORTAL | PF_FAKE_BACKDROP)) continue;
-      if (opts && opts.solidOnly && (poly.polyFlags & PF_NOT_SOLID)) continue;
+      // compiler what to do. Carrying them across would put grey slabs across the level. A carved
+      // volume keeps them: it is not drawn, and a hall missing a wall is a hall that leaks.
+      if (sink === out && (poly.polyFlags & (PF_INVISIBLE | PF_PORTAL | PF_FAKE_BACKDROP))) continue;
+      if (sink === out && opts && opts.solidOnly && (poly.polyFlags & PF_NOT_SOLID)) continue;
       const vertices = poly.vertices.map((v) => [
         v[0] + loc[0] - pp[0], v[1] + loc[1] - pp[1], v[2] + loc[2] - pp[2],
       ]);
-      out.push({
+      sink.push({
+        brush: index,
         vertices,
         base: [poly.base[0] + loc[0] - pp[0], poly.base[1] + loc[1] - pp[1], poly.base[2] + loc[2] - pp[2]],
         normal: poly.normal, textureU: poly.textureU, textureV: poly.textureV,
-        panU: poly.panU, panV: poly.panV, polyFlags: poly.polyFlags,
+        polyFlags: poly.polyFlags,
         texture: poly.texture ? refTarget(pkg, poly.texture) : null,
       });
-      stats.polys++;
+      if (sink === out) stats.polys++;
     }
-    stats.add++;
+    if (sink === out) stats.add++;
   }
-  return { polys: out, stats };
+  return { polys: out, carved, stats };
 }
 
 module.exports = { readBrushes, readPolys };

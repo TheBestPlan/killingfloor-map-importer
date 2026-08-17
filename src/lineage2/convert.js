@@ -18,11 +18,13 @@ const path = require("path");
 const { Client } = require("./package");
 const { readTerrain } = require("./terrain");
 const { buildTerrainMeshes } = require("./terrainmesh");
-const { layerMap } = require("./layers");
+const { layerMap, readAlpha } = require("./layers");
 const { readTexture, followMaterial, materialInfo, alphaMode } = require("./texture");
 const { readMesh, toKFMesh, readInstanceColors } = require("./mesh");
 const { readBrushes } = require("./brush");
 const { buildBrushMeshes } = require("./brushmesh");
+const { readEmitters, resolveObjects, writeBlock } = require("./emitter");
+const { readDecoLayers, scatter, bakeInstances } = require("./deco");
 const { tagsOf, pick, val, refTarget } = require("./props");
 const { Package, RF } = require("../unreal/package");
 const { Writer, writeStateFrame } = require("../unreal/writer");
@@ -39,7 +41,12 @@ const TOOL_URL = "https://github.com/geekrainian/killingfloor-map-importer";
 const GAME = "Lineage 2";
 
 const DEFAULTS = {
-  scale: 1,                 // both games measure in Unreal units; only the pawn sizes differ
+  // Both games measure in Unreal units, but not with the same ruler: a Lineage 2 character is about
+  // half the height of a Killing Floor pawn, so a town carried across 1:1 fits the world and not the
+  // player - the player stands as tall as a house door (Screenshot_53). Two is the ratio of the two
+  // games' own characters, and it is the same knob the Counter-Strike route uses to turn Half-Life
+  // units into Unreal ones.
+  scale: 2,
   terrainStep: 1,           // 1 keeps every terrain vertex, 2 halves the grid
   // The zone lights the player and the zeds; the ground takes its own share through AmbientGlow, so
   // one number does not have to serve both (GOTCHAS 4.11a). Judged on 24_13 against 20 and 168: at
@@ -52,6 +59,16 @@ const DEFAULTS = {
 // unfilled hole is the previous frame smeared over the screen (GOTCHAS 5.7b).
 const FLAT_SKY = [120, 148, 188];
 const SKY_GAIN = 1 / 2.4;
+
+// The sea takes no glow of its own. `OB_Translucent` in this engine ADDS rather than mixes, so a lit
+// water surface washes out: at the world's glow 16_24's ocean was a black band, unlit 17_22's harbour
+// was white glare, and half way it was still 223,211,205 over a seabed of 64. The zone's ambient
+// alone leaves the sheen the additive pass is for and lets the seabed through it.
+const WATER_GLOW = 0;
+
+// A square's worth of grass, per decoration layer. 19_21 scatters about 30 000 blades on its first
+// layer alone; the cap is what keeps a field of them from becoming the whole map's triangle budget.
+const GRASS_LIMIT = 24000;
 
 // Air around the level, and the ceiling the sky needs. A square is 32768 units across before scale.
 const BOX_MARGIN = 4096;
@@ -107,6 +124,10 @@ function convert(o) {
     // it was `undefined`, the export went out with a class reference of 0, and the engine read the
     // object as a CLASS: "Assertion failed: GIsEditor || GetSuperClass()" before the first frame.
     Shader: pkg.importClass("Engine", "Shader"),
+    Emitter: pkg.importClass("Engine", "Emitter"),
+    SpriteEmitter: pkg.importClass("Engine", "SpriteEmitter"),
+    FinalBlend: pkg.importClass("Engine", "FinalBlend"),
+    VertexColor: pkg.importClass("Engine", "VertexColor"),
     Model: pkg.importClass("Engine", "Model"),
     Polys: pkg.importClass("Engine", "Polys"),
     Brush: pkg.importClass("Engine", "Brush"),
@@ -192,12 +213,16 @@ function convert(o) {
         // one is in the cache, so the last frame's AnimNext finds the first already there and the
         // ring closes instead of recursing for ever.
         const link = { next: 0 };
+        // `bAlphaTexture` is set only if some material turns out to READ the alpha - see
+        // resolveMaterial. A texture that ends up straight on a surface must not carry it, or the
+        // engine cuts the surface out by an alpha nobody asked about and draws the hole as a dither.
+        const reads = { alpha: false };
         out = {
           texRef: addRawTexture(pkg, refs, "l2_" + id.replace(/\./g, "_"), t, {
-            alpha: alpha !== "none",
+            alpha: () => reads.alpha,
             anim: t.animNext ? { next: () => link.next, minFrameRate: t.minFrameRate, maxFrameRate: t.maxFrameRate } : null,
           }).texRef,
-          width: t.width, height: t.height, format: t.format, alpha,
+          width: t.width, height: t.height, format: t.format, alpha, masked: t.masked, reads,
         };
         if (t.animNext) {
           texCache.set(key, out);
@@ -240,10 +265,28 @@ function convert(o) {
       // as a texture it has nothing to say, and that is how the torches came out as black slabs
       // (Screenshot_14). Only where the client is silent does the alpha decide: OB_Translucent for
       // a real gradient, OB_Masked for the cut-out that nearly every alpha channel here is.
+      //
+      // The client is explicit nearly everywhere, and reading the pixels instead of listening to it
+      // is what produced glowing white trees and walls you could see through (Screenshot_47/48). In
+      // order, most direct statement first:
+      //
+      //   OutputBlending      - a flame is OB_Brighten; a fence is the `_m` twin of its texture,
+      //                         a Shader whose whole content is `OutputBlending=OB_Masked`;
+      //   AlphaTest           - Lineage 2's own Shader field, which Killing Floor's lacks. Foliage
+      //                         and window glass are `AlphaTest=true, AlphaRef=10`: a cut-out
+      //                         however soft the alpha looks;
+      //   an Opacity node     - then its OWN alpha says which kind: a gradient is water or the sky's
+      //                         haze, a hard 0/255 is a flag or a dagger;
+      //   the texture's flags - `bMasked`/`bAlphaTexture` on the texture object itself;
+      //   otherwise           - OPAQUE. A bare texture's alpha channel is not an instruction: half
+      //                         the client's walls carry one and are drawn solid.
       const said = info.blending;
+      const opacityKind = (a) => (a === "blend" ? 3 : a === "mask" ? 1 : 0);
       const blending = (opts && opts.water) ? 3
         : said !== undefined && said !== 0 ? said
-          : mask ? (mask.alpha === "blend" ? 3 : 1) : 0;
+          : info.alphaTest ? 1
+            : mask && info.opacity ? opacityKind(mask.alpha)
+              : tex.masked ? 1 : 0;
       out = { texRef: tex.texRef, width: tex.width, height: tex.height, blend: "opaque" };
       if (blending) {
         const shaderRef = pkg.addExport({
@@ -262,6 +305,8 @@ function convert(o) {
             return w;
           },
         });
+        // Now that a material is going to read it, the texture may say so.
+        if (mask && (blending === 1 || blending === 3) && mask.reads) mask.reads.alpha = true;
         out = { texRef: shaderRef, width: tex.width, height: tex.height, blend: blending === 1 ? "masked" : "translucent" };
         if (blending === 1) meshStats.masked++; else meshStats.blended++;
       }
@@ -272,7 +317,23 @@ function convert(o) {
   };
   const resolveTexture = (target) => resolveMaterial(target);
 
+  // Where the square's mesh actors stand, and its brush geometry. Both are needed before the level's
+  // box can be sized, and the brushes are read once and used again further down.
+  const meshSpots = [];
+  for (const e of src.exports) {
+    if (src.classOf(e) !== "StaticMeshActor" || !e.serialSize) continue;
+    const { tags } = tagsOf(src, e);
+    const L = pick(tags, "Location");
+    if (L) meshSpots.push(val.vector(src, L));
+  }
+  const brushRead = o.noBrushes ? null : readBrushes(src, { solidOnly: false });
+
   // --- the level's box ----------------------------------------------------------------------------
+  //
+  // Sized around everything the level will hold, not just around its ground. Cruma Tower on 20_21 is
+  // brush geometry at -12016 with the heightfield six thousand units above it: a box drawn round the
+  // heightfield alone leaves the whole dungeon outside the world, and `KillZ` - which is set from the
+  // box's floor - kills the player one second after he spawns down there.
   const lo = terrain.vertex(0, 0), hi = terrain.vertex(terrain.width - 1, terrain.height - 1);
   let zMin = Infinity, zMax = -Infinity;
   for (let y = 0; y < terrain.height; y++) {
@@ -280,6 +341,12 @@ function convert(o) {
       const z = terrain.vertex(x, y)[2];
       if (z < zMin) zMin = z;
       if (z > zMax) zMax = z;
+    }
+  }
+  for (const m of meshSpots) { if (m[2] < zMin) zMin = m[2]; if (m[2] > zMax) zMax = m[2]; }
+  if (brushRead) {
+    for (const poly of brushRead.polys) {
+      for (const v of poly.vertices) { if (v[2] < zMin) zMin = v[2]; if (v[2] > zMax) zMax = v[2]; }
     }
   }
   // Everything is emitted around the square's own centre, so the map sits at the origin rather than
@@ -456,21 +523,78 @@ function convert(o) {
   // every eight quads reads about right at 128-unit quads.
   const lmap = layerMap(client, src, terrain);
   const layerMat = new Map();
-  const materialOf = (i) => {
-    if (layerMat.has(i)) return layerMat.get(i);
+  // A layer painted over the base blends by the mesh's own vertex alpha.
+  //
+  // The client blends per texel through each layer's AlphaMap; a static mesh cannot sample a second
+  // texture with a second set of UVs, but it can carry a colour per vertex, and `Engine.VertexColor`
+  // is a material that hands that colour to whatever wants it. So: `FinalBlend` in FB_AlphaBlend over
+  // a `Shader` whose Diffuse is the layer's texture and whose Opacity is the vertex colour. The
+  // weight lands on the terrain's own grid - a quarter the resolution of the alpha map, and enough to
+  // turn the square patchwork into a gradient. ZWrite is off because the pass is coplanar with the
+  // base it covers.
+  const blendMat = new Map();
+  let vertexColour = 0;
+  const overlayMaterial = (i, tex) => {
+    if (blendMat.has(i)) return blendMat.get(i);
+    // Registered here and not in the serializer: an export added while the package's bodies are
+    // already being written is one the export table never hears about (GOTCHAS 1.9).
+    if (!vertexColour) {
+      vertexColour = pkg.addExport({
+        classRef: refs.VertexColor, name: "L2VertexAlpha", flags: refs.flagsGame,
+        serialize: (p) => p.emptyBody(),
+      });
+    }
+    const name = (terrain.layers[i].texture && terrain.layers[i].texture.name) || ("layer" + i);
+    const shaderRef = pkg.addExport({
+      classRef: refs.Shader, name: sanitizeName("L2Lay_" + name), flags: refs.flagsGame,
+      serialize: (p) => {
+        const w = new Writer(96);
+        const pr = p.props(w);
+        pr.object("Diffuse", tex);
+        pr.object("Opacity", vertexColour);
+        pr.byte("OutputBlending", 3);              // OB_Translucent: the blend is FinalBlend's job
+        pr.end();
+        return w;
+      },
+    });
+    const ref = pkg.addExport({
+      classRef: refs.FinalBlend, name: sanitizeName("L2Blend_" + name), flags: refs.flagsGame,
+      serialize: (p) => {
+        const w = new Writer(96);
+        const pr = p.props(w);
+        pr.object("Material", shaderRef);
+        pr.byte("FrameBufferBlending", 2);         // FB_AlphaBlend
+        pr.bool("ZWrite", false);
+        pr.bool("ZTest", true);
+        pr.end();
+        return w;
+      },
+    });
+    blendMat.set(i, ref);
+    return ref;
+  };
+  const materialOf = (i, overlay) => {
+    const key = i + (overlay ? "|o" : "|b");
+    if (layerMat.has(key)) return layerMat.get(key);
     const layer = terrain.layers[i];
     const tex = layer && resolveTexture(layer.texture);
+    const plain = (tex && tex.texRef) || groundRef;
     const out = {
-      texRef: (tex && tex.texRef) || groundRef,
+      texRef: overlay ? overlayMaterial(i, plain) : plain,
       uScale: (layer && layer.uScale) || 1 / 8,
       vScale: (layer && layer.vScale) || 1 / 8,
     };
-    layerMat.set(i, out);
+    layerMat.set(key, out);
     return out;
   };
-  const terrainMesh = buildTerrainMeshes(terrain, { step, layerAt: (x, y) => lmap.at(x, y), materialOf });
+  const baseLayer = lmap.used[0] || 0;
+  const overlays = o.flatTerrain ? [] : lmap.used.filter((i) => i !== baseLayer && lmap.layers[i].alpha);
+  const terrainMesh = buildTerrainMeshes(terrain, {
+    step, materialOf, baseLayer, overlays, weightAt: (i, x, y) => lmap.weightAt(i, x, y),
+  });
   log("terrain layers: " + lmap.used.length + " of " + terrain.layers.length + " paint anything (" +
-    lmap.used.map((i) => (terrain.layers[i].texture ? terrain.layers[i].texture.name : "?")).join(", ") + ")");
+    lmap.used.map((i) => (terrain.layers[i].texture ? terrain.layers[i].texture.name : "?")).join(", ") + ")" +
+    (overlays.length ? ", " + overlays.length + " blended over the base" : ""));
   const meshActors = [];
   terrainMesh.meshes.forEach((mesh, i) => {
     // The patch is authored in Lineage 2 units around its own centre; both go through the scale.
@@ -521,6 +645,74 @@ function convert(o) {
     terrainMesh.triangles + " triangles in " + terrainMesh.sections + " section(s)" +
     (step > 1 ? " (every " + step + "th vertex)" : "") +
     (terrainMesh.holes ? ", " + terrainMesh.holes + " patch(es) entirely hidden" : ""));
+
+  // --- the grass ----------------------------------------------------------------------------------
+  // A decoration layer is a static mesh and a density map, scattered at run time by the client. There
+  // is no list of positions in the file, so this scatters its own to the same density (deco.js), and
+  // there is no decoration layer in Killing Floor, so the blades are baked into ordinary meshes - a
+  // blade is five triangles and a square holds tens of thousands, which is level geometry, not actors.
+  if (o.grass !== false) {
+    const layers = readDecoLayers(src);
+    let blades = 0, meshes = 0, tris = 0, skipped = 0;
+    for (const layer of layers) {
+      if (!layer.mesh || !layer.mesh.pkg || !layer.densityMap) { skipped++; continue; }
+      const mp = client.get(layer.mesh.pkg);
+      const me = mp && mp.exports.find((x) => x.name === layer.mesh.name && mp.classOf(x) === "StaticMesh");
+      if (!me) { skipped++; continue; }
+      let raw = null;
+      try { raw = readMesh(mp, me); } catch (e) { skipped++; continue; }
+      const density = readAlpha(client, src, layer.densityMap);
+      if (!density) { skipped++; continue; }
+      const where = scatter(terrain, layer, density, { step, limit: GRASS_LIMIT });
+      if (!where.length) continue;
+      const mats = raw.sections.map((_, i) =>
+        ((resolveTexture((raw.materials[i] || {}).material) || {}).texRef) || groundRef);
+      for (const mesh of bakeInstances(raw, mats, where, { scale, maxTriangles: 18000 })) {
+        const at = toKF(mesh.origin);
+        const meshRef = pkg.addExport({
+          classRef: refs.StaticMesh, name: sanitizeName("L2Grass" + meshes), flags: refs.flagsGame,
+          serialize: (p) => buildMeshExport(p, mesh),
+        });
+        const instRef = pkg.addExport({
+          classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"), flags: refs.flagsGame,
+          serialize: (p) => buildMeshInstance(p, mesh),
+        });
+        meshActors.push(pkg.addExport({
+          classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
+          serialize: (p) => {
+            const w = new Writer(256);
+            writeStateFrame(w, refs.StaticMeshActor);
+            const pr = p.props(w);
+            pr.object("StaticMesh", meshRef);
+            pr.object("StaticMeshInstance", instRef);
+            pr.bool("bStatic", true);
+            pr.bool("bWorldGeometry", true);
+            pr.byte("AmbientGlow", glow);
+            // Grass is scenery: walking through it must not be walking into it, and a corpse must
+            // not come to rest on a blade.
+            pr.bool("bCollideActors", false);
+            pr.bool("bBlockActors", false);
+            pr.bool("bBlockPlayers", false);
+            pr.bool("bBlockZeroExtentTraces", false);
+            pr.bool("bBlockNonZeroExtentTraces", false);
+            pr.bool("bBlockKarma", false);
+            pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
+            pr.vector("ColLocation", at);
+            pr.vector("Location", at);
+            pr.end();
+            return w;
+          },
+        }));
+        meshes++;
+        tris += mesh.indices.length / 3;
+      }
+      blades += where.length;
+    }
+    if (blades || skipped) {
+      log("grass: " + blades + " plant(s) over " + meshes + " mesh(es), " + tris + " triangles" +
+        (skipped ? ", " + skipped + " layer(s) without a mesh or a density map" : ""));
+    }
+  }
 
   // --- what the square is built out of ------------------------------------------------------------
   // A town square is 1900 StaticMeshActors over 47 meshes: the meshes come across once each, the
@@ -647,6 +839,13 @@ function convert(o) {
   // square's sea is ONE quad a kilometre across, and a cell map only ever hears about its four
   // corners - which is why the first attempt let 16_24 spawn on the sea floor.
   const floors = [], waters = [];
+  // The solid volume of each additive brush, as the planes of its faces.
+  //
+  // Lineage 2 carves a castle's rooms out of a block with SUBTRACTIVE brushes, and this converter
+  // skips those (CSG is a subsystem of its own), so a building that is hollow in the client comes
+  // across solid. That is survivable to look at - the outside is right - but not to stand in: a start
+  // the client put in a hall is a start inside a rock, and 19_21 spawned the player inside a wall.
+  const solids = [], voids = [];
   const spanOf = (poly) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, z = -Infinity;
     for (const v of poly.vertices) {
@@ -668,9 +867,40 @@ function convert(o) {
     }
     return best;
   };
+  // Is this point inside one of those solids? A brush's faces point outward, so a point behind every
+  // one of them is inside. Exact for a convex brush, which is what a CSG brush almost always is; a
+  // concave one only ever reads as bigger than it is, and the answer is only used to refuse a spawn.
+  const within = (list, v, m) => {
+    for (const planes of list) {
+      let inside = true;
+      for (const p of planes) {
+        if (p[0] * v[0] + p[1] * v[1] + p[2] * v[2] - p[3] > -m) { inside = false; break; }
+      }
+      if (inside) return true;
+    }
+    return false;
+  };
+  // Inside the rock: in an additive brush and not in any of the volumes carved out of it. That
+  // second half is what tells a hall from a wall - a dungeon is one block with its rooms subtracted,
+  // so every one of 16_12's 55 starts is "inside a brush" and every one of them is fine.
+  const insideSolid = (v) => within(solids, v, 24) && !within(voids, v, -8);
   if (!o.noBrushes) {
-    const read = readBrushes(src, { solidOnly: false });
+    const read = brushRead;
     Object.assign(brushStats, read.stats);
+    // Four faces is a tetrahedron, the least that can enclose anything; fewer is an open shape and
+    // "inside" means nothing for it.
+    const hulls = (list, into) => {
+      const byBrush = new Map();
+      for (const poly of list) {
+        if (poly.brush === undefined || !poly.vertices.length) continue;
+        if (!byBrush.has(poly.brush)) byBrush.set(poly.brush, []);
+        const n = poly.normal;
+        byBrush.get(poly.brush).push([n[0], n[1], n[2], n[0] * poly.vertices[0][0] + n[1] * poly.vertices[0][1] + n[2] * poly.vertices[0][2]]);
+      }
+      for (const planes of byBrush.values()) if (planes.length >= 4) into.push(planes);
+    };
+    hulls(read.polys, solids);
+    hulls(read.carved || [], voids);
     for (const poly of read.polys) {
       // Only surfaces you could stand on or swim under: a wall is neither.
       if (Math.abs(poly.normal[2]) < 0.5) continue;
@@ -719,7 +949,9 @@ function convert(o) {
           // is drawn, not lit, and is not something to bump into. Neither is water: in Lineage 2 you
           // swim through it, and a sea with collision is a glass floor over the whole square.
           const solid = !mesh.sky && !mesh.water;
-          if (mesh.sky) pr.bool("bUnlit", true); else pr.byte("AmbientGlow", glow);
+          // The sky is drawn, not lit. The sea is lit, but by the zone alone - see WATER_GLOW.
+          if (mesh.sky) pr.bool("bUnlit", true);
+          else pr.byte("AmbientGlow", mesh.water ? WATER_GLOW : glow);
           pr.bool("bCollideActors", solid);
           pr.bool("bBlockActors", solid);
           pr.bool("bBlockPlayers", solid);
@@ -744,6 +976,87 @@ function convert(o) {
       (brushStats.antiportal ? ", " + brushStats.antiportal + " antiportal polygon(s) skipped" : "") +
       (brushStats.dropped ? ", " + brushStats.dropped + " dropped for want of a texture" : "") +
       (brushStats.unreadable ? ", " + brushStats.unreadable + " brush(es) unreadable" : ""));
+  }
+
+  // --- the square's particle effects --------------------------------------------------------------
+  // Torch smoke, the glow over a teleporter, dust in a shaft of light. These are not geometry and no
+  // amount of mesh work produces them: they are `Emitter` actors holding `SpriteEmitter` settings,
+  // and Killing Floor's particle system is the same one with the same field names, so the settings
+  // travel across and the other engine runs them (docs/games/lineage2.md L2.19).
+  if (!o.noEmitters) {
+    const { emitters, skipped } = readEmitters(src);
+    let parts = 0, lost = 0;
+    // A particle takes a TEXTURE, not a material.
+    //
+    // `ParticleEmitter.Texture` is declared as a Material and a `Shader` is one, so it loads and
+    // verifies - and then the D3D9 renderer walks into it and dies: "General protection fault!
+    // FD3D9RenderInterface::SetParticleMaterial <- USpriteEmitter::RenderParticles" the moment one
+    // comes on screen (20_21). The particle path does its own blending through `DrawStyle`, which
+    // the client sets per emitter, so the shader has nothing to add here anyway.
+    const particleTexture = (target) => {
+      if (!target || !target.pkg) return 0;
+      const tp = client.get(target.pkg);
+      const exp0 = tp && tp.exports.find((x) => x.name === target.name);
+      const info = exp0 ? materialInfo(tp, exp0, (n) => client.get(n)) : null;
+      const tex = info && carry(info.texture, target.pkg);
+      return tex ? tex.texRef : 0;
+    };
+    let live = 0;
+    for (const e of emitters) {
+      // A property Killing Floor does not declare is skipped by its loader on its own - the tag
+      // carries its size - so the whole block goes across rather than a curated subset. The one
+      // thing that has to be rewritten is an object reference: a name index means nothing outside
+      // its own package, and the texture has to be one this file holds. That happens NOW, not in the
+      // serializer: carrying a texture registers exports, and an export added while the bodies are
+      // being written is one the export table never hears about.
+      //
+      // No texture, no particle system. The class default is an editor sprite, and a system painting
+      // with that is a grid of question marks hanging in the air.
+      const usable = e.parts.filter((part) => {
+        resolveObjects(part.block, particleTexture);
+        const paints = part.block.some((p) => p.kind === "object" && p.name === "Texture" && p.ref);
+        if (!paints) lost++;
+        return paints;
+      });
+      if (!usable.length) continue;
+      live++;
+      const partRefs = [];
+      const actorRef = pkg.addExport({
+        classRef: refs.Emitter, name: named("Emitter"), flags: ACTOR,
+        serialize: (p) => {
+          const w = new Writer(192);
+          writeStateFrame(w, refs.Emitter);
+          const pr = p.props(w);
+          pr.arrayProp("Emitters", partRefs.length, (raw) => { for (const r of partRefs) raw.cidx(r); });
+          pr.actorCommon(levelInfoRef, physVolRef, "Emitter", 1, zoneInfoRef);
+          pr.vector("Location", toKF(e.location));
+          if (e.rotation) pr.rotator("Rotation", e.rotation);
+          if (e.drawScale !== null) pr.float("DrawScale", e.drawScale);
+          pr.end();
+          return w;
+        },
+      });
+      for (const part of usable) {
+        parts++;
+        partRefs.push(pkg.addExport({
+          classRef: refs.SpriteEmitter, name: sanitizeName("L2FX_" + e.name + "_" + part.name),
+          outer: actorRef, flags: refs.flagsGame,
+          serialize: (p) => {
+            const w = new Writer(512);
+            const pr = p.props(w);
+            writeBlock(pr, part.block);
+            pr.end();
+            return w;
+          },
+        }));
+      }
+      meshActors.push(actorRef);
+    }
+    if (emitters.length) {
+      log("effects: " + live + " emitter(s) over " + parts + " particle system(s)" +
+        (lost ? ", " + lost + " without a texture" : "") +
+        ([...skipped].length ? ", skipped " + [...skipped].map(([k, v]) => v + " " + k).join(", ") : ""));
+    }
   }
 
   // --- the sky ------------------------------------------------------------------------------------
@@ -775,8 +1088,13 @@ function convert(o) {
     // past the edge there is nothing to draw but the last frame (GOTCHAS 5.7b). The ceiling is the
     // renderer's far plane, which starts eating the far corners somewhere above 32000.
     const half = [0, 1, 2].map((a) => (box.max[a] - box.min[a]) / 2);
-    const R = Math.max(4096, Math.min(32000, Math.hypot(half[0], half[1]) * 1.08));
-    const at = [0, 1, 2].map((a) => (box.max[a] + box.min[a]) / 2);
+    // Around the GROUND, not around the middle of the world box. The box reaches 24000 units above
+    // the highest ground so the sky has somewhere to be, and its centre is up there with it: at scale
+    // 2 that put the cube's floor 14000 units over the player's head, who then stood outside his own
+    // sky and saw black at the horizon. Centre it on the terrain and make it big enough to hold the
+    // whole box, corners included.
+    const R = Math.max(4096, Math.min(+(process.env.KF_SKY_R || 200000), Math.hypot(half[0], half[1]) * 1.08));
+    const at = [0, 0, ((zMin + zMax) / 2 - centre[2]) * scale];
     const sky = buildSkyboxMesh([0, 0, 0], R, sides);
     const skyMeshRef = pkg.addExport({
       classRef: refs.StaticMesh, name: "SkyBox", flags: refs.flagsGame,
@@ -827,9 +1145,24 @@ function convert(o) {
     // The HIGHEST of the four corners of the quad the spawn stands on, not the nearest vertex. On a
     // slope the nearest vertex can be a whole quad's drop below the ground under the player's feet -
     // 128 units of it at this terrain scale - and a start set down there starts inside the hill.
+    // Is there anything this converter BUILT close enough to hold a player up here?
+    //
+    // Answered from the mesh actors' origins rather than their triangles. Origins are exact and free;
+    // triangles need every actor's rotation matrix rebuilt, and the question being asked is coarse -
+    // "is this start standing on the town, or floating over open sea". A pier has half a dozen meshes
+    // within 400 units (17_22: 6-8, nearest ~100); open water has none (16_24: 0, nearest 680).
+    //
+    // The ceiling this accepts: a start hanging over a courtyard with meshes around its edges reads
+    // as held up. Triangle-accurate ground is the upgrade if that ever bites.
+    const HOLD_REACH = 400, HOLD_DROP = 1024;
+    const heldUp = (v) => meshSpots.some((m) =>
+      Math.abs(m[0] - v[0]) < HOLD_REACH && Math.abs(m[1] - v[1]) < HOLD_REACH && Math.abs(m[2] - v[2]) < HOLD_DROP);
+
     const ground = (v) => {
-      const fx = (v[0] - terrain.location[0]) / terrain.scale[0];
-      const fy = (v[1] - terrain.location[1]) / terrain.scale[1];
+      // The inverse of terrain.vertex, and it has to agree with it: Location is the middle of the
+      // heightfield, so the grid index is measured from there, not from the corner.
+      const fx = (v[0] - terrain.location[0]) / terrain.scale[0] + terrain.width / 2;
+      const fy = (v[1] - terrain.location[1]) / terrain.scale[1] + terrain.height / 2;
       const ix = Math.floor(fx), iy = Math.floor(fy);
       if (ix < 0 || iy < 0 || ix + 1 >= terrain.width || iy + 1 >= terrain.height) return null;
       return Math.max(
@@ -839,13 +1172,24 @@ function convert(o) {
     // Four piles: on the heightfield, a level below it on brush geometry, buried just under it, and
     // nowhere at all. In that order of preference - a square's own ground-level starts first, its
     // dungeon second, and only then the place a buried start names with the ground put back.
-    const own = [], under = [], lifted = [], sunk = [];
+    const own = [], ownIndoors = [], under = [], lifted = [], sunk = [];
+    let walled = 0;
     for (const e of src.exports) {
       if (src.classOf(e) !== "PlayerStart" || !e.serialSize) continue;
       const { tags } = tagsOf(src, e);
       const L = pick(tags, "Location");
       if (!L) continue;
       const v = val.vector(src, L);
+      // Inside the rock of a building this converter could not hollow out: the player would open his
+      // eyes inside the stone. Standing height, not the actor's own, so a start on a floor whose slab
+      // the brush includes is not thrown away with it.
+      const head = [v[0], v[1], v[2] + 48];
+      if (insideSolid(head)) { walled++; continue; }
+      // Inside a ROOM is not the same fault and not a fatal one - the space is really there, it is
+      // just sealed, because the doorway was carved by a brush this does not carve with. Kept, but
+      // last: a square with somewhere outdoors to stand should use it (19_21 put the player in a
+      // house instead of the street).
+      const indoors = within(solids, head, 24);
       // The height stays the client's own. Lineage 2 authored it against the same geometry this
       // converts, and what a player stands on in a town is a static mesh - a brush floor there is
       // often the ground UNDER the building. On 17_20 every start was being set down 212 units onto
@@ -854,16 +1198,21 @@ function convert(o) {
       const floor = surfaceAt(floors, v, v[2] + 64);
       const onBrush = floor !== null && v[2] > floor - 64 && v[2] < floor + 1024;
       const sea = surfaceAt(waters, v);
-      // Under the sea with no floor is the seabed, looking up at a ceiling.
-      if (!onBrush && sea !== null && v[2] < sea - 16) { sunk.push(v); continue; }
       const g = ground(v);
+      const held = onBrush || heldUp(v);
+      // Under the sea with nothing solid: the seabed, looking up at a ceiling.
+      if (!held && sea !== null && v[2] < sea - 16) { sunk.push(v); continue; }
       if (g !== null && v[2] > g - 32) {
-        // Over water, with the seabed for ground. A start above the surface is a start on a pier -
-        // 17_22's harbour town stands 74 units over its own sea on static meshes - and it keeps its
-        // height. One AT the surface has nothing holding it up: 16_24's only start floats exactly at
-        // sea level, and the ground it would settle onto is the seabed, underwater.
-        if (sea !== null && g < sea - 16 && v[2] < sea + 16) { sunk.push(v); continue; }
-        own.push([v[0], v[1], Math.max(v[2], g)]);
+        // Over open water, or high in the air, with nothing built underneath: the player falls.
+        // 17_22's harbour town stands over its own sea on static meshes and is fine; 16_24's only
+        // start floats 1060 units above its bay with the nearest mesh actor 680 away, and a player
+        // put there drops through the water - which has no collision - and dies on the seabed.
+        const overSea = sea !== null && g < sea - 16;
+        if (!held && (overSea || v[2] - g > 512)) {
+          if (overSea) sunk.push(v); else lifted.push([v[0], v[1], g]);
+          continue;
+        }
+        (indoors ? ownIndoors : own).push([v[0], v[1], Math.max(v[2], g)]);
       } else if (onBrush && g !== null && g - v[2] > 1024) {
         // A whole level below the heightfield, standing on brush geometry: a dungeon. 16_12's is
         // two thousand units down and this is the only thing that keeps that square playable. It is
@@ -882,18 +1231,22 @@ function convert(o) {
       }
     }
     let where, from;
-    if (own.length || under.length || lifted.length) {
+    if (own.length || ownIndoors.length || under.length || lifted.length) {
       // Where MOST of the square's starts are is where the square is played. 16_12 has one stray
       // start up on the empty heightfield and twelve down in the dungeon that is the whole map;
       // taking the ground-level one because it is ground level puts the player on bare hillside.
-      const piles = [[own, ""], [under, ", all of them a level below the heightfield"],
+      //
+      // Outdoors wins outright rather than by count, though: a room this converter cannot open a
+      // door into is a room the player is shut in, so one start in the street beats six in a house.
+      const piles = [[ownIndoors, ", all of them indoors"], [under, ", all of them a level below the heightfield"],
         [lifted, ", all of them buried and set back on the ground above"]];
-      const best = piles.reduce((a, b) => (b[0].length > a[0].length ? b : a));
+      const best = own.length ? [own, ""] : piles.reduce((a, b) => (b[0].length > a[0].length ? b : a));
       const use = best[0], what = best[1];
-      const skipped = sunk.length + own.length + under.length + lifted.length - use.length;
+      const skipped = sunk.length + own.length + ownIndoors.length + under.length + lifted.length - use.length;
       where = use.slice(0, 16).map((v) => toKF(v));
       from = use.length + " of the square's own" + what +
-        (skipped ? ", " + skipped + " skipped as under the terrain" : "");
+        (skipped ? ", " + skipped + " of its others passed over" : "") +
+        (walled ? ", " + walled + " inside a building this could not hollow out" : "");
     } else {
       if (sunk.length) {
         log("note: none of the square's " + sunk.length + " spawns stands on anything this built - " +

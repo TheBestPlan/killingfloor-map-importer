@@ -86,6 +86,10 @@ function readTexture(pkg, exp) {
     width: props.USize || (mips[0] && mips[0].width) || 0,
     height: props.VSize || (mips[0] && mips[0].height) || 0,
     paletteRef: props.Palette || 0,
+    // The texture's own answer to "is this alpha a cut-out". A bare texture with neither flag is
+    // drawn opaque by the client however much alpha it carries - the fence and the net that ARE cut
+    // out say so, here or through a Shader (see convert.js resolveMaterial).
+    masked: !!(props.bMasked || props.bAlphaTexture),
     // A flame or a waterfall is a flipbook: AnimNext chains one frame to the next and the last one
     // points back at the first. Killing Floor's UTexture has the same three fields.
     animNext: props.AnimNext || 0,
@@ -233,7 +237,7 @@ function alphaMode(tex) {
 const FB_TO_OB = [0, 2, 3, 3, 3, 6, 5, 4];
 
 function materialInfo(pkg, exp, open) {
-  const info = { texture: null, opacity: null, shader: false, blending: undefined };
+  const info = { texture: null, opacity: null, shader: false, blending: undefined, alphaTest: false };
   if (!exp) return info;
   const { readTags, pick, val, refTarget } = require("./props");
 
@@ -252,6 +256,12 @@ function materialInfo(pkg, exp, open) {
     }
     if (p.classOf(e) === "Shader") {
       info.shader = true;
+      // Lineage 2's Shader carries `AlphaTest`/`AlphaRef`, which Killing Floor's does not. It is the
+      // client saying "this alpha is a CUT-OUT" - foliage and window glass are `AlphaTest=true,
+      // AlphaRef=10` - and it outranks anything the alpha channel looks like: read as a gradient and
+      // drawn translucent, those came out as glowing white trees and walls you could see through.
+      const at = pick(tags, "AlphaTest");
+      if (at && at.bool) info.alphaTest = true;
       const op = pick(tags, "Opacity");
       if (op && !info.opacity) {
         const t = refTarget(p, val.ref(p, op));
