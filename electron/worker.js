@@ -59,10 +59,35 @@ function convertQ3(job, log) {
   });
 }
 
+// Tactical Ops: an Unreal Engine 1 client and a map name inside it - the same shape as Quake 3.
+function convertTO(job, log) {
+  const to = require("../src/tacticalops/convert");
+  const res = to.convert({
+    clientDir: job.clientDir, map: job.map, mapName: job.name || null,
+    outDir: job.outDir || null,
+    scale: job.toScale, ambient: job.ambient, glow: job.glow, lightGain: job.lightGain,
+    emitPlayerStarts: job.emitPlayerStarts !== false,
+    log,
+  });
+  const v = verify(res.out);
+  for (const line of v.report.split("\n")) log(line);
+  process.send({
+    kind: "done", ok: v.ok, out: res.out, mapName: res.mapName,
+    size: fs.statSync(res.out).size,
+    nodes: res.model ? res.model.nodes.length : 0,
+    surfs: res.model ? res.model.surfs.length : 0,
+    lightMaps: 0, atlases: res.lightmapPages || 0,
+    textures: 0, missingTextures: 0,
+    tacticalops: { triangles: Math.round(res.stats.triangles), meshes: res.meshes, pages: res.lightmapPages },
+  });
+}
+
+const GAME_CONVERTERS = { l2: convertL2, q3: convertQ3, to: convertTO };
+
 process.on("message", (job) => {
   const log = (t) => process.send({ kind: "log", text: t });
-  if (job.game === "l2" || job.game === "q3") {
-    try { (job.game === "l2" ? convertL2 : convertQ3)(job, log); } catch (e) {
+  if (GAME_CONVERTERS[job.game]) {
+    try { GAME_CONVERTERS[job.game](job, log); } catch (e) {
       log("ERROR: " + e.message);
       process.send({ kind: "done", ok: false, error: e.message });
     }

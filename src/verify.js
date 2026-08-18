@@ -27,7 +27,32 @@ function readTextureHeader(pkg, exp) {
     else if (name === "VSize") vsize = pkg.buf.readInt32LE(at);
     r.pos = at + size;
   }
-  return { format, usize, vsize, mips: r.cidx() };
+  // The mip array: a lazy-array skip offset, the bytes, then the level's own size.
+  const count = r.cidx();
+  const mips = [];
+  const end = exp.serialOffset + exp.serialSize;
+  for (let i = 0; i < count && r.pos + 8 <= end; i++) {
+    r.i32();
+    const len = r.cidx();
+    if (len < 0 || r.pos + len + 10 > end) break;
+    r.skip(len);
+    const w = r.i32(), h = r.i32();
+    r.u8(); r.u8();
+    mips.push({ len, w, h });
+  }
+  return { format, usize, vsize, mips: count, levels: mips };
+}
+
+// What one mip level of a format occupies. Block formats round UP to whole 4x4 blocks in each
+// dimension independently - a 16x2 level is four blocks, not one.
+function mipBytes(format, w, h) {
+  const blocks = Math.max(1, Math.ceil(w / 4)) * Math.max(1, Math.ceil(h / 4));
+  if (format === 3) return blocks * 8;                              // DXT1
+  if (format === 7 || format === 8) return blocks * 16;             // DXT3 / DXT5
+  if (format === 5) return w * h * 4;                               // RGBA8
+  if (format === 4) return w * h * 3;                               // RGB8
+  if (format === 0 || format === 9) return w * h;                   // P8 / L8
+  return null;                                                      // not one this writer emits
 }
 
 function verify(file) {
@@ -272,6 +297,78 @@ function verify(file) {
     }
     check("every texture has a full mip chain", short_ === 0,
       checked + " textures" + (short_ ? ", " + short_ + " short: " + first : ""));
+  }
+
+  // ...and every level must hold exactly the bytes its format needs for its OWN size.
+  //
+  // The client hands the level straight to D3D, which computes the byte count itself: give it fewer
+  // and it refuses the whole texture with "CreateTexture failed(D3DERR_INVALIDCALL)" and takes the
+  // frame down with it. What produced that here was a block-compressed level short in ONE dimension
+  // - a 16x2 needs four blocks and was written as one.
+  {
+    let checked = 0, wrong = 0, first = "";
+    for (const e of pkg.exports) {
+      if (pkg.classOf(e) !== "Texture" || !e.serialSize) continue;
+      let t;
+      try { t = readTextureHeader(pkg, e); } catch (err) { continue; }
+      for (const m of t.levels || []) {
+        const want = mipBytes(t.format, m.w, m.h);
+        if (want === null) continue;
+        checked++;
+        if (m.len !== want) {
+          wrong++;
+          if (!first) first = e.name + " " + m.w + "x" + m.h + " has " + m.len + " bytes, needs " + want;
+        }
+      }
+    }
+    check("every mip is the size its format requires", wrong === 0,
+      checked + " level(s)" + (wrong ? ", " + wrong + " wrong: " + first : ""));
+  }
+
+  // ...and a block-compressed texture must hold at least one whole block in its BASE level. D3D
+  // will not create a 2x2 DXT1 texture, and the client dies the same way as above the first time
+  // one is drawn. Levels below 4x4 further down the chain are fine.
+  {
+    let checked = 0, tiny = 0, first = "";
+    for (const e of pkg.exports) {
+      if (pkg.classOf(e) !== "Texture" || !e.serialSize) continue;
+      let t;
+      try { t = readTextureHeader(pkg, e); } catch (err) { continue; }
+      if (t.format !== 3 && t.format !== 7 && t.format !== 8) continue;
+      checked++;
+      if (t.usize < 4 || t.vsize < 4) {
+        tiny++;
+        if (!first) first = e.name + " " + t.usize + "x" + t.vsize + " (format " + t.format + ")";
+      }
+    }
+    check("no block-compressed texture smaller than one block", tiny === 0,
+      checked + " compressed texture(s)" + (tiny ? ", " + tiny + " too small: " + first : ""));
+  }
+
+  // A Combiner must not be drawing a Shader. The chain loads and verifies either way up, and the
+  // wrong one - Combiner(Shader(texture), lightmap) - draws a flat white panel with the texture and
+  // the cut-out both gone (GOTCHAS 5.41). The blend belongs on the OUTSIDE: Shader(Combiner).
+  {
+    const { tagsOf, pick, val } = require("./lineage2/props");
+    let combiners = 0, wrong = 0, first = "";
+    for (const e of pkg.exports) {
+      if (pkg.classOf(e) !== "Combiner" || !e.serialSize) continue;
+      combiners++;
+      let tags;
+      try { tags = tagsOf(pkg, e).tags; } catch (err) { continue; }
+      for (const name of ["Material1", "Material2"]) {
+        const t = pick(tags, name);
+        if (!t) continue;
+        const ref = val.ref(pkg, t);
+        const inner = ref > 0 ? pkg.exports[ref - 1] : null;
+        if (inner && pkg.classOf(inner) === "Shader") {
+          wrong++;
+          if (!first) first = e.name + "." + name + " = " + inner.name;
+        }
+      }
+    }
+    check("no Combiner draws a Shader", wrong === 0,
+      combiners + " combiner(s)" + (wrong ? ", " + wrong + " upside down: " + first : ""));
   }
 
   // Every actor's tagged property block must terminate, and so must every block nested in a struct.

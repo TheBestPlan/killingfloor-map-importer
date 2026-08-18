@@ -196,20 +196,9 @@ function addTexture(pkg, refs, miptex, opts) {
     // which is why it came and went as the view turned. Every shipped texture carries the full
     // chain (KF-Crash: 11 levels for 1024x1024).
     //
-    // A sub-block level is stored as one block whose 4x4 is filled by repeating the tiny image.
-    const padToBlock = (rgb, alpha, w, h) => {
-      if (w >= 4 && h >= 4) return { rgb, alpha, w, h };
-      const rgb4 = Buffer.alloc(48), a4 = Buffer.alloc(16);
-      for (let y = 0; y < 4; y++) {
-        for (let x = 0; x < 4; x++) {
-          const s = (Math.min(h - 1, y % h) * w + Math.min(w - 1, x % w));
-          const d = y * 4 + x;
-          rgb4[d * 3] = rgb[s * 3]; rgb4[d * 3 + 1] = rgb[s * 3 + 1]; rgb4[d * 3 + 2] = rgb[s * 3 + 2];
-          a4[d] = alpha[s];
-        }
-      }
-      return { rgb: rgb4, alpha: a4, w: 4, h: 4 };
-    };
+    // A level shorter than a block in one dimension still needs ceil(w/4)*ceil(h/4) blocks - the
+    // encoder rounds up and clamps its reads, so handing it the level's own size is both correct
+    // and what the client asks D3D for (see addRgbTexture for what padding to 4x4 costs).
     // A cut-out texture builds its own chain in RGBA instead of reusing the indexed one: colour has
     // to be averaged over the visible texels only, and the level that is entirely cut out has to
     // inherit a colour rather than invent one.
@@ -233,9 +222,7 @@ function addTexture(pkg, refs, miptex, opts) {
       // (func_water's renderamt, typically ~100/255). Bake that into the DXT3 alpha block so the
       // surface reads as water rather than as an opaque blue floor.
       if (liquid) alpha.fill(150);
-      const p = padToBlock(rgb, alpha, m.width, m.height);
-      // The stored width/height stay the TRUE mip size; only the block content is padded.
-      return { width: m.width, height: m.height, data: dxt.encodeDXT3(p.rgb, p.w, p.h, p.alpha) };
+      return { width: m.width, height: m.height, data: dxt.encodeDXT3(rgb, m.width, m.height, alpha) };
     });
     const texRefD = pkg.addExport({
       classRef: refs.Texture, name, flags: refs.flagsGame,
@@ -349,11 +336,16 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
   // DXT1 unless the caller wants the uncompressed original: a sky face is 1.33 MB as RGBA8 at 512
   // and 0.125 MB as DXT1, and the six of them were two thirds of a converted map's bytes. An alpha
   // channel rules it out - DXT1's one bit is not enough for a sprite.
-  const dxt1 = !img.alpha && !(opts && opts.raw);
+  // A block format needs at least one whole 4x4 block in the BASE level: D3D refuses to create a
+  // 2x2 DXT1 texture at all ("CreateTexture failed(D3DERR_INVALIDCALL)"), and a light bulb, a hull
+  // marker and a 64x2 fibre in the stock Tactical Ops maps are exactly that. Levels below 4x4
+  // inside a valid texture are fine - it is only the top one that has to hold a block.
+  const tiny = img.width < 4 || img.height < 4;
+  const dxt1 = !img.alpha && !(opts && opts.raw) && !tiny;
   // A cut-out wall texture cannot be DXT1 (one bit of alpha) and must not be RGBA8 either: a Team
   // Arena map carries 335 of them, and at 256x256 that is 44 MB of uncompressed pixels against
   // 11 MB as DXT3. `dxt3` is for those - callers that need the exact pixels still get RGBA8.
-  const dxt3 = !dxt1 && !!(img.alpha && opts && opts.dxt3);
+  const dxt3 = !dxt1 && !tiny && !!(img.alpha && opts && opts.dxt3);
   const texRef = pkg.addExport({
     classRef: refs.Texture, name: sanitizeName(name), flags: refs.flagsGame,
     serialize: (p) => {
@@ -387,23 +379,13 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
             rgb[i * 3] = m.data[i * 4 + 2]; rgb[i * 3 + 1] = m.data[i * 4 + 1]; rgb[i * 3 + 2] = m.data[i * 4];
             if (alpha) alpha[i] = m.data[i * 4 + 3];
           }
-          if (m.width >= 4 && m.height >= 4) {
-            data = dxt3 ? dxt.encodeDXT3(rgb, m.width, m.height, alpha) : dxt.encodeDXT1(rgb, m.width, m.height);
-          } else {
-            // A level smaller than one block is still stored as one block, filled by repeating the
-            // tiny image - the same padding the indexed path does, and the levels below 4x4 are not
-            // optional (GOTCHAS 5.33).
-            const rgb4 = Buffer.alloc(48), a4 = Buffer.alloc(16, 255);
-            for (let y = 0; y < 4; y++) {
-              for (let x = 0; x < 4; x++) {
-                const s = (Math.min(m.height - 1, y % m.height) * m.width + Math.min(m.width - 1, x % m.width)) * 4;
-                const d = (y * 4 + x) * 3;
-                rgb4[d] = m.data[s + 2]; rgb4[d + 1] = m.data[s + 1]; rgb4[d + 2] = m.data[s];
-                a4[y * 4 + x] = m.data[s + 3];
-              }
-            }
-            data = dxt3 ? dxt.encodeDXT3(rgb4, 4, 4, a4) : dxt.encodeDXT1(rgb4, 4, 4);
-          }
+          // Always the level's OWN size: the encoders round up to whole blocks and clamp the read,
+          // so a 2x2 comes out as the single block GOTCHAS 5.33 asks for - and a 16x2, which needs
+          // FOUR blocks, comes out as four. Writing one block for every sub-4 level was wrong the
+          // moment a level was short in one dimension only: the client asks D3D for
+          // ceil(w/4)*ceil(h/4) blocks, gets a buffer an eighth that size, and dies with
+          // "CreateTexture failed(D3DERR_INVALIDCALL)" the first frame the texture is drawn.
+          data = dxt3 ? dxt.encodeDXT3(rgb, m.width, m.height, alpha) : dxt.encodeDXT1(rgb, m.width, m.height);
         }
         const rec = w.lazySkip();
         w.cidx(data.length).bytes(data);

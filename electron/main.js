@@ -34,6 +34,13 @@ const DEFAULT_SETTINGS = {
   q3Ambient: 40,
   q3Glow: 96,
   q3LightGain: 4,      // Quake 3 lightmaps are dark on purpose; this is what lifts them
+  // Tactical Ops: an Unreal Engine 1 install. The scale ceiling is the step again - see
+  // src/tacticalops/convert.js - and the light gain is what the rebuilt UE1 light mesh ends in.
+  toDir: "",
+  toScale: 1.3,
+  toAmbient: 32,
+  toGlow: 64,
+  toLightGain: 3,
 };
 
 function loadSettings() {
@@ -127,6 +134,15 @@ ipcMain.handle("q3:maps", (e, dir) => {
       fsys.close();
     }
     return out;
+  } catch (err) { return []; }
+});
+
+// The maps a Tactical Ops install holds. Only the folder is read: a map is a .unr in
+// TacticalOps\Maps and its name is all the list needs.
+ipcMain.handle("to:maps", (e, dir) => {
+  try {
+    const { Client } = require("../src/tacticalops/package");
+    return new Client(dir).maps().map((m) => ({ name: m.name }));
   } catch (err) { return []; }
 });
 

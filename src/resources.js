@@ -65,6 +65,17 @@ function installedQuake3() {
   return guesses.filter((p, i) => guesses.indexOf(p) === i && exists(path.join(p, "baseq3")));
 }
 
+// Installed Tactical Ops roots - a folder with TacticalOps\Maps under it. KF_TACTICALOPS overrides
+// the search: the game predates Steam and its installer puts it wherever it was pointed.
+function installedTacticalOps() {
+  const guesses = [
+    process.env.KF_TACTICALOPS,
+    ...["ProgramFiles(x86)", "ProgramFiles"].map((v) => process.env[v]).filter(Boolean).flatMap((base) =>
+      ["Infogrames/Tactical Ops", "Atari/Tactical Ops", "Tactical Ops", "TacticalOps"].map((rel) => path.join(base, rel))),
+  ].filter(Boolean);
+  return guesses.filter((p, i) => guesses.indexOf(p) === i && exists(path.join(p, "TacticalOps", "Maps")));
+}
+
 // A folder the user picked in the UI ("my Counter-Strike is here"). They may point at the game root
 // (hl.exe next to cstrike/), at cstrike itself, or at a download pack - accept all three.
 function clientRoots(dir) {
@@ -123,4 +134,4 @@ function modFile(bspFile, rel, extra) {
   return null;
 }
 
-module.exports = { wadDirs, skyRoots, installedHalfLife, installedQuake3, clientRoots, modFile, steamApp };
+module.exports = { wadDirs, skyRoots, installedHalfLife, installedQuake3, installedTacticalOps, clientRoots, modFile, steamApp };

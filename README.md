@@ -4,13 +4,14 @@
 
 Imports maps from other games into **Killing Floor 1** as real `.rom` levels (Unreal Engine 2.5, file version 128 / licensee 29). The package is written from scratch — no KFEd, no intermediate formats, no manual steps: point it at a map file and get a `.rom` you can drop into `KillingFloor\Maps` and play.
 
-Three source games so far. Reading each is a module of its own behind the same build-and-write pipeline, and more games are the way this grows — see [Roadmap](#roadmap-more-source-games).
+Four source games so far. Reading each is a module of its own behind the same build-and-write pipeline, and more games are the way this grows — see [Roadmap](#roadmap-more-source-games).
 
 | source | what you point it at | notes |
 | --- | --- | --- |
 | **Counter-Strike 1.6 / Half-Life** — GoldSrc BSP v30 | a `.bsp` file | [`docs/games/goldsrc.md`](./docs/games/goldsrc.md) |
 | **Quake III Arena / Team Arena** — IBSP v46 | a client folder and a map name | [`docs/games/quake3.md`](./docs/games/quake3.md) |
 | **Lineage 2 (Interlude)** — Unreal Engine 2 packages | a client folder and a world square | [`docs/games/lineage2.md`](./docs/games/lineage2.md) |
+| **Tactical Ops: Assault on Terror** — Unreal Engine 1 packages (UT99) | a client folder and a map name | [`docs/games/tacticalops.md`](./docs/games/tacticalops.md) |
 
 > The Unreal side was reverse-engineered by hand. The `UModel` v128 serialization order and the layout of the baked lightmaps inside it are documented nowhere else, and no public GoldSrc → Unreal converter exists. The write-up is in [`docs/RESEARCH.md`](./docs/RESEARCH.md); every pitfall that cost time is in [`docs/GOTCHAS.md`](./docs/GOTCHAS.md).
 
@@ -20,6 +21,11 @@ Counter-Strike 1.6 is the deepest route and the table below is about it. Quake 3
 textures, its own baked lightmap, the sky, doors and player starts: all 59 stock maps of Quake III
 Arena and Team Arena convert, pass every invariant of the finished `.rom` and run in the client —
 details and what is missing in [`docs/games/quake3.md`](./docs/games/quake3.md).
+
+Tactical Ops carries the same, plus its movers as `KFDoorMover`s and its sky room enlarged around
+the level, and its baked light is *rebuilt* rather than copied — UE1 stores one shadow bit per luxel
+per light rather than a lightmap. All 33 stock maps convert and run;
+[`docs/games/tacticalops.md`](./docs/games/tacticalops.md) has the format work behind it.
 
 | Capability | State |
 | --- | --- |
@@ -37,6 +43,7 @@ details and what is missing in [`docs/games/quake3.md`](./docs/games/quake3.md).
 - The **source game**, for the parts a map does not contain:
   - Counter-Strike 1.6 / Half-Life — the stock `.wad` texture archives and the `gfx/env` skyboxes. A downloaded map is usually the `.bsp` on its own and needs them; without them every texture comes out magenta and the map has no sky.
   - Quake III Arena — the `.pk3` archives *are* the input: the map name is looked up in them, and so is every texture and `.shader` script it draws. Team Arena maps need the `missionpack` folder as well.
+  - Tactical Ops — the install *is* the input: a map is a `.unr` in `TacticalOps\Maps` and every texture it draws is in a `.utx` beside it. `KF_TACTICALOPS` points at an install the search does not find.
 - **Node.js ≥ 18** for the CLI. The desktop app needs nothing extra.
 
 No game content ships with this repo, in either direction. You point it at your own installs.
@@ -112,6 +119,30 @@ node src/cli.js --game q3 "…/maps/mymap.bsp" --client "…/Quake III Arena" --
 `--out`, `--name`, `--scale`, `--light-scale`, `--no-sky`, `--no-spawns` and `--verify` mean the same
 thing as on the Counter-Strike route.
 
+### Tactical Ops: Assault on Terror
+
+A Tactical Ops map is an Unreal Engine 1 package that names the texture packages it draws from, so
+the input is the client folder and a map name — as on the Quake 3 route.
+
+```bash
+node src/cli.js --game to --client "…/Tactical Ops" --map TO-Crossfire --out "…/KillingFloor/Maps" --verify
+node src/cli.js --game to "…/TacticalOps/Maps/TO-Crossfire.unr" --client "…/Tactical Ops" --out …
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--client <dir>` | an installed Tactical Ops, if there is one | the folder holding `TacticalOps\Maps` (`KF_TACTICALOPS` also sets it) |
+| `--map <name>` | — | map name without `.unr`, e.g. `TO-Avalanche` |
+| `--scale <n>` | `1.3` | UT99 units → Unreal units. Pawn parity is 1.28; above 1.4 a 25-unit step stops being climbable |
+| `--light-gain <n>` / `--light-floor <n>` | `3` / `20` | how bright the rebuilt light mesh comes out, and the floor under it |
+| `--ambient <n>` / `--glow <n>` | `32` / `64` | the zone lights the player, the mesh actors' glow lights the world |
+| `--no-light` | off | skip the light rebuild entirely — geometry and textures only |
+| `--no-sky` | off | drop the map's own sky room instead of enlarging it around the level |
+
+`--out`, `--name`, `--spawn-limit`, `--light-scale`, `--no-spawns` and `--verify` mean the same thing
+as on the other routes. All 33 stock maps convert; the details are in
+[`docs/games/tacticalops.md`](./docs/games/tacticalops.md).
+
 ## What transfers
 
 | | How |
@@ -143,7 +174,7 @@ Faces that do not make it are the invisible tool textures — `aaatrigger`, `cli
 
 ## Roadmap: more source games
 
-The pipeline is split so that the source game is the only part that changes: `src/goldsrc/`, `src/quake3/` and `src/lineage2/` read the map, `src/build/` turns it into Unreal structures, `src/unreal/` writes the package. Adding a game means a new reader that produces the same intermediate shape — faces with UVs, textures, entities, a lightmap grid — and nothing under `src/unreal/` has to move. Quake, Quake II and the Source-engine BSP variants are the obvious next candidates, since they are the same family of formats and land on the same `UModel` writer.
+The pipeline is split so that the source game is the only part that changes: `src/goldsrc/`, `src/quake3/`, `src/lineage2/` and `src/tacticalops/` read the map, `src/build/` turns it into Unreal structures, `src/unreal/` writes the package. Adding a game means a new reader that produces the same intermediate shape — faces with UVs, textures, entities, a lightmap grid — and nothing under `src/unreal/` has to move. Quake, Quake II and the Source-engine BSP variants are the obvious next candidates, since they are the same family of formats and land on the same `UModel` writer.
 
 Contributions in that direction are welcome; start with [`docs/RESEARCH.md`](./docs/RESEARCH.md) for the target format and [`docs/GOTCHAS.md`](./docs/GOTCHAS.md) for the invariants that must not be broken.
 
@@ -153,18 +184,20 @@ Contributions in that direction are welcome; start with [`docs/RESEARCH.md`](./d
 pnpm test          # node test/selfcheck.js
 ```
 
-58 checks, all green. The load-bearing ones:
+61 checks, all green. The load-bearing ones:
 
 - the `UModel` v128 serializer re-writes **41 shipped Killing Floor maps byte for byte** (the only differences are signalling-NaN payloads that JS normalises);
 - compact index and `FString` round-trip;
 - across 25 Counter-Strike maps: the computed lightmap footprint fits the `LIGHTING` lump, face winding is `Newell == −normal`, face vertices lie on the face plane;
 - every shipped `UPolys` object fits the layout exactly (6054 objects, 37136 polys, 0 mismatched);
 - across 36 Quake 3 maps: every face indexes inside the vertex and meshvert lumps, every surface shader resolves to an image, a sky or a fog volume (2733/2733), a tessellated bezier patch stays inside its control hull, and q3dm1 converts end to end and passes every invariant of the finished `.rom`;
+- across all 33 Tactical Ops maps: the Unreal Engine 1 `UModel` walks to the byte on every one, the per-surface shadow-bit runs account for `LightBits` exactly, every node vertex lands inside its own light mesh, every mover's brush polygons read, and TO-Crossfire converts end to end and passes every invariant of the finished `.rom`;
+- the block-compression rules the client dies on: a level short in one dimension is still whole blocks, and a texture smaller than one block goes out uncompressed;
 - the DXT3 encoder, the `.mdl` and `.spr` readers, the TGA and baseline-JPEG decoders, the Lanczos resampler.
 
-Game files are found from the usual Steam locations; `KF_QUAKE3` points at a Quake III Arena install that is not one of them (a GOG copy, say). Without them those checks fail loudly rather than passing empty, so run `pnpm test` on a machine that has the games (CI only smoke-tests packaging).
+Game files are found from the usual Steam locations; `KF_QUAKE3` points at a Quake III Arena install that is not one of them (a GOG copy, say), and `KF_TACTICALOPS` at a Tactical Ops install, which predates Steam entirely. Without them those checks fail loudly rather than passing empty, so run `pnpm test` on a machine that has the games (CI only smoke-tests packaging).
 
-`--verify` re-reads the finished `.rom` with an independent reader and checks 22 invariants: header, tables, serial ranges, reference resolution, unit-length node planes, vertices on their plane, winding, sections mirroring node polygons, lightmap ranges and UVs inside the atlas, well-formed DXT3, the tree actually being a tree, and a full mip chain on every texture. Measured, all clean:
+`--verify` re-reads the finished `.rom` with an independent reader and checks 31 invariants: header, tables, serial ranges, reference resolution, unit-length node planes, vertices on their plane, winding, sections mirroring node polygons, lightmap ranges and UVs inside the atlas, well-formed DXT3, the tree actually being a tree, a full mip chain on every texture, every mip holding exactly the bytes its format requires, and no material chain built upside down. Measured, all clean:
 
 ```
 cs_assault  3206 faces -> 7247 tris in 323 meshes   149 textures  13.41 MB
@@ -196,6 +229,8 @@ killingfloor-map-importer/
 │  ├─ quake3/               source game: convert.js, bsp.js, pk3.js, shader.js, image.js, texture.js,
 │  │                        mesh.js, sky.js
 │  ├─ lineage2/             source game: convert.js and the client readers around it
+│  ├─ tacticalops/          source game: convert.js, package.js, model.js, texture.js, mesh.js,
+│  │                        light.js (UE1 shadow bits -> an atlas), movers.js
 │  ├─ build/                GoldSrc → Unreal: model.js, mesh.js, brushents.js, propmesh.js, skybox*, upscale.js
 │  └─ unreal/               package writer: package.js, writer.js, model.js, staticmesh.js, polys.js,
 │                           texture.js, dxt.js, read.js (independent reader used by --verify)
@@ -215,6 +250,7 @@ The notes are split the way the converter is: one file for the target, one per s
 - **[docs/games/goldsrc.md](./docs/games/goldsrc.md)** — what reading a Counter-Strike 1.6 `.bsp` costs: WADs, palettes and masking, sky images, brush entities, `.mdl` props, water.
 - **[docs/games/quake3.md](./docs/games/quake3.md)** — what reading a Quake III Arena client costs: the `.pk3` search path, IBSP v46, bezier patches, the `.shader` scripts and the one typo in id's own that costs 180 of them, the lightmap pages, why the scale is 1.9, and what Team Arena needs.
 - **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields, their layer blend and their grass, brush polygons, how a surface says it is blended, animated textures and particle systems, and why the sky cannot be carried across.
+- **[docs/games/tacticalops.md](./docs/games/tacticalops.md)** — what reading an Unreal Engine 1 client costs: the v69 `UModel` and the three fields that are not guessable, why the scale is 1.3, why every node ring has to be emitted reversed, UE1's baked light as one shadow BIT per luxel per light and the arithmetic that turns it back into pixels, the sky room, and movers as the only geometry outside the BSP.
 - **[harness/README.md](./harness/README.md)** — checking a converted map in the real client.
 
 ## Legal

@@ -859,6 +859,39 @@ wrong was never the average - it was the hue of whole blocks.
 Uncompressed RGBA8 removes the last of it, and costs three times the file (q3dm1: 7.8 MB → 23.7 MB).
 `--texture-format raw` is there for when that trade is worth making.
 
+### 5.40 A level with every triangle wound backwards does not look empty, it looks shredded
+This is the failure mode to recognise, because it does not read as "the winding is wrong". The
+client keeps drawing: near walls and floors vanish, and through the holes you see the *backs* of
+the far side of the map, which are real geometry with real textures on them. Small closed props
+(crates, barrels) still look right, because a box seen from inside its own far faces looks like a
+box. What comes back is a frame of lit shards over black, and every instinct says "meshes are
+missing" — atlas pages, materials, mesh size, mesh count, culling spheres, triangle size. Each of
+those was ruled out one client build at a time on TO-Blaze-of-Glory before the winding was even
+suspected.
+
+The check that costs one minute and settles it: rasterise the converted `.rom` offline from the same
+camera the client used, once culling back faces and once culling front faces —
+`node scripts/render.js <map.rom> <x,y,z> <yaw> out.bmp` with `CULL=back` and `CULL=front`. If the
+FRONT-culled render reproduces the client's frame, nothing is missing and the winding is inverted.
+If neither does, the geometry really is wrong.
+
+Nothing about the file format warns you: the mesh loads, the bounds are right, the verifier passes.
+Which way each source engine winds is measured per route, not assumed — for UE1 the answer is that
+a node's ring has to be emitted reversed (TO.4).
+
+### 5.41 The lightmap goes UNDER the Shader, not around it
+`Combiner(Material1 = Shader(masked), Material2 = lightmap)` loads, verifies, and draws a flat white
+panel — texture gone, cut-out gone. TO-Blister's corrugated fences and TO-TerrorMansion's doors were
+white rectangles until the chain was turned the other way up:
+
+```
+Shader{ Diffuse = Combiner(texture x lightmap), Opacity = texture, OutputBlending = OB_Masked }
+```
+
+The mask lives in the raw texture's alpha, so `Opacity` keeps pointing at the texture even though
+`Diffuse` is now the Combiner. This is the order the Quake 3 route already used; the Tactical Ops
+route built it upside down and nothing in the file said so.
+
 ## 6. LevelInfo / gameplay
 
 ### 6.0a "Navigation point imbedded in level geometry" means the BSP, not the spawn height
@@ -897,6 +930,32 @@ overcast grey of Counter-Strike arrives as a white glare.
 
 Do not measure this from a screenshot taken with mouse-look: the pitch is not reproducible, and a
 frame that happens to catch the bright part of the up face reads higher than the one before it.
+
+### 1.9 A block-compressed mip short in ONE dimension takes the client down
+`CreateTexture failed(D3DERR_INVALIDCALL)` out of `FD3D9Texture::Cache`, the first frame a texture
+is drawn - and only on some maps, which is what made it look like a geometry problem.
+
+A DXT level needs `ceil(w/4) * ceil(h/4)` blocks, and the two dimensions round up **independently**.
+Writing every level under 4x4 as a single padded block is right for 2x2 and 1x1 and wrong for
+16x2, 8x2, 2x8: those need four, two and two blocks. D3D computes the byte count itself, is handed
+an eighth of it, refuses the whole texture and takes the frame with it.
+
+The encoders here already round up and clamp their reads, so the fix is to hand them the level's
+own size and delete the special case. Measured after the fact on maps built before it: 17 bad
+levels in `KF-mpteam5`, 10 in a Tactical Ops map, 1 in `KF-gg_33_shudder` - all of them non-square
+textures whose tail levels go flat. `verify.js` checks every level's byte count against its format
+since.
+
+### 5.16 A projector repaints a whole DXT3 surface white
+Killing Floor's own projectors - the bullet decal, the torch's spot, the pawn's blob shadow - are
+drawn onto whatever they land on. Land one on a static mesh whose material is a **DXT3** texture
+with a fully opaque alpha channel and the surface does not get a decal: it turns white, all of it,
+and stays that way. Measured on a Tactical Ops floor: mean frame luminance 213 of 255 looking down
+at the ground, 18 with `bAcceptsProjectors=false` on the same build, and 18 again with projectors
+back on once the same textures were written as **DXT1**.
+
+So an opaque world texture wants DXT1, not "DXT3 with alpha 255" - which is half the bytes as well.
+Cut-outs and panes still need the alpha, and those keep `bAcceptsProjectors=false` instead.
 
 ## 7. Test-harness gotchas (Windows / KF client)
 

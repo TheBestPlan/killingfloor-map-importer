@@ -566,5 +566,249 @@ console.log("\nQuake 3: archives, BSP, shaders, images");
   }
 }
 
+console.log("\nTactical Ops: UE1 packages, the model, the shadow bits");
+{
+  const { installedTacticalOps } = require("../src/resources");
+  const TO = require("../src/tacticalops/package");
+  const toModel = require("../src/tacticalops/model");
+  const toConvert = require("../src/tacticalops/convert");
+  const { verify } = require("../src/verify");
+
+  // Two checks that need no game files, and both of them are crashes that reached the client.
+  //
+  // A block-compressed level needs ceil(w/4)*ceil(h/4) blocks, rounding up in each dimension on its
+  // own: a 16x2 is FOUR blocks, not the one that "smaller than 4x4" reasoning gives it. D3D works
+  // the count out itself and refuses the texture - "CreateTexture failed(D3DERR_INVALIDCALL)" -
+  // taking the frame with it. See GOTCHAS 1.9.
+  {
+    const rgb = Buffer.alloc(16 * 2 * 3, 128);
+    ok("a DXT1 level short in one dimension is still whole blocks",
+      dxt.encodeDXT1(rgb, 16, 2).length === 4 * 8, dxt.encodeDXT1(rgb, 16, 2).length + " bytes for 16x2, want 32");
+    ok("a DXT1 level smaller than a block is one block",
+      dxt.encodeDXT1(Buffer.alloc(2 * 2 * 3), 2, 2).length === 8);
+  }
+  // ...and a block format cannot hold the BASE level of a texture smaller than one block at all, so
+  // those have to go out uncompressed (GOTCHAS 5.16's neighbour: three stock maps carry a 2x2).
+  {
+    const { Package, RF } = require("../src/unreal/package");
+    const { addRgbTexture } = require("../src/unreal/texture");
+    const pkg = new Package({});
+    const refs = {
+      Texture: pkg.importClass("Engine", "Texture"), Palette: pkg.importClass("Engine", "Palette"),
+      flagsGame: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
+    };
+    addRgbTexture(pkg, refs, "tiny", { width: 2, height: 2, rgb: Buffer.alloc(2 * 2 * 3, 200) }, 1, { wrap: true });
+    addRgbTexture(pkg, refs, "big", { width: 8, height: 8, rgb: Buffer.alloc(8 * 8 * 3, 200) }, 1, { wrap: true });
+    const back = R.parsePackage(pkg.build());
+    const formatOf = (name) => {
+      const e = back.exports.find((x) => x.name === name);
+      const r = new R.Rd(back.buf, e.serialOffset);
+      let format = -1;
+      for (let g = 0; g < 32; g++) {
+        const n = back.names[r.cidx()];
+        if (n === undefined || n === "None") break;
+        const info = r.u8(), type = info & 0x0f, sc = (info >> 4) & 7;
+        if (type === 10) r.cidx();
+        let size = [1, 2, 4, 12, 16][sc];
+        if (sc === 5) size = r.u8(); else if (sc === 6) size = r.u16(); else if (sc === 7) size = r.u32();
+        if ((info & 0x80) && type !== 3) r.u8();
+        if (type === 3) continue;
+        if (n === "Format") format = back.buf[r.pos];
+        r.pos += size;
+      }
+      return format;
+    };
+    ok("a texture smaller than one block is written uncompressed", formatOf("tiny") === 5, "format " + formatOf("tiny"));
+    ok("an ordinary texture still goes out block-compressed", formatOf("big") === 3, "format " + formatOf("big"));
+  }
+  // The indexed writer (the GoldSrc route's own) has the same trap in it, so it gets the same check:
+  // a non-square texture's tail levels go flat, and every one of them must still hold whole blocks.
+  {
+    const { Package, RF } = require("../src/unreal/package");
+    const { addTexture } = require("../src/unreal/texture");
+    const pkg = new Package({});
+    const refs = {
+      Texture: pkg.importClass("Engine", "Texture"), Palette: pkg.importClass("Engine", "Palette"),
+      flagsGame: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
+    };
+    addTexture(pkg, refs, {
+      name: "strip", width: 16, height: 2,
+      mips: [{ width: 16, height: 2, data: Buffer.alloc(32, 7) }],
+      palette: Buffer.alloc(768, 128),
+    }, { dxt: true });
+    const back = R.parsePackage(pkg.build());
+    const e = back.exports.find((x) => x.name === "strip");
+    const r = new R.Rd(back.buf, e.serialOffset);
+    for (let g = 0; g < 32; g++) {
+      const n = back.names[r.cidx()];
+      if (n === undefined || n === "None") break;
+      const info = r.u8(), type = info & 0x0f, sc = (info >> 4) & 7;
+      if (type === 10) r.cidx();
+      let size = [1, 2, 4, 12, 16][sc];
+      if (sc === 5) size = r.u8(); else if (sc === 6) size = r.u16(); else if (sc === 7) size = r.u32();
+      if ((info & 0x80) && type !== 3) r.u8();
+      if (type !== 3) r.pos += size;
+    }
+    const count = r.cidx();
+    let wrong = 0, first = "";
+    for (let i = 0; i < count; i++) {
+      r.i32();
+      const len = r.cidx();
+      r.skip(len);
+      const w = r.i32(), h = r.i32();
+      r.u8(); r.u8();
+      const want = Math.max(1, Math.ceil(w / 4)) * Math.max(1, Math.ceil(h / 4)) * 16;   // DXT3
+      if (len !== want && !first) { wrong++; first = w + "x" + h + " has " + len + ", wants " + want; }
+    }
+    ok("the indexed writer's levels hold whole blocks too", wrong === 0 && count === 5,
+      count + " level(s) for 16x2" + (first ? ", " + first : ""));
+  }
+  // The luxel grid is read through the dual basis of the surface's two texture axes - they are
+  // neither unit length nor guaranteed orthogonal - and the light's colour through Unreal's byte
+  // hue/saturation, where saturation is INVERTED: 255 is white, 0 is the pure hue.
+  {
+    const { dualBasis, hsvToRgb } = require("../src/tacticalops/light");
+    const d = dualBasis([2, 0, 0], [0, 3, 0], [0, 0, 1]);
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    ok("the dual basis inverts the texture axes", near(d.u[0], 0.5) && near(d.v[1], 1 / 3),
+      "u " + d.u.map((v) => +v.toFixed(3)).join(",") + " v " + d.v.map((v) => +v.toFixed(3)).join(","));
+    const turned = dualBasis([1, 1, 0], [-1, 1, 0], [0, 0, 1]);
+    ok("...and follows them when they are turned", near(turned.u[0], 0.5) && near(turned.u[1], 0.5),
+      turned.u.map((v) => +v.toFixed(3)).join(","));
+    ok("light saturation 255 is white and 0 is the pure hue",
+      hsvToRgb(0, 255).every((c) => c === 1) && hsvToRgb(0, 0).join() === "1,0,0" &&
+      hsvToRgb(85, 0).map((c) => Math.round(c)).join() === "0,1,0");
+  }
+  // The scale ceiling, from the two engines' own constants: UE1's Pawn.MaxStepHeight is 25 and
+  // UE2.5's MAXSTEPHEIGHT is 35, so anything above 1.4 makes a stock staircase unclimbable.
+  ok("the default scale keeps a Tactical Ops step climbable in Killing Floor",
+    toConvert.DEFAULTS.scale * 25 <= 35,
+    "25 x " + toConvert.DEFAULTS.scale + " = " + (25 * toConvert.DEFAULTS.scale) + " uu, limit 35");
+
+  // A UE1 node's ring winds the opposite way round from what a UE2.5 static mesh wants: emitted as
+  // stored, every surface faces away and the client draws the level inside out - the "shredded"
+  // frames TO-Blaze-of-Glory came back with. One square, wound counter-clockwise seen from +Z, has
+  // to come out facing -Z.
+  {
+    const { buildMeshes } = require("../src/tacticalops/mesh");
+    const square = [[0, 0, 0], [100, 0, 0], [100, 100, 0], [0, 100, 0]];
+    const model = {
+      points: square, vectors: [[1, 0, 0], [0, 1, 0]],
+      verts: square.map((_, i) => ({ pVertex: i })),
+      nodes: [{ numVertices: 4, iSurf: 0, iVertPool: 0, iZone: [0, 0] }],
+      surfs: [{ pBase: 0, vTextureU: 0, vTextureV: 1, panU: 0, panV: 0, polyFlags: 0, material: 1 }],
+    };
+    const built = buildMeshes(model, { scale: 1, texOf: () => ({ ref: 1, kind: "opaque", origWidth: 64, origHeight: 64 }) });
+    const m = built.meshes[0];
+    const p = [0, 1, 2].map((k) => m.vertices[m.indices[k]].pos);
+    const e1 = [0, 1, 2].map((k) => p[1][k] - p[0][k]);
+    const e2 = [0, 1, 2].map((k) => p[2][k] - p[0][k]);
+    const nz = e1[0] * e2[1] - e1[1] * e2[0];
+    ok("a node ring comes out wound against the way UE1 stored it",
+      built.meshes.length === 1 && nz < 0 && m.vertices[0].normal[2] < 0,
+      "winding normal z " + nz + ", vertex normal " + m.vertices[0].normal.join(","));
+  }
+
+  const TO_DIR = installedTacticalOps()[0] || "";
+  ok("a Tactical Ops install was found", !!TO_DIR, TO_DIR || "set KF_TACTICALOPS to the folder holding TacticalOps\\Maps");
+
+  if (TO_DIR) {
+    const client = new TO.Client(TO_DIR);
+    const maps = client.maps();
+    ok("the client's packages index", maps.length >= 30 && client.has("engine"),
+      maps.length + " TO-* maps, " + client.byName.size + " packages");
+
+    // The oracle for the whole UE1 reader: the walk has to land exactly on the object's end.
+    let walked = 0, off = 0, first = "";
+    for (const m of maps) {
+      const pkg = TO.load(m.file);
+      try { toModel.readModel(pkg, toModel.findWorldModel(pkg)); walked++; }
+      catch (e) { off++; if (!first) first = m.name + ": " + e.message; }
+    }
+    ok("every stock map's world model walks to the byte", off === 0, walked + " maps" + (off ? ", " + off + " off: " + first : ""));
+
+    {
+      const pkg = TO.load(client.pathOf("TO-Crossfire"));
+      const model = toModel.readModel(pkg, toModel.findWorldModel(pkg));
+
+      // UE1's baked light is one bit per luxel per light, run end to end from DataOffset. Summing
+      // what every surface needs must account for LightBits exactly, or the runs are being read at
+      // the wrong stride and every shadow lands on the wrong surface.
+      let need = 0;
+      const seen = new Set();
+      for (const s of model.surfs) {
+        if (s.iLightMap < 0 || seen.has(s.iLightMap)) continue;
+        seen.add(s.iLightMap);
+        const lm = model.lightMap[s.iLightMap];
+        if (!lm) continue;
+        let lights = 0;
+        for (let i = lm.iLightActors; i >= 0 && i < model.lights.length && model.lights[i]; i++) lights++;
+        need += ((lm.uClamp + 7) >> 3) * lm.vClamp * lights;
+      }
+      ok("the shadow bit runs account for LightBits to the byte", need === model.lightBits.length,
+        need + " needed, " + model.lightBits.length + " stored");
+
+      // ...and the luxel grid has to be the surface's own: every vertex of every node must land
+      // inside its block under u = ((P - Base) . TextureU - Pan.X) / UScale.
+      let inside = 0, outside = 0;
+      for (const node of model.nodes) {
+        if (node.numVertices < 3) continue;
+        const surf = model.surfs[node.iSurf];
+        if (!surf || surf.iLightMap < 0) continue;
+        const lm = model.lightMap[surf.iLightMap];
+        const O = model.points[surf.pBase], U = model.vectors[surf.vTextureU], V = model.vectors[surf.vTextureV];
+        if (!lm || !O || !U || !V) continue;
+        for (const p of toModel.nodePoints(model, node)) {
+          const rel = [p[0] - O[0], p[1] - O[1], p[2] - O[2]];
+          const u = ((rel[0] * U[0] + rel[1] * U[1] + rel[2] * U[2]) - lm.pan[0]) / lm.uScale;
+          const v = ((rel[0] * V[0] + rel[1] * V[1] + rel[2] * V[2]) - lm.pan[1]) / lm.vScale;
+          if (u >= -0.5 && v >= -0.5 && u <= lm.uClamp - 0.5 && v <= lm.vClamp - 0.5) inside++; else outside++;
+        }
+      }
+      ok("every node vertex lands inside its own light mesh", outside === 0, inside + " inside, " + outside + " outside");
+
+      // A mover's geometry is its brush's UPolys, and 71 of the 400 in the stock maps carry a script
+      // state frame in front of them.
+      const { readMovers } = require("../src/tacticalops/movers");
+      const mv = readMovers(pkg, { scale: 1.3, materialFor: () => ({ ref: 1, origWidth: 256, origHeight: 256 }) });
+      ok("a map's movers read their brush polygons", mv.stats.failed === 0 && mv.movers.length > 0,
+        mv.movers.length + " movers, " + mv.stats.polys + " polygons, " + mv.stats.failed + " unreadable");
+
+      // A mover has to obey the same winding rule as the world (TO.4), and a door that does not is
+      // a door you see straight through from the corridor it closes. A mover brush is a solid, its
+      // mesh is centred on its own box, so a correctly wound triangle's right-hand normal points
+      // back INTO the brush. Thin and L-shaped brushes make that a majority rather than a rule -
+      // measured 120/26, 899/79 and 782/342 on Spynet, TerrorMansion and Crossfire, and those
+      // numbers swap the moment the winding is inverted.
+      let inward = 0, outward = 0;
+      for (const m of mv.movers) {
+        const mesh = m.mesh;
+        for (let i = 0; i + 2 < mesh.indices.length; i += 3) {
+          const p = [0, 1, 2].map((k) => mesh.vertices[mesh.indices[i + k]].pos);
+          const e1 = [0, 1, 2].map((k) => p[1][k] - p[0][k]);
+          const e2 = [0, 1, 2].map((k) => p[2][k] - p[0][k]);
+          const c = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+          const mid = [0, 1, 2].map((k) => (p[0][k] + p[1][k] + p[2][k]) / 3);
+          if (c[0] * mid[0] + c[1] * mid[1] + c[2] * mid[2] < 0) inward++; else outward++;
+        }
+      }
+      ok("a mover's triangles wind into the brush, like the world's nodes",
+        inward + outward > 0 && inward > 2 * outward, inward + " inward, " + outward + " outward");
+    }
+
+    // End to end: one map, written and read back by the independent verifier.
+    {
+      const out = path.join(require("os").tmpdir(), "kfmi-to-selfcheck.rom");
+      const res = toConvert.convert({ clientDir: TO_DIR, map: "TO-Crossfire", outFile: out, log: () => { } });
+      const v = verify(res.out);
+      const failed = v.report.split("\n").filter((l) => /^\s*FAIL/.test(l));
+      ok("TO-Crossfire converts and passes every invariant of the finished .rom", v.ok,
+        (res.size / 1048576).toFixed(2) + " MB, " + Math.round(res.stats.triangles) + " triangles, " +
+        res.lightmapPages + " lightmap page(s)" + (failed.length ? " -> " + failed[0].trim() : ""));
+      try { fs.unlinkSync(out); } catch (e) { /* left behind on a locked filesystem */ }
+    }
+  }
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

@@ -31,14 +31,33 @@ function parsePackage(buf) {
   const nameCount = r.u32(), nameOffset = r.u32();
   const exportCount = r.u32(), exportOffset = r.u32();
   const importCount = r.u32(), importOffset = r.u32();
-  const guid = buf.subarray(r.pos, r.pos + 16); r.skip(16);
-  const genCount = r.u32();
+  // Unreal Engine 1 wrote a heritage list where 68 and later write a GUID and generations. Three of
+  // Tactical Ops' texture packages are still version 61, and reading their two heritage words as a
+  // generation count runs the walk off the end of the file.
+  let guid = null;
   const generations = [];
-  for (let i = 0; i < genCount; i++) generations.push({ exportCount: r.u32(), nameCount: r.u32() });
+  if (fileVersion < 68) {
+    r.u32(); r.u32();                                     // heritageCount, heritageOffset
+  } else {
+    guid = buf.subarray(r.pos, r.pos + 16); r.skip(16);
+    const genCount = r.u32();
+    for (let i = 0; i < genCount; i++) generations.push({ exportCount: r.u32(), nameCount: r.u32() });
+  }
 
   r.pos = nameOffset;
   const names = [];
-  for (let i = 0; i < nameCount; i++) { const n = r.cidx(); names.push(buf.toString("latin1", r.pos, r.pos + n - 1)); r.pos += n; r.u32(); }
+  for (let i = 0; i < nameCount; i++) {
+    if (fileVersion < 64) {                               // a bare C string, no length in front of it
+      const z = buf.indexOf(0, r.pos);
+      names.push(buf.toString("latin1", r.pos, z));
+      r.pos = z + 1;
+    } else {
+      const n = r.cidx();
+      names.push(buf.toString("latin1", r.pos, r.pos + n - 1));
+      r.pos += n;
+    }
+    r.u32();                                              // name flags
+  }
 
   r.pos = importOffset;
   const imports = [];

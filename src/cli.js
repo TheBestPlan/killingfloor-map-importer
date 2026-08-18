@@ -66,6 +66,9 @@ function parseArgs(argv) {
     else if (t === "--light-gain") a.lightGain = parseFloat(argv[++i]);
     else if (t === "--light-floor") a.lightFloor = parseFloat(argv[++i]);
     else if (t === "--no-doors") a.doors = false;
+    // Tactical Ops: the movers (doors, gates, glass) and the water volumes, for bisecting a build.
+    else if (t === "--no-movers") a.movers = false;
+    else if (t === "--no-water") a.water = false;
     else if (t.startsWith("--")) throw new Error("unknown option " + t);
     else a._.push(t);
   }
@@ -125,6 +128,39 @@ function main() {
       patchLevel: a.patchLevel, maxTexture: a.maxTexture, textureFormat: a.textureFormat,
       ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightFloor: a.lightFloor,
       lightScale: a.lightScale, noSky: a.noSky, doors: a.doors,
+      emitPlayerStarts: !a.noSpawns, spawnLimit: a.spawnLimit,
+      log: (m) => console.log("  " + m),
+    });
+    if (a.verify) {
+      const v = verify(res.out);
+      console.log(v.report);
+      process.exit(v.ok ? 0 : 2);
+    }
+    return;
+  }
+
+  // Tactical Ops: a map is a .unr inside an installed client, or a loose one with the client
+  // alongside it for the textures.
+  if (/^(to|tacticalops|tactical ?ops)$/i.test(a.game || "")) {
+    const to = require("./tacticalops/convert");
+    const clientDir = a.clientDir || (a.map ? a._[0] : null);
+    const mapFile = a.map ? null : a._.find((t) => /\.unr$/i.test(t));
+    if (!mapFile && !a.map) {
+      console.log("usage: node src/cli.js --game to --client <Tactical Ops folder> --map TO-Crossfire");
+      console.log("       node src/cli.js --game to <TO-Crossfire.unr> --client <Tactical Ops folder>");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.3] [--verify]");
+      console.log("       [--light-gain 3] [--light-floor 20] [--ambient 32] [--glow 64]");
+      console.log("       [--no-light] [--no-sky] [--no-movers] [--no-water] [--spawn-limit N]");
+      process.exit(1);
+    }
+    if (a.out && !/\.rom$/i.test(a.out)) fs.mkdirSync(a.out, { recursive: true });
+    const res = to.convert({
+      clientDir, map: a.map, mapFile, mapName: a.name,
+      outFile: a.out && /\.rom$/i.test(a.out) ? a.out : null,
+      outDir: a.out && !/\.rom$/i.test(a.out) ? a.out : null,
+      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the TO one
+      ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightFloor: a.lightFloor,
+      lightScale: a.lightScale, noLight: a.noLight, noSky: a.noSky, movers: a.movers, water: a.water,
       emitPlayerStarts: !a.noSpawns, spawnLimit: a.spawnLimit,
       log: (m) => console.log("  " + m),
     });
