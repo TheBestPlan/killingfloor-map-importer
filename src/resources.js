@@ -51,6 +51,20 @@ function installedHalfLife() {
   return guesses.filter((p, i) => guesses.indexOf(p) === i && exists(path.join(p, "cstrike")));
 }
 
+// Installed Quake III Arena roots - a folder with baseq3\ under it. KF_QUAKE3 overrides the search,
+// which is what a GOG or a hand-unpacked copy needs: they land wherever the installer was pointed,
+// and unlike Steam nothing records where that was.
+function installedQuake3() {
+  const guesses = [
+    process.env.KF_QUAKE3,
+    steamApp("Quake 3 Arena"), steamApp("Quake III Arena"),
+    ...["ProgramFiles(x86)", "ProgramFiles"].map((v) => process.env[v]).filter(Boolean).flatMap((base) =>
+      ["GOG Galaxy/Games/Quake III Arena", "GOG.com/Quake III Arena", "Quake III Arena", "id Software/Quake III Arena"]
+        .map((rel) => path.join(base, rel))),
+  ].filter(Boolean);
+  return guesses.filter((p, i) => guesses.indexOf(p) === i && exists(path.join(p, "baseq3")));
+}
+
 // A folder the user picked in the UI ("my Counter-Strike is here"). They may point at the game root
 // (hl.exe next to cstrike/), at cstrike itself, or at a download pack - accept all three.
 function clientRoots(dir) {
@@ -109,4 +123,4 @@ function modFile(bspFile, rel, extra) {
   return null;
 }
 
-module.exports = { wadDirs, skyRoots, installedHalfLife, clientRoots, modFile, steamApp };
+module.exports = { wadDirs, skyRoots, installedHalfLife, installedQuake3, clientRoots, modFile, steamApp };

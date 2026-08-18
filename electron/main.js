@@ -26,6 +26,14 @@ const DEFAULT_SETTINGS = {
   terrainStep: 1,      // 1 keeps every terrain vertex, 2 halves the grid
   l2Ambient: 32,       // the zone: the light on the player and the zeds
   l2Glow: 40,          // AmbientGlow on the world's own actors
+  // Quake 3: the client folder, and the same two-way light split as Lineage 2. The defaults are the
+  // converter's own - see src/quake3/convert.js for why the scale cannot go above 1.94.
+  q3Dir: "",
+  q3Scale: 1.9,
+  q3Patch: 4,          // bezier tessellation level
+  q3Ambient: 40,
+  q3Glow: 96,
+  q3LightGain: 4,      // Quake 3 lightmaps are dark on purpose; this is what lifts them
 };
 
 function loadSettings() {
@@ -93,6 +101,32 @@ ipcMain.handle("l2:squares", (e, dir) => {
   try {
     const { Client } = require("../src/lineage2/package");
     return new Client(dir).squares().map((s) => ({ name: s.name, x: s.x, y: s.y }));
+  } catch (err) { return []; }
+});
+
+// The maps a Quake III client holds, across baseq3 and every mod folder beside it. Reading the
+// archives' central directories is enough - not one map is opened.
+ipcMain.handle("q3:maps", (e, dir) => {
+  try {
+    const { GameFs, searchDirs } = require("../src/quake3/pk3");
+    const out = [];
+    const seen = new Set();
+    for (const mod of fs.readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name)))
+      .map((d) => d.name)
+      .sort((a, b) => (a === "baseq3" ? -1 : b === "baseq3" ? 1 : a.localeCompare(b)))) {
+      let fsys;
+      try { fsys = new GameFs(searchDirs(dir, mod)); } catch (err) { continue; }
+      for (const m of fsys.list(/^maps\/.*\.bsp$/).sort()) {
+        const name = path.basename(m, ".bsp");
+        // A mod folder reads baseq3 underneath it, so its listing repeats every stock map.
+        if (seen.has(name)) continue;
+        seen.add(name);
+        out.push({ name, mod });
+      }
+      fsys.close();
+    }
+    return out;
   } catch (err) { return []; }
 });
 

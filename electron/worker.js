@@ -34,10 +34,35 @@ function convertL2(job, log) {
   });
 }
 
+// Quake 3: the input is a client folder and a map name inside its .pk3 archives, so this too has a
+// converter of its own rather than a flag on the GoldSrc one.
+function convertQ3(job, log) {
+  const q3 = require("../src/quake3/convert");
+  const res = q3.convert({
+    clientDir: job.clientDir, map: job.map, mod: job.mod, mapName: job.name || null,
+    outDir: job.outDir || null,
+    scale: job.q3Scale, patchLevel: job.patchLevel,
+    ambient: job.ambient, glow: job.glow, lightGain: job.lightGain,
+    emitPlayerStarts: job.emitPlayerStarts !== false,
+    log,
+  });
+  const v = verify(res.out);
+  for (const line of v.report.split("\n")) log(line);
+  process.send({
+    kind: "done", ok: v.ok, out: res.out, mapName: res.mapName,
+    size: fs.statSync(res.out).size,
+    nodes: res.model ? res.model.nodes.length : 0,
+    surfs: res.model ? res.model.surfs.length : 0,
+    lightMaps: 0, atlases: res.lightmapPages || 0,
+    textures: 0, missingTextures: 0,
+    quake3: { triangles: res.stats.triangles, meshes: res.meshes, pages: res.lightmapPages },
+  });
+}
+
 process.on("message", (job) => {
   const log = (t) => process.send({ kind: "log", text: t });
-  if (job.game === "l2") {
-    try { convertL2(job, log); } catch (e) {
+  if (job.game === "l2" || job.game === "q3") {
+    try { (job.game === "l2" ? convertL2 : convertQ3)(job, log); } catch (e) {
       log("ERROR: " + e.message);
       process.send({ kind: "done", ok: false, error: e.message });
     }

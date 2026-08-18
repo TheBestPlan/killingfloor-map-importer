@@ -350,20 +350,28 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
   // and 0.125 MB as DXT1, and the six of them were two thirds of a converted map's bytes. An alpha
   // channel rules it out - DXT1's one bit is not enough for a sprite.
   const dxt1 = !img.alpha && !(opts && opts.raw);
+  // A cut-out wall texture cannot be DXT1 (one bit of alpha) and must not be RGBA8 either: a Team
+  // Arena map carries 335 of them, and at 256x256 that is 44 MB of uncompressed pixels against
+  // 11 MB as DXT3. `dxt3` is for those - callers that need the exact pixels still get RGBA8.
+  const dxt3 = !dxt1 && !!(img.alpha && opts && opts.dxt3);
   const texRef = pkg.addExport({
     classRef: refs.Texture, name: sanitizeName(name), flags: refs.flagsGame,
     serialize: (p) => {
       const w = new Writer(img.width * img.height * 6 + 512);
       const pr = p.props(w);
-      pr.byte("Format", dxt1 ? 3 : 5);                // TEXF_DXT1 / TEXF_RGBA8
+      pr.byte("Format", dxt1 ? 3 : dxt3 ? 7 : 5);     // TEXF_DXT1 / TEXF_DXT3 / TEXF_RGBA8
       pr.int("USize", img.width);
       pr.int("VSize", img.height);
       pr.byte("UBits", log2(img.width));
       pr.byte("VBits", log2(img.height));
       pr.int("UClamp", img.width);
       pr.int("VClamp", img.height);
-      pr.byte("UClampMode", 1);                      // TC_Clamp
-      pr.byte("VClampMode", 1);
+      // Clamped by default, which is what a skybox face and a sprite need. A world texture is
+      // tiled by its UVs instead and clamping it smears the last column across the wall.
+      if (!(opts && opts.wrap)) {
+        pr.byte("UClampMode", 1);                    // TC_Clamp
+        pr.byte("VClampMode", 1);
+      }
       if (img.alpha) pr.bool("bAlphaTexture", true);
       pr.end();
       const chain = mipChain(px, img.width, img.height);
@@ -371,27 +379,30 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
       for (const m of chain) {
         // The pixels are BGRA in memory; the block encoder wants tight RGB.
         let data = m.data;
-        if (dxt1) {
+        if (dxt1 || dxt3) {
           const dxt = require("./dxt");
           const rgb = Buffer.alloc(m.width * m.height * 3);
+          const alpha = dxt3 ? Buffer.alloc(m.width * m.height) : null;
           for (let i = 0; i < m.width * m.height; i++) {
             rgb[i * 3] = m.data[i * 4 + 2]; rgb[i * 3 + 1] = m.data[i * 4 + 1]; rgb[i * 3 + 2] = m.data[i * 4];
+            if (alpha) alpha[i] = m.data[i * 4 + 3];
           }
           if (m.width >= 4 && m.height >= 4) {
-            data = dxt.encodeDXT1(rgb, m.width, m.height);
+            data = dxt3 ? dxt.encodeDXT3(rgb, m.width, m.height, alpha) : dxt.encodeDXT1(rgb, m.width, m.height);
           } else {
             // A level smaller than one block is still stored as one block, filled by repeating the
             // tiny image - the same padding the indexed path does, and the levels below 4x4 are not
             // optional (GOTCHAS 5.33).
-            const rgb4 = Buffer.alloc(48);
+            const rgb4 = Buffer.alloc(48), a4 = Buffer.alloc(16, 255);
             for (let y = 0; y < 4; y++) {
               for (let x = 0; x < 4; x++) {
                 const s = (Math.min(m.height - 1, y % m.height) * m.width + Math.min(m.width - 1, x % m.width)) * 4;
                 const d = (y * 4 + x) * 3;
                 rgb4[d] = m.data[s + 2]; rgb4[d + 1] = m.data[s + 1]; rgb4[d + 2] = m.data[s];
+                a4[y * 4 + x] = m.data[s + 3];
               }
             }
-            data = dxt.encodeDXT1(rgb4, 4, 4);
+            data = dxt3 ? dxt.encodeDXT3(rgb4, 4, 4, a4) : dxt.encodeDXT1(rgb4, 4, 4);
           }
         }
         const rec = w.lazySkip();

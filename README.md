@@ -4,11 +4,22 @@
 
 Imports maps from other games into **Killing Floor 1** as real `.rom` levels (Unreal Engine 2.5, file version 128 / licensee 29). The package is written from scratch — no KFEd, no intermediate formats, no manual steps: point it at a map file and get a `.rom` you can drop into `KillingFloor\Maps` and play.
 
-The source engine today is **GoldSrc BSP v30** — Counter-Strike 1.6, Half-Life and their mods. Reading the source game is a single module (`src/goldsrc/`) behind a shared build-and-write pipeline, and more games are the planned way for this to grow — see [Roadmap](#roadmap-more-source-games).
+Three source games so far. Reading each is a module of its own behind the same build-and-write pipeline, and more games are the way this grows — see [Roadmap](#roadmap-more-source-games).
+
+| source | what you point it at | notes |
+| --- | --- | --- |
+| **Counter-Strike 1.6 / Half-Life** — GoldSrc BSP v30 | a `.bsp` file | [`docs/games/goldsrc.md`](./docs/games/goldsrc.md) |
+| **Quake III Arena / Team Arena** — IBSP v46 | a client folder and a map name | [`docs/games/quake3.md`](./docs/games/quake3.md) |
+| **Lineage 2 (Interlude)** — Unreal Engine 2 packages | a client folder and a world square | [`docs/games/lineage2.md`](./docs/games/lineage2.md) |
 
 > The Unreal side was reverse-engineered by hand. The `UModel` v128 serialization order and the layout of the baked lightmaps inside it are documented nowhere else, and no public GoldSrc → Unreal converter exists. The write-up is in [`docs/RESEARCH.md`](./docs/RESEARCH.md); every pitfall that cost time is in [`docs/GOTCHAS.md`](./docs/GOTCHAS.md).
 
 ## Status
+
+Counter-Strike 1.6 is the deepest route and the table below is about it. Quake 3 carries geometry,
+textures, its own baked lightmap, the sky, doors and player starts: all 59 stock maps of Quake III
+Arena and Team Arena convert, pass every invariant of the finished `.rom` and run in the client —
+details and what is missing in [`docs/games/quake3.md`](./docs/games/quake3.md).
 
 | Capability | State |
 | --- | --- |
@@ -23,7 +34,9 @@ The source engine today is **GoldSrc BSP v30** — Counter-Strike 1.6, Half-Life
 ## What you need
 
 - A **Killing Floor 1** install (or the non-Steam SDK) — that is where the finished `.rom` goes.
-- A **Counter-Strike 1.6 / Half-Life** install — the stock `.wad` texture archives and the `gfx/env` skyboxes live there. A downloaded map is usually the `.bsp` on its own and needs them; without them every texture comes out magenta and the map has no sky.
+- The **source game**, for the parts a map does not contain:
+  - Counter-Strike 1.6 / Half-Life — the stock `.wad` texture archives and the `gfx/env` skyboxes. A downloaded map is usually the `.bsp` on its own and needs them; without them every texture comes out magenta and the map has no sky.
+  - Quake III Arena — the `.pk3` archives *are* the input: the map name is looked up in them, and so is every texture and `.shader` script it draws. Team Arena maps need the `missionpack` folder as well.
 - **Node.js ≥ 18** for the CLI. The desktop app needs nothing extra.
 
 No game content ships with this repo, in either direction. You point it at your own installs.
@@ -72,6 +85,33 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 
 Diagnostic switches, kept on purpose: `--no-sky`, `--no-extras`, `--no-light`, `--tree-translate`, `--spawn-index N`, `--bare` (level scaffolding and player starts only — for bisecting what KFEd chokes on, not playable). `KF_SPAWN_AT="x,y,z[,yaw]"` in the environment replaces every player start with one at that point — the way to land where the thing you want to look at is.
 
+### Quake III Arena / Team Arena
+
+A Quake 3 map is not a file you point at: the geometry is in the `.bsp`, and everything it draws is
+in the client's `.pk3` archives. So the input is the client folder and a map name.
+
+```bash
+node src/cli.js --game q3 --client "…/Quake III Arena" --map q3dm6 --out "…/KillingFloor/Maps" --verify
+node src/cli.js --game q3 --client "…/Quake III Arena" --map mpteam5 --mod missionpack --out …
+node src/cli.js --game q3 "…/maps/mymap.bsp" --client "…/Quake III Arena" --out …
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--client <dir>` | an installed Quake III Arena, if there is one | the folder holding `baseq3\` (`KF_QUAKE3` also sets it) |
+| `--map <name>` | — | map name inside the archives, without `.bsp` |
+| `--mod <name>` | `baseq3`, then `missionpack` | which folder to read; Team Arena is `missionpack` |
+| `--scale <n>` | `1.9` | Quake 3 units → Unreal units. Above 1.94 a stock staircase stops being climbable |
+| `--patch-level <n>` | `4` | how finely bezier patches are tessellated |
+| `--light-gain <n>` / `--light-floor <n>` | `4` / `20` | the map's own lightmap, scaled and floored on the way into the atlas |
+| `--ambient <n>` / `--glow <n>` | `40` / `96` | the zone lights the player, the mesh actors' glow lights the world |
+| `--max-texture <n>` | `512` | cap on a texture's size |
+| `--texture-format raw` | off | uncompressed textures instead of DXT — three times the file, no block artefacts |
+| `--no-doors` | off | leave `func_door` as static geometry instead of a `KFDoorMover` |
+
+`--out`, `--name`, `--scale`, `--light-scale`, `--no-sky`, `--no-spawns` and `--verify` mean the same
+thing as on the Counter-Strike route.
+
 ## What transfers
 
 | | How |
@@ -103,7 +143,7 @@ Faces that do not make it are the invisible tool textures — `aaatrigger`, `cli
 
 ## Roadmap: more source games
 
-The pipeline is split so that the source game is the only part that changes: `src/goldsrc/` reads the map, `src/build/` turns it into Unreal structures, `src/unreal/` writes the package. Adding a game means a new reader that produces the same intermediate shape — faces with UVs, textures, entities, a lightmap grid — and nothing under `src/unreal/` has to move. Quake / Quake II / Source-engine BSP variants are the obvious next candidates, since they are the same family of formats and land on the same `UModel` writer.
+The pipeline is split so that the source game is the only part that changes: `src/goldsrc/`, `src/quake3/` and `src/lineage2/` read the map, `src/build/` turns it into Unreal structures, `src/unreal/` writes the package. Adding a game means a new reader that produces the same intermediate shape — faces with UVs, textures, entities, a lightmap grid — and nothing under `src/unreal/` has to move. Quake, Quake II and the Source-engine BSP variants are the obvious next candidates, since they are the same family of formats and land on the same `UModel` writer.
 
 Contributions in that direction are welcome; start with [`docs/RESEARCH.md`](./docs/RESEARCH.md) for the target format and [`docs/GOTCHAS.md`](./docs/GOTCHAS.md) for the invariants that must not be broken.
 
@@ -113,15 +153,16 @@ Contributions in that direction are welcome; start with [`docs/RESEARCH.md`](./d
 pnpm test          # node test/selfcheck.js
 ```
 
-19 checks, all green. The load-bearing ones:
+58 checks, all green. The load-bearing ones:
 
 - the `UModel` v128 serializer re-writes **41 shipped Killing Floor maps byte for byte** (the only differences are signalling-NaN payloads that JS normalises);
 - compact index and `FString` round-trip;
 - across 25 Counter-Strike maps: the computed lightmap footprint fits the `LIGHTING` lump, face winding is `Newell == −normal`, face vertices lie on the face plane;
 - every shipped `UPolys` object fits the layout exactly (6054 objects, 37136 polys, 0 mismatched);
-- the DXT3 encoder, the `.mdl` and `.spr` readers, the Lanczos resampler.
+- across 36 Quake 3 maps: every face indexes inside the vertex and meshvert lumps, every surface shader resolves to an image, a sky or a fog volume (2733/2733), a tessellated bezier patch stays inside its control hull, and q3dm1 converts end to end and passes every invariant of the finished `.rom`;
+- the DXT3 encoder, the `.mdl` and `.spr` readers, the TGA and baseline-JPEG decoders, the Lanczos resampler.
 
-Game files are found from the usual Steam locations; without them those checks fail loudly rather than passing empty, so run `pnpm test` on a machine that has the games (CI only smoke-tests packaging).
+Game files are found from the usual Steam locations; `KF_QUAKE3` points at a Quake III Arena install that is not one of them (a GOG copy, say). Without them those checks fail loudly rather than passing empty, so run `pnpm test` on a machine that has the games (CI only smoke-tests packaging).
 
 `--verify` re-reads the finished `.rom` with an independent reader and checks 22 invariants: header, tables, serial ranges, reference resolution, unit-length node planes, vertices on their plane, winding, sections mirroring node polygons, lightmap ranges and UVs inside the atlas, well-formed DXT3, the tree actually being a tree, and a full mip chain on every texture. Measured, all clean:
 
@@ -152,6 +193,9 @@ killingfloor-map-importer/
 │  ├─ resources.js          where to find .wad files and the gfx/env sky
 │  ├─ backendB.js           backend B: .ase (mesh + light in vertex colours) + .t3d + 8-bit BMPs
 │  ├─ goldsrc/              source game: bsp.js, wad.js, mdl.js, spr.js, skybox.js
+│  ├─ quake3/               source game: convert.js, bsp.js, pk3.js, shader.js, image.js, texture.js,
+│  │                        mesh.js, sky.js
+│  ├─ lineage2/             source game: convert.js and the client readers around it
 │  ├─ build/                GoldSrc → Unreal: model.js, mesh.js, brushents.js, propmesh.js, skybox*, upscale.js
 │  └─ unreal/               package writer: package.js, writer.js, model.js, staticmesh.js, polys.js,
 │                           texture.js, dxt.js, read.js (independent reader used by --verify)
@@ -169,6 +213,7 @@ The notes are split the way the converter is: one file for the target, one per s
 - **[docs/RESEARCH.md](./docs/RESEARCH.md)** — the format research: what was measured on both sides, the `UModel` v128 serialization order, the three possible architectures and why this one, how the existing `KF-CS-*` ports were actually made.
 - **[docs/GOTCHAS.md](./docs/GOTCHAS.md)** — the Killing Floor side: every measured pitfall of writing UE2.5, including the invariants whose violation crashes the engine. Required reading before changing the writer, whatever you are reading from.
 - **[docs/games/goldsrc.md](./docs/games/goldsrc.md)** — what reading a Counter-Strike 1.6 `.bsp` costs: WADs, palettes and masking, sky images, brush entities, `.mdl` props, water.
+- **[docs/games/quake3.md](./docs/games/quake3.md)** — what reading a Quake III Arena client costs: the `.pk3` search path, IBSP v46, bezier patches, the `.shader` scripts and the one typo in id's own that costs 180 of them, the lightmap pages, why the scale is 1.9, and what Team Arena needs.
 - **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields, their layer blend and their grass, brush polygons, how a surface says it is blended, animated textures and particle systems, and why the sky cannot be carried across.
 - **[harness/README.md](./harness/README.md)** — checking a converted map in the real client.
 
@@ -176,11 +221,13 @@ The notes are split the way the converter is: one file for the target, one per s
 
 Converting a map does not give you the right to publish it. Valve permits moving assets between games in non-commercial mods but asks that **vanilla maps not be ported verbatim**; Tripwire requires that mods carry no third-party protected property without written permission and stay free. Both public Killing Floor ports of Counter-Strike maps (`KF-Dust_1`, `KF-Assault`) were removed from the Steam Workshop. Custom maps belong to their authors, not to Valve — permission is theirs to give.
 
+The same holds for Quake III Arena: id Software released the **engine** under the GPL and kept the **content** proprietary, so a converted `q3dm*` is a derivative of an asset that is still theirs, whatever the source licence says. Maps by their own authors belong to those authors.
+
 This importer ships no game content and produces nothing on its own: what it writes is derived from the map you feed it, and where that output may go is between you and whoever owns the source map.
 
 ## Disclaimer
 
-A personal reverse-engineering and format-interoperability project, published for research and educational purposes. Reverse-engineering the engine's package format may run against the game's EULA — you alone are responsible for how you use this code. Provided **as is**, without any warranty (see the license). Not affiliated with Tripwire Interactive, Epic Games or Valve.
+A personal reverse-engineering and format-interoperability project, published for research and educational purposes. Reverse-engineering the engine's package format may run against the game's EULA — you alone are responsible for how you use this code. Provided **as is**, without any warranty (see the license). Not affiliated with Tripwire Interactive, Epic Games, Valve, id Software or NCSOFT.
 
 ## License
 
@@ -190,4 +237,4 @@ Released under the **GNU General Public License v3.0 or later** (GPL-3.0-or-late
 
 ## Trademark notice
 
-Killing Floor and Unreal are trademarks of Tripwire Interactive and Epic Games; Counter-Strike, Half-Life and GoldSrc are trademarks of Valve. This is an unofficial, fan-made tool, not affiliated with or endorsed by any of them.
+Killing Floor and Unreal are trademarks of Tripwire Interactive and Epic Games; Counter-Strike, Half-Life and GoldSrc are trademarks of Valve; Quake and Quake III Arena are trademarks of id Software / ZeniMax; Lineage 2 is a trademark of NCSOFT. This is an unofficial, fan-made tool, not affiliated with or endorsed by any of them.

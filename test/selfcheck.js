@@ -425,5 +425,146 @@ console.log("\nLineage 2 decoration scatter");
   const buried = interiors(box(0, [0, 0, 0], [512, 512, 256]), hullsOf(rock), hullsOf(box(0, [0, 0, 0], [512, 512, 256])), [], {});
   ok("a floor buried in an additive brush is not drawn", buried.faces === 1, buried.faces + " flat face(s), the ceiling");
 }
+console.log("\nQuake 3: archives, BSP, shaders, images");
+{
+  const { installedQuake3 } = require("../src/resources");
+  const { GameFs, searchDirs } = require("../src/quake3/pk3");
+  const Q3 = require("../src/quake3/bsp");
+  const { parseShaders, ShaderSet } = require("../src/quake3/shader");
+  const image = require("../src/quake3/image");
+  const q3convert = require("../src/quake3/convert");
+  const { verify } = require("../src/verify");
+
+  const Q3_DIR = installedQuake3()[0] || "";
+  ok("a Quake III Arena install was found", !!Q3_DIR, Q3_DIR || "set KF_QUAKE3 to the folder holding baseq3\\");
+
+  // The one check that needs no game files: the parser bug that cost most of a stock map's shaders.
+  // `blendFunc GL_add` is a one-word blend spelled like a two-word one - id's own typo in
+  // sfx.shader - and consuming a second token for it swallowed the stage's closing brace, which
+  // desynced every shader after it in the file.
+  {
+    const text = 'textures/a/one\n{\n{\nmap x.tga\nblendFunc GL_add\n}\n}\ntextures/a/two\n{\nqer_editorimage y.tga\n}\n';
+    const sh = parseShaders(text);
+    ok("a one-word blendFunc does not swallow the stage's closing brace",
+      sh.size === 2 && sh.has("textures/a/two"), sh.size + " shader(s): " + [...sh.keys()].join(" "));
+    ok("a stage's image is read", (sh.get("textures/a/one").stages[0] || {}).map === "x.tga");
+    ok("an alphaFunc stage is a cut-out",
+      parseShaders("t/x\n{\n{\nmap a.tga\nalphaFunc GE128\n}\n}\n").get("t/x").stages[0].alphaFunc === "GE128");
+  }
+
+  if (Q3_DIR) {
+    const fsys = new GameFs(searchDirs(Q3_DIR, "baseq3"));
+    const maps = fsys.list(/^maps\/.*\.bsp$/).sort();
+    ok("the client's .pk3 archives read", maps.length >= 30 && fsys.list(/^scripts\/.*\.shader$/).length >= 20,
+      maps.length + " maps, " + fsys.list(/^scripts\/.*\.shader$/).length + " shader scripts, " + fsys.index.size + " files");
+
+    const map = new Q3.Bsp(fsys.read("maps/q3dm1.bsp"), "q3dm1");
+    ok("q3dm1 is IBSP v46", map.version === 46, "version " + map.version);
+    ok("the lightmap lump is a whole number of 128x128 pages",
+      map.lumps[Q3.LUMP.LIGHTMAPS].len === map.lightmapCount * Q3.LIGHTMAP_SIZE * Q3.LIGHTMAP_SIZE * 3,
+      map.lightmapCount + " pages");
+
+    // Every face has to index inside the lumps it points at, or the mesh builder reads garbage.
+    let badRange = 0, badLm = 0;
+    for (const f of map.faces) {
+      if (f.vertex < 0 || f.vertex + f.nVertexes > map.vertexCount) badRange++;
+      if (f.meshvert < 0 || f.meshvert + f.nMeshverts > map.meshverts.length) badRange++;
+      if (f.lmIndex >= map.lightmapCount) badLm++;
+      for (let i = 0; i < f.nMeshverts; i++) {
+        if (f.vertex + map.meshverts[f.meshvert + i] >= map.vertexCount) { badRange++; break; }
+      }
+    }
+    ok("every face indexes inside the vertex and meshvert lumps", badRange === 0, badRange + " bad of " + map.faces.length);
+    ok("every face's lightmap index is in range", badLm === 0, badLm + " bad");
+
+    // A bezier patch lies inside the convex hull of its control points, and its corners ARE control
+    // points. Both hold for any tessellation level, which is what makes them worth asserting.
+    {
+      const patch = map.faces.find((f) => f.type === Q3.FACE.PATCH);
+      const ctrl = [];
+      for (let i = 0; i < patch.nVertexes; i++) ctrl.push(map.vertex(patch.vertex + i).pos);
+      const lo = [0, 1, 2].map((k) => Math.min(...ctrl.map((p) => p[k])));
+      const hi = [0, 1, 2].map((k) => Math.max(...ctrl.map((p) => p[k])));
+      const t = Q3.tessellatePatch(map, patch, 4);
+      const outside = t.verts.filter((v) => [0, 1, 2].some((k) => v.pos[k] < lo[k] - 0.01 || v.pos[k] > hi[k] + 0.01));
+      ok("a tessellated patch stays inside its control hull", outside.length === 0,
+        t.verts.length + " vertices, " + outside.length + " outside");
+      const corner = t.verts[0].pos, c0 = ctrl[0];
+      ok("a patch's first corner is its first control point",
+        [0, 1, 2].every((k) => Math.abs(corner[k] - c0[k]) < 0.01), corner.map(Math.round).join(","));
+      ok("tessellation level n gives (n+1)^2 vertices per sub-patch",
+        t.verts.length === ((patch.size[0] - 1) / 2) * ((patch.size[1] - 1) / 2) * 25,
+        patch.size.join("x") + " control points -> " + t.verts.length + " vertices");
+    }
+
+    // Every surface a stock map draws has to end up with a picture, or the map converts to magenta.
+    {
+      const shaders = new ShaderSet(fsys);
+      let used = 0, resolved = 0;
+      const missing = [];
+      for (const m of maps) {
+        let b;
+        try { b = new Q3.Bsp(fsys.read(m), m); } catch (e) { continue; }
+        const seen = new Set();
+        for (const f of b.faces) seen.add(f.texture);
+        for (const i of seen) {
+          const t = b.textures[i];
+          if (!t || t.tool) continue;
+          used++;
+          const r = shaders.resolve(t.name, fsys);
+          // A fog volume has no picture by design; the sky is a cube of its own.
+          if (r.file || r.kind === "sky" || (r.shader && r.shader.params.has("fog"))) resolved++;
+          else if (missing.length < 8) missing.push(t.name);
+        }
+      }
+      ok("every stock surface shader resolves to an image, a sky or a fog volume",
+        resolved === used, resolved + "/" + used + (missing.length ? " missing: " + missing.join(" ") : ""));
+    }
+
+    // Both image formats, against the sizes their own headers declare.
+    {
+      const one = (re) => fsys.list(re).find((f) => /^textures\//.test(f));
+      let jpgOk = 0, tgaOk = 0, tried = 0;
+      for (const f of [one(/\.jpg$/), one(/\.tga$/)].filter(Boolean)) {
+        tried++;
+        const buf = fsys.read(f);
+        const im = image.decode(f, buf);
+        const w = /\.tga$/.test(f) ? buf.readUInt16LE(12) : null;
+        const good = im.width > 0 && im.height > 0 && im.rgb.length === im.width * im.height * 3 &&
+          (w === null || w === im.width);
+        if (/\.jpg$/.test(f)) jpgOk += good ? 1 : 0; else tgaOk += good ? 1 : 0;
+      }
+      ok("a .jpg and a .tga decode to their declared size", tried === 2 && jpgOk === 1 && tgaOk === 1,
+        "jpg " + jpgOk + ", tga " + tgaOk);
+      // A synthetic 32-bit TGA, top-down, so the pixel order is checked and not just the size.
+      const head = Buffer.alloc(18);
+      head[2] = 2; head.writeUInt16LE(2, 12); head.writeUInt16LE(1, 14); head[16] = 32; head[17] = 0x20;
+      const body = Buffer.from([10, 20, 30, 40, 50, 60, 70, 80]);        // BGRA, BGRA
+      const t = image.decodeTga(Buffer.concat([head, body]));
+      ok("TGA is BGRA on disk and RGB out", t.rgb[0] === 30 && t.rgb[1] === 20 && t.rgb[2] === 10 && t.alpha[0] === 40,
+        [t.rgb[0], t.rgb[1], t.rgb[2], t.alpha[0]].join(","));
+    }
+    fsys.close();
+
+    // A Quake 3 unit against Killing Floor's own physics: the engine's MaxStepHeight is 35 Unreal
+    // units and Quake 3's STEPSIZE is 18 map units, so a scale over 35/18 makes a stock staircase
+    // unclimbable and cuts the player off from half of q3dm7.
+    ok("the default scale keeps a Quake 3 step climbable in Killing Floor",
+      q3convert.DEFAULTS.scale * 18 <= 35, "18 x " + q3convert.DEFAULTS.scale + " = " + (18 * q3convert.DEFAULTS.scale) + " uu, limit 35");
+
+    // End to end: one map, written and read back by the independent verifier.
+    {
+      const out = path.join(require("os").tmpdir(), "kfmi-q3dm1-selfcheck.rom");
+      const res = q3convert.convert({ clientDir: Q3_DIR, map: "q3dm1", outFile: out, log: () => { } });
+      const v = verify(res.out);
+      const failed = v.report.split("\n").filter((l) => /^\s*FAIL/.test(l));
+      ok("q3dm1 converts and passes every invariant of the finished .rom", v.ok,
+        (res.size / 1048576).toFixed(2) + " MB, " + res.stats.triangles + " triangles, " +
+        res.lightmapPages + " lightmap pages" + (failed.length ? " -> " + failed[0].trim() : ""));
+      try { fs.unlinkSync(out); } catch (e) { /* left behind on a locked filesystem */ }
+    }
+  }
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

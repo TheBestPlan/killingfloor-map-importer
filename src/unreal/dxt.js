@@ -36,15 +36,60 @@ function encodeDXT3(rgb, width, height, alpha) {
           out.writeUInt16LE(lo4, o + j * 2);
         }
       }
-      // colour endpoints: extremes along the block's dominant axis, approximated by luminance
-      let lo = 0, hi = 0, loL = 1e9, hiL = -1e9;
+      // Colour endpoints: the extremes along the block's OWN principal axis.
+      //
+      // Luminance is the wrong axis whenever a block's colours do not vary along it. Taking the
+      // darkest and brightest texel and using their full RGB puts the interpolation line through
+      // colours the block never contained, and on a red stone wall whose darkest texel happens to
+      // be greenish that line runs red-to-green: the four palette entries are then all off-hue and
+      // the wall wears green and magenta confetti. Measured on Quake 3's gothic_block set, where it
+      // was the single worst artefact in a converted map.
+      //
+      // The fix is the standard one: mean, covariance, a few power iterations for the dominant
+      // eigenvector, then project. Eight iterations converge on any 16-texel block, and the whole
+      // thing costs about as much as the index search that follows it.
+      const mean = [0, 0, 0];
+      for (let k = 0; k < 16; k++) for (let c = 0; c < 3; c++) mean[c] += px[k][c] / 16;
+      const cov = [0, 0, 0, 0, 0, 0];        // xx, xy, xz, yy, yz, zz
       for (let k = 0; k < 16; k++) {
-        const L = px[k][0] * 299 + px[k][1] * 587 + px[k][2] * 114;
-        if (L < loL) { loL = L; lo = k; }
-        if (L > hiL) { hiL = L; hi = k; }
+        const dr = px[k][0] - mean[0], dg = px[k][1] - mean[1], db = px[k][2] - mean[2];
+        cov[0] += dr * dr; cov[1] += dr * dg; cov[2] += dr * db;
+        cov[3] += dg * dg; cov[4] += dg * db; cov[5] += db * db;
       }
-      let c0 = to565(px[hi][0], px[hi][1], px[hi][2]);
-      let c1 = to565(px[lo][0], px[lo][1], px[lo][2]);
+      // Start from the covariance ROW with the most weight, not from the sum of the rows: on a
+      // block whose colours run red-up/blue-down the rows cancel exactly and the sum is the zero
+      // vector, which iterates to nothing and silently falls back to the luminance axis this is
+      // here to replace (caught by the round-trip check in test/selfcheck.js).
+      const rows = [[cov[0], cov[1], cov[2]], [cov[1], cov[3], cov[4]], [cov[2], cov[4], cov[5]]];
+      let best = rows[0], bestN = -1;
+      for (const r of rows) {
+        const n = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+        if (n > bestN) { bestN = n; best = r; }
+      }
+      let ax = best[0], ay = best[1], az = best[2];
+      for (let it = 0; it < 8; it++) {
+        const nx = cov[0] * ax + cov[1] * ay + cov[2] * az;
+        const ny = cov[1] * ax + cov[3] * ay + cov[4] * az;
+        const nz = cov[2] * ax + cov[4] * ay + cov[5] * az;
+        const m = Math.max(Math.abs(nx), Math.abs(ny), Math.abs(nz));
+        if (m < 1e-6) break;
+        ax = nx / m; ay = ny / m; az = nz / m;
+      }
+      const len = Math.hypot(ax, ay, az);
+      // A block of one colour has no axis; luminance is as good as anything for the degenerate case.
+      if (len < 1e-6) { ax = 0.299; ay = 0.587; az = 0.114; }
+      else { ax /= len; ay /= len; az /= len; }
+      let tLo = Infinity, tHi = -Infinity;
+      for (let k = 0; k < 16; k++) {
+        const t = (px[k][0] - mean[0]) * ax + (px[k][1] - mean[1]) * ay + (px[k][2] - mean[2]) * az;
+        if (t < tLo) tLo = t;
+        if (t > tHi) tHi = t;
+      }
+      const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+      const endpoint = (t) => [clamp255(mean[0] + ax * t), clamp255(mean[1] + ay * t), clamp255(mean[2] + az * t)];
+      const eHi = endpoint(tHi), eLo = endpoint(tLo);
+      let c0 = to565(eHi[0], eHi[1], eHi[2]);
+      let c1 = to565(eLo[0], eLo[1], eLo[2]);
       if (c0 === c1) {
         // flat block: single colour, indices all 0
         out.writeUInt16LE(c0, o + 8); out.writeUInt16LE(c1, o + 10);
@@ -52,21 +97,53 @@ function encodeDXT3(rgb, width, height, alpha) {
         o += 16; continue;
       }
       if (c0 < c1) { const t = c0; c0 = c1; c1 = t; }
-      const e0 = from565(c0), e1 = from565(c1);
-      const pal = [
-        e0, e1,
-        [(2 * e0[0] + e1[0]) / 3, (2 * e0[1] + e1[1]) / 3, (2 * e0[2] + e1[2]) / 3],
-        [(e0[0] + 2 * e1[0]) / 3, (e0[1] + 2 * e1[1]) / 3, (e0[2] + 2 * e1[2]) / 3],
-      ];
-      let bits = 0;
-      for (let k = 15; k >= 0; k--) {
-        let best = 0, bestD = Infinity;
-        for (let p = 0; p < 4; p++) {
-          const d = (px[k][0] - pal[p][0]) ** 2 + (px[k][1] - pal[p][1]) ** 2 + (px[k][2] - pal[p][2]) ** 2;
-          if (d < bestD) { bestD = d; best = p; }
+
+      // Assign indices, then re-solve the endpoints for the indices just assigned, twice.
+      //
+      // 5:6:5 quantisation of the endpoints is the whole artefact: it shifts a block's hue by up to
+      // 3% in red and blue against 1.5% in green, uniformly across all sixteen texels, so a wall of
+      // detailed stone comes out in block-sized patches of green and magenta. Refitting after the
+      // rounding lets the endpoints land where they cancel the shift instead of carrying it.
+      const idx = new Int32Array(16);
+      const palOf = (a, b) => [a, b,
+        [(2 * a[0] + b[0]) / 3, (2 * a[1] + b[1]) / 3, (2 * a[2] + b[2]) / 3],
+        [(a[0] + 2 * b[0]) / 3, (a[1] + 2 * b[1]) / 3, (a[2] + 2 * b[2]) / 3]];
+      // How much each endpoint weighs in each palette entry.
+      const WA = [1, 0, 2 / 3, 1 / 3], WB = [0, 1, 1 / 3, 2 / 3];
+      const assign = (pal) => {
+        for (let k = 0; k < 16; k++) {
+          let bp = 0, bd = Infinity;
+          for (let p = 0; p < 4; p++) {
+            const d = (px[k][0] - pal[p][0]) ** 2 + (px[k][1] - pal[p][1]) ** 2 + (px[k][2] - pal[p][2]) ** 2;
+            if (d < bd) { bd = d; bp = p; }
+          }
+          idx[k] = bp;
         }
-        bits = (bits << 2) | best;
+      };
+      assign(palOf(from565(c0), from565(c1)));
+      for (let pass = 0; pass < 2; pass++) {
+        let aa = 0, ab = 0, bb = 0;
+        const ac = [0, 0, 0], bc = [0, 0, 0];
+        for (let k = 0; k < 16; k++) {
+          const a = WA[idx[k]], b = WB[idx[k]];
+          aa += a * a; ab += a * b; bb += b * b;
+          for (let c = 0; c < 3; c++) { ac[c] += a * px[k][c]; bc[c] += b * px[k][c]; }
+        }
+        const det = aa * bb - ab * ab;
+        if (Math.abs(det) < 1e-6) break;                 // every texel on one endpoint: nothing to fit
+        const n0 = [0, 0, 0], n1 = [0, 0, 0];
+        for (let c = 0; c < 3; c++) {
+          n0[c] = clamp255((bb * ac[c] - ab * bc[c]) / det);
+          n1[c] = clamp255((aa * bc[c] - ab * ac[c]) / det);
+        }
+        let q0 = to565(n0[0], n0[1], n0[2]), q1 = to565(n1[0], n1[1], n1[2]);
+        if (q0 === q1) break;
+        if (q0 < q1) { const t = q0; q0 = q1; q1 = t; }
+        c0 = q0; c1 = q1;
+        assign(palOf(from565(c0), from565(c1)));
       }
+      let bits = 0;
+      for (let k = 15; k >= 0; k--) bits = (bits << 2) | idx[k];
       out.writeUInt16LE(c0, o + 8); out.writeUInt16LE(c1, o + 10);
       out.writeUInt32LE(bits >>> 0, o + 12);
       o += 16;

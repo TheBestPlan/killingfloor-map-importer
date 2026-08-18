@@ -58,6 +58,14 @@ function parseArgs(argv) {
     else if (t === "--no-blend") a.blend = false;
     else if (t === "--carve") a.carve = true;
     else if (t === "--hull-max") a.hullMax = parseInt(argv[++i], 10);
+    // Quake 3: the map is a name inside the client's .pk3 archives, or a loose .bsp.
+    else if (t === "--map") a.map = argv[++i];
+    else if (t === "--mod") a.mod = argv[++i];
+    else if (t === "--patch-level") a.patchLevel = parseInt(argv[++i], 10);
+    else if (t === "--max-texture") a.maxTexture = parseInt(argv[++i], 10);
+    else if (t === "--light-gain") a.lightGain = parseFloat(argv[++i]);
+    else if (t === "--light-floor") a.lightFloor = parseFloat(argv[++i]);
+    else if (t === "--no-doors") a.doors = false;
     else if (t.startsWith("--")) throw new Error("unknown option " + t);
     else a._.push(t);
   }
@@ -85,6 +93,39 @@ function main() {
       scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the L2 one
       terrainStep: a.terrainStep, ambient: a.ambient, glow: a.glow, grass: a.grass, blend: a.blend,
       carve: a.carve,
+      log: (m) => console.log("  " + m),
+    });
+    if (a.verify) {
+      const v = verify(res.out);
+      console.log(v.report);
+      process.exit(v.ok ? 0 : 2);
+    }
+    return;
+  }
+
+  // Quake 3 / Team Arena: a map is a name inside the client's .pk3 archives, or a loose .bsp with
+  // the client alongside it for the textures.
+  if (/^(q3|quake3?|quake ?iii)$/i.test(a.game || "")) {
+    const q3 = require("./quake3/convert");
+    const clientDir = a.clientDir || (a.map ? a._[0] : null);
+    const bspFile = a.map ? null : a._.find((t) => /\.bsp$/i.test(t));
+    if (!bspFile && !a.map) {
+      console.log("usage: node src/cli.js --game q3 --client <Quake III folder> --map q3dm6 [--mod missionpack]");
+      console.log("       node src/cli.js --game q3 <map.bsp> --client <Quake III folder>");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.9] [--patch-level 4] [--verify]");
+      console.log("       [--light-gain 4] [--light-floor 20] [--ambient 40] [--glow 96] [--no-sky] [--no-doors]");
+      process.exit(1);
+    }
+    if (a.out && !/\.rom$/i.test(a.out)) fs.mkdirSync(a.out, { recursive: true });
+    const res = q3.convert({
+      clientDir, map: a.map, mod: a.mod, bspFile, mapName: a.name,
+      outFile: a.out && /\.rom$/i.test(a.out) ? a.out : null,
+      outDir: a.out && !/\.rom$/i.test(a.out) ? a.out : null,
+      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the Q3 one
+      patchLevel: a.patchLevel, maxTexture: a.maxTexture, textureFormat: a.textureFormat,
+      ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightFloor: a.lightFloor,
+      lightScale: a.lightScale, noSky: a.noSky, doors: a.doors,
+      emitPlayerStarts: !a.noSpawns, spawnLimit: a.spawnLimit,
       log: (m) => console.log("  " + m),
     });
     if (a.verify) {

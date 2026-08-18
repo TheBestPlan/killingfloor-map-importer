@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld("api", {
   reveal: (f) => ipcRenderer.invoke("reveal", f),
   convert: (job) => ipcRenderer.invoke("convert", job),
   listSquares: (dir) => ipcRenderer.invoke("l2:squares", dir),
+  listQ3Maps: (dir) => ipcRenderer.invoke("q3:maps", dir),
   onProgress: (cb) => ipcRenderer.on("progress", (e, m) => cb(m)),
 });

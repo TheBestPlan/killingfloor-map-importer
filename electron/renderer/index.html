@@ -76,6 +76,7 @@
       <legend data-i18n="legend.game">Source game</legend>
       <select id="game">
         <option value="cs" data-i18n="opt.gameCs">Counter-Strike 1.6 — GoldSrc .bsp</option>
+        <option value="q3" data-i18n="opt.gameQ3">Quake III Arena / Team Arena — client maps</option>
         <option value="l2" data-i18n="opt.gameL2">Lineage 2 — client world squares</option>
       </select>
     </fieldset>
@@ -84,6 +85,36 @@
     <div data-game="cs">
       <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
       <ul class="files" id="files"></ul>
+    </div>
+
+    <!-- Quake 3: a client folder, and the maps its .pk3 archives hold. -->
+    <div data-game="q3">
+      <fieldset>
+        <legend data-i18n="legend.q3">Quake III Arena client</legend>
+        <label data-i18n="label.l2Dir">Client folder</label>
+        <div class="row"><input type="text" id="q3Dir" data-i18n-ph="ph.q3Dir" placeholder="…\Quake III Arena (folder with baseq3\)"><button id="pickQ3">…</button></div>
+        <div class="hint" data-i18n="hint.q3Dir">The folder holding baseq3\, and missionpack\ if Team Arena is installed. The maps and everything they draw are read straight out of the .pk3 archives.</div>
+        <label data-i18n="label.q3Maps">Maps</label>
+        <ul class="files" id="q3maps"></ul>
+        <div class="hint" data-i18n="hint.q3Maps">Click to pick; picked maps convert in order. Team Arena's own maps are marked with the folder they come from.</div>
+      </fieldset>
+      <fieldset>
+        <legend data-i18n="legend.l2Conv">Conversion</legend>
+        <label data-i18n="label.q3Scale">Scale (Quake 3 units &rarr; Killing Floor units)</label>
+        <input type="number" id="q3Scale" step="0.1" min="0.1" max="1.94">
+        <div class="hint" data-i18n="hint.q3Scale">1.9 is the ceiling, not a preference: above 35/18 = 1.94 a stock 16-unit staircase is taller than the engine's step height and the player cannot climb it.</div>
+        <label data-i18n="label.q3Patch">Curve detail (bezier patches)</label>
+        <input type="number" id="q3Patch" step="1" min="1" max="8">
+        <div class="hint" data-i18n="hint.q3Patch">Every arch, pipe and hill in the game is a patch. 4 is the default; 2 halves their triangles and shows the facets.</div>
+        <label data-i18n="label.q3LightGain">Lightmap gain</label>
+        <input type="number" id="q3LightGain" step="0.5" min="0.5" max="16">
+        <div class="hint" data-i18n="hint.q3LightGain">Quake 3's baked light is dark on purpose — its own renderer doubles it on load and the gamma ramp lifts it again. 4 puts it where this engine wants it.</div>
+        <label data-i18n="label.l2Ambient">Zone ambient (the player and the zeds)</label>
+        <input type="number" id="q3Ambient" step="1" min="0" max="255">
+        <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
+        <input type="number" id="q3Glow" step="1" min="0" max="254">
+        <div class="hint" data-i18n="hint.l2Light">The two add up to what a surface is lit by. Splitting them keeps the world right without the player glowing.</div>
+      </fieldset>
     </div>
 
     <!-- Lineage 2: a client folder, and the squares of the world it holds. -->
@@ -183,11 +214,17 @@ const I18N = window.KFI18N;
 const t = (k, v) => I18N.t(k, v);
 let files = [];        // { path, name, stateKey }
 let squares = [];      // { name, x, y, picked, stateKey } - Lineage 2 world squares
+let q3maps = [];       // { name, mod, picked, stateKey }  - Quake 3 maps inside the client's .pk3s
 let settings = null;
 let lastOut = null;
 
-const isL2 = () => settings && settings.game === "l2";
-const queued = () => (isL2() ? squares.filter((s) => s.picked) : files);
+const game = () => (settings && settings.game) || "cs";
+const isL2 = () => game() === "l2";
+const isQ3 = () => game() === "q3";
+// Two of the three games have no files to drop: their queue is a list of names picked out of a
+// client folder, and the picked rows ARE the queue.
+const picks = () => (isL2() ? squares : isQ3() ? q3maps : null);
+const queued = () => (picks() ? picks().filter((s) => s.picked) : files);
 
 function renderFiles() {
   $("files").innerHTML = files.map((f, i) =>
@@ -195,30 +232,34 @@ function renderFiles() {
   $("go").disabled = !queued().length || busy;
 }
 
-// The square list doubles as the queue: clicking a row picks it, and the same status column the
+// The picked list doubles as the queue: clicking a row picks it, and the same status column the
 // file list uses reports what happened to it.
-function renderSquares() {
-  $("squares").innerHTML = squares.map((s, i) =>
-    `<li data-sq="${i}" style="cursor:pointer${s.picked ? ";color:var(--text)" : ""}">` +
-    `<span class="n">${s.picked ? "&#9679; " : "&#9675; "}${s.name}</span>` +
+function renderPicks(elId, arr, attr) {
+  const el = $(elId);
+  if (!el) return;
+  el.innerHTML = arr.map((s, i) =>
+    `<li data-${attr}="${i}" style="cursor:pointer${s.picked ? ";color:var(--text)" : ""}">` +
+    `<span class="n">${s.picked ? "&#9679; " : "&#9675; "}${s.name}${s.mod && s.mod !== "baseq3" ? " (" + s.mod + ")" : ""}</span>` +
     `<span class="s ${s.cls || ""}">${s.stateKey ? t(s.stateKey) : ""}</span></li>`).join("");
-  $("squares").querySelectorAll("[data-sq]").forEach((el) => {
-    el.onclick = () => { const s = squares[+el.dataset.sq]; s.picked = !s.picked; renderSquares(); renderFiles(); };
+  el.querySelectorAll("[data-" + attr + "]").forEach((n) => {
+    n.onclick = () => { const s = arr[+n.dataset[attr]]; s.picked = !s.picked; renderPicks(elId, arr, attr); renderFiles(); };
   });
   $("go").disabled = !queued().length || busy;
 }
+const renderSquares = () => renderPicks("squares", squares, "sq");
+const renderQ3Maps = () => renderPicks("q3maps", q3maps, "q3");
 
 // Only the blocks belonging to the chosen game stay in the window.
 function applyGame() {
-  const g = (settings && settings.game) || "cs";
+  const g = game();
   document.querySelectorAll("[data-game]").forEach((n) => { n.style.display = n.dataset.game === g ? "" : "none"; });
   // The header and the greeting name the game as well - a window that says "GoldSrc BSP" while it
   // is reading a Lineage 2 client is a window telling the user something false.
-  I18N.setText("sub", g === "l2" ? "head.subL2" : "head.subCs");
+  I18N.setText("sub", g === "l2" ? "head.subL2" : g === "q3" ? "head.subQ3" : "head.subCs");
   // The greeting carries markup, so it goes through data-i18n-html rather than setText.
   const intro = $("intro");
   if (intro) {
-    intro.dataset.i18nHtml = g === "l2" ? "log.introL2" : "log.intro";
+    intro.dataset.i18nHtml = g === "l2" ? "log.introL2" : g === "q3" ? "log.introQ3" : "log.intro";
     intro.innerHTML = t(intro.dataset.i18nHtml);
   }
   renderFiles();
@@ -232,6 +273,16 @@ async function loadSquares() {
     squares = list.map((s) => ({ ...s, picked: false }));
   }
   renderSquares();
+}
+
+async function loadQ3Maps() {
+  const dir = $("q3Dir").value.trim();
+  q3maps = [];
+  if (dir) {
+    const list = await window.api.listQ3Maps(dir);
+    q3maps = list.map((s) => ({ ...s, picked: false }));
+  }
+  renderQ3Maps();
 }
 function renderWads() {
   $("wads").innerHTML = (settings.wadDirs || []).map((d, i) =>
@@ -258,6 +309,12 @@ function save() {
   settings.l2Carve = $("l2Carve").checked;
   settings.l2Ambient = parseInt($("l2Ambient").value, 10);
   settings.l2Glow = parseInt($("l2Glow").value, 10);
+  settings.q3Dir = $("q3Dir").value.trim();
+  settings.q3Scale = parseFloat($("q3Scale").value) || 1.9;
+  settings.q3Patch = parseInt($("q3Patch").value, 10) || 4;
+  settings.q3LightGain = parseFloat($("q3LightGain").value) || 4;
+  settings.q3Ambient = parseInt($("q3Ambient").value, 10);
+  settings.q3Glow = parseInt($("q3Glow").value, 10);
   settings.outDir = $("outDir").value.trim();
   settings.csDir = $("csDir").value.trim();
   settings.scale = parseFloat($("scale").value) || 2;
@@ -281,7 +338,7 @@ I18N.LANGS.forEach(([code, label]) => {
 });
 $("lang").addEventListener("change", () => { I18N.apply($("lang").value); settings.lang = $("lang").value; save(); });
 // Lists are rebuilt from state, not from the DOM, so a language switch re-renders them too.
-I18N.onChange(() => { renderFiles(); renderSquares(); if (settings) renderWads(); });
+I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); if (settings) renderWads(); });
 
 (async function init() {
   settings = await window.api.getSettings();
@@ -305,16 +362,25 @@ I18N.onChange(() => { renderFiles(); renderSquares(); if (settings) renderWads()
   $("l2Carve").checked = settings.l2Carve === true;
   $("l2Ambient").value = settings.l2Ambient === undefined ? 32 : settings.l2Ambient;
   $("l2Glow").value = settings.l2Glow === undefined ? 40 : settings.l2Glow;
-  renderWads(); applyGame(); renderSquares();
+  $("q3Dir").value = settings.q3Dir || "";
+  $("q3Scale").value = settings.q3Scale === undefined ? 1.9 : settings.q3Scale;
+  $("q3Patch").value = settings.q3Patch === undefined ? 4 : settings.q3Patch;
+  $("q3LightGain").value = settings.q3LightGain === undefined ? 4 : settings.q3LightGain;
+  $("q3Ambient").value = settings.q3Ambient === undefined ? 40 : settings.q3Ambient;
+  $("q3Glow").value = settings.q3Glow === undefined ? 96 : settings.q3Glow;
+  renderWads(); applyGame(); renderSquares(); renderQ3Maps();
   if (settings.l2Dir) loadSquares();
+  if (settings.q3Dir) loadQ3Maps();
   for (const el of ["outDir", "csDir", "scale", "lms", "health", "lighting", "lightScale",
-    "terrainStep", "l2Scale", "l2Ambient", "l2Glow"]) $(el).addEventListener("change", save);
+    "terrainStep", "l2Scale", "l2Ambient", "l2Glow",
+    "q3Scale", "q3Patch", "q3LightGain", "q3Ambient", "q3Glow"]) $(el).addEventListener("change", save);
   $("l2Grass").addEventListener("change", save);
   $("l2Blend").addEventListener("change", save);
   $("l2Carve").addEventListener("change", save);
   for (const el of ["ase", "spawns"]) $(el).addEventListener("change", save);
   $("game").addEventListener("change", () => { save(); applyGame(); });
   $("l2Dir").addEventListener("change", () => { save(); loadSquares(); });
+  $("q3Dir").addEventListener("change", () => { save(); loadQ3Maps(); });
 })();
 
 function addFiles(paths) {
@@ -339,6 +405,7 @@ document.body.ondrop = (e) => { e.preventDefault(); addFiles(droppedPaths(e)); }
 
 $("pickOut").onclick = async () => { const d = await window.api.pickDir(t("dlg.outDir")); if (d) { $("outDir").value = d; save(); } };
 $("pickL2").onclick = async () => { const d = await window.api.pickDir(t("dlg.l2Dir")); if (d) { $("l2Dir").value = d; save(); loadSquares(); } };
+$("pickQ3").onclick = async () => { const d = await window.api.pickDir(t("dlg.q3Dir")); if (d) { $("q3Dir").value = d; save(); loadQ3Maps(); } };
 $("pickCs").onclick = async () => { const d = await window.api.pickDir(t("dlg.csDir")); if (d) { $("csDir").value = d; save(); } };
 $("pickWad").onclick = async () => {
   const typed = $("wadDir").value.trim();
@@ -352,16 +419,24 @@ window.api.onProgress((m) => log("  " + m.text, m.type === "err" ? "bad" : (/^\s
 $("go").onclick = async () => {
   save();
   const jobs = queued();
-  const redraw = () => { if (isL2()) renderSquares(); else renderFiles(); };
+  const redraw = () => { if (isL2()) renderSquares(); else if (isQ3()) renderQ3Maps(); else renderFiles(); };
   busy = true; redraw();
   let okCount = 0;
   for (const f of jobs) {
-    const label = isL2() ? f.name : f.name;
+    const label = f.name;
     f.stateKey = "state.converting"; f.cls = "run"; redraw();
     I18N.setText("status", "status.converting", { name: label });
     log("");
     log("== " + label, "hdr");
-    const job = isL2()
+    const job = isQ3()
+      ? {
+        game: "q3", clientDir: settings.q3Dir, map: f.name, mod: f.mod,
+        outDir: settings.outDir || null,
+        q3Scale: settings.q3Scale, patchLevel: settings.q3Patch, lightGain: settings.q3LightGain,
+        ambient: settings.q3Ambient, glow: settings.q3Glow,
+        emitPlayerStarts: settings.emitPlayerStarts,
+      }
+      : isL2()
       ? {
         game: "l2", clientDir: settings.l2Dir, square: f.name,
         outDir: settings.outDir || null,
@@ -387,6 +462,11 @@ $("go").onclick = async () => {
           name: res.mapName, size: (res.size / 1048576).toFixed(2),
           grid: res.terrain.width + "×" + res.terrain.height,
           meshes: res.terrain.meshes, triangles: res.terrain.triangles,
+        })
+        : res.quake3
+        ? t("log.q3Done", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          triangles: res.quake3.triangles, meshes: res.quake3.meshes, pages: res.quake3.pages,
         })
         : t("log.mapDone", {
           name: res.mapName, size: (res.size / 1048576).toFixed(2), surfs: res.surfs,

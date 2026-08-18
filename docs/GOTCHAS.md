@@ -12,6 +12,7 @@ kills it. What each SOURCE game costs is in its own file, because there will be 
 |---|---|
 | Counter-Strike 1.6 / GoldSrc | [`games/goldsrc.md`](games/goldsrc.md) |
 | Lineage 2 (Interlude) | [`games/lineage2.md`](games/lineage2.md) |
+| Quake III Arena / Team Arena | [`games/quake3.md`](games/quake3.md) |
 
 The line between them: a fact about `.bsp` faces, WADs, `.mdl` props or `Lineage2Ver111` belongs to
 its game; a fact about `UModel`, `UStaticMesh`, karma or the renderer belongs here, because the next
@@ -235,6 +236,24 @@ would be convenient for it to mean.
 Every shipped map has one (`Zones[1].ZoneActor` → a `ZoneInfo` export). A level with
 `ZoneActor = None` still draws its BSP, so the problem looks like a static-mesh problem rather than
 a zoning one.
+
+### 3.1a A missing `ZoneActor` costs the AMBIENT, and the symptom is a black player
+What `Zones[1].ZoneActor = None` actually removes is measurable, and it is not the drawing:
+
+| ZoneInfo.AmbientBrightness | StaticMeshActor.AmbientGlow | ZoneActor | the frame |
+|---|---|---|---|
+| 254 | 0 | None | **completely black** |
+| 40 | 128 | None | lit, mean 63 |
+| 96 | 72 | None | dark, mean 36 |
+| 40 | 128 | ZoneInfo0 | lit, mean 100, and the weapon is lit |
+
+`AmbientGlow` reaches the world without it, because the glow is a property of the ACTOR — so a
+converter that lights the world through the glow renders a perfectly reasonable-looking map and
+never notices, right up until somebody asks why the player's hands and weapon are a black
+silhouette in every frame. Everything the pawn shows comes from the zone (4.11a), and with no
+`ZoneActor` there is no zone to come from.
+
+`build/model.js` takes it as `opts.zoneInfoRef`; a front end that leaves it out gets `None`.
 
 ### 3.2 Zone 0 is the null/solid zone
 `iZone = [0, 1]` on a drawable node means "solid behind, open in front". No shipped map has a
@@ -812,6 +831,33 @@ Shader under it only says which two things are being mixed.
 
 Section order is blend order. The opaque base is written first and the overlays after it, because a
 static mesh's sections are drawn in the order the file lists them.
+
+### 5.39 A DXT block's endpoints are not its darkest and brightest texel
+The cheap fit - take the block's extremes by luminance, use their full RGB as the two endpoints -
+is adequate for a lightmap and wrong for a wall. When a block's colours do not vary along the
+luminance axis, the interpolation line runs through colours the block never contained: on a red
+stone texture whose darkest texel happens to be greenish, the line runs red-to-green and all four
+palette entries come out off-hue. Sixteen texels then share one wrong tint, and at any distance
+where a block is a few pixels across the wall wears green and magenta confetti that moves as the
+camera does.
+
+Two things fix it, and both are needed:
+
+* **The block's own principal axis**, not luminance. Mean, covariance, a few power iterations.
+  Start the iteration from the covariance ROW with the most weight - the sum of the rows is the
+  zero vector on any block whose colours run one channel up and another down, and a zero start
+  iterates to nothing and silently falls back to the axis it was meant to replace.
+* **Refit after the 5:6:5 rounding.** The quantisation shifts red and blue twice as far as green,
+  and that shift is what the eye reads as the hue error. Assign the indices, solve the two
+  endpoints again by least squares for those indices, re-quantise, twice.
+
+Measured on Quake 3's `gothic_block` set, mean channel error per texel: 5.37 (luminance extremes)
+→ 5.25 (principal axis) → 4.75 (axis + refit); on the selfcheck's synthetic gradient the worst
+channel goes 24 → 12. The mean barely moves and the picture changes completely, because what was
+wrong was never the average - it was the hue of whole blocks.
+
+Uncompressed RGBA8 removes the last of it, and costs three times the file (q3dm1: 7.8 MB → 23.7 MB).
+`--texture-format raw` is there for when that trade is worth making.
 
 ## 6. LevelInfo / gameplay
 
