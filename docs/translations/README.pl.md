@@ -57,7 +57,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <plik\|katalog>` | obok `.bsp` | gdzie zapisać `.rom` |
 | `--name KF-Xxx` | `KF-<nazwa bsp>` | nazwa mapy wewnątrz pakietu |
-| `--scale <n>` | `1.9` | jednostki GoldSrc → jednostki Unreala |
+| `--scale <n>` | `1.9165` | jednostki GoldSrc → jednostki Unreala |
 | `--lightmap-scale <n>` | `32` | rozmiar lukselu w jednostkach Unreala |
 | `--cs-dir <katalog>` | — | katalog klienta Counter-Strike 1.6: oryginalne `.wad`, niebo `gfx/env`, `sprites/*.spr` |
 | `--wad <katalog>` | katalog mapy i dwa wyżej | dodatkowe katalogi do szukania plików `.wad` |
@@ -84,7 +84,7 @@ Przełączniki diagnostyczne zostawione celowo: `--no-sky`, `--no-extras`, `--no
 | niebo | sześć obrazków `gfx/env/<skyname>*` → RGBA8 (bez kompresji blokowej — inaczej pasy na gradientach) na sześcianie skyboxa; ściany `sky` są wycinane z meshy; brak `skyname` — silnikowy domyślny `desert` |
 | oświetlenie | `ZoneInfo.AmbientBrightness` z poziomu cienia własnych lukseli mapy plus aktorzy `Light`/`Sunlight` z encji światła; na trasie BSP dodatkowo atlasy lightmap DXT3 wewnątrz `UModel` |
 | punkty startowe | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, podniesione na podłogę |
-| skala | ×1.9 domyślnie (×2 to wartość zmierzona na wydanych portach `KF-CS-*`, i przy niej 16-jednostkowa siatka lukseli GoldSrc trafia dokładnie w 32 UU UE2.5) |
+| skala | ×1.9165 domyślnie (×2 to wartość zmierzona na wydanych portach `KF-CS-*`, i przy niej 16-jednostkowa siatka lukseli GoldSrc trafia dokładnie w 32 UU UE2.5) |
 
 Do świata nie trafiają niewidoczne tekstury narzędziowe — `aaatrigger`, `clip`, `null`, `hint` — którym tam nie miejsce: 48 z 3206 na cs_assault, 25 z 5383 na de_dust2, 36 z 8528 na cs_italy.
 

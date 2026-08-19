@@ -57,7 +57,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <文件\|目录>` | 与 `.bsp` 同级 | `.rom` 写到哪里 |
 | `--name KF-Xxx` | `KF-<bsp 名>` | 包内的地图名 |
-| `--scale <n>` | `1.9` | GoldSrc 单位 → Unreal 单位 |
+| `--scale <n>` | `1.9165` | GoldSrc 单位 → Unreal 单位 |
 | `--lightmap-scale <n>` | `32` | 以 Unreal 单位计的 luxel 大小 |
 | `--cs-dir <目录>` | — | Counter-Strike 1.6 客户端目录：原版 `.wad`、`gfx/env` 天空、`sprites/*.spr` |
 | `--wad <目录>` | 地图所在目录及其上两级 | 额外搜索 `.wad` 的目录 |
@@ -84,7 +84,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | 天空 | 六张 `gfx/env/<skyname>*` → RGBA8（不做块压缩，否则渐变出现色带），贴在天空盒立方体上；网格里的 `sky` 面被裁掉；没有 `skyname` 时用引擎默认的 `desert` |
 | 光照 | `ZoneInfo.AmbientBrightness` 取自地图自身 luxel 的阴影水平，再加上由光照实体生成的 `Light`/`Sunlight` actor；BSP 路线下还会在 `UModel` 内部生成 DXT3 光照图集 |
 | 出生点 | `info_player_start` / `info_player_deathmatch` → `PlayerStart`，抬到地面上 |
-| 缩放 | 默认 ×1.9（×2 是已发布的 `KF-CS-*` 移植测出来的值，而且能让 GoldSrc 的 16 单位 luxel 网格正好落在 UE2.5 的 32 UU 上） |
+| 缩放 | 默认 ×1.9165（×2 是已发布的 `KF-CS-*` 移植测出来的值，而且能让 GoldSrc 的 16 单位 luxel 网格正好落在 UE2.5 的 32 UU 上） |
 
 进不了世界的是那些不可见的工具贴图——`aaatrigger`、`clip`、`null`、`hint`——它们本来也不该在里面：cs_assault 3206 面里 48 面，de_dust2 5383 面里 25 面，cs_italy 8528 面里 36 面。
 

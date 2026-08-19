@@ -57,7 +57,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <файл\|папка>` | рядом с `.bsp` | куда писать `.rom` |
 | `--name KF-Xxx` | `KF-<имя bsp>` | имя карты внутри пакета |
-| `--scale <n>` | `1.9` | юниты GoldSrc → юниты Unreal |
+| `--scale <n>` | `1.9165` | юниты GoldSrc → юниты Unreal |
 | `--lightmap-scale <n>` | `32` | размер люкселя в юнитах Unreal |
 | `--cs-dir <папка>` | — | папка клиента Counter-Strike 1.6: стоковые `.wad`, небо `gfx/env`, `sprites/*.spr` |
 | `--wad <папка>` | папка карты и две над ней | дополнительные папки поиска `.wad` |
@@ -84,7 +84,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | небо | шесть картинок `gfx/env/<skyname>*` → RGBA8 (без блочного сжатия — иначе полосы на градиентах) на кубе-скайбоксе; грани `sky` вырезаются из мешей; нет `skyname` — движковый дефолт `desert` |
 | освещение | `ZoneInfo.AmbientBrightness` по теневому уровню собственных люкселей карты плюс акторы `Light`/`Sunlight` из светоэнтити; на BSP-маршруте ещё и атласы лайтмапов DXT3 внутри `UModel` |
 | точки спавна | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, поднятые на пол |
-| масштаб | ×1.9 по умолчанию (×2 — то, что намеряно на живых портах `KF-CS-*`, и при нём сетка люкселей GoldSrc в 16 юнитов ложится ровно на 32 UU в UE2.5) |
+| масштаб | ×1.9165 по умолчанию (×2 — то, что намеряно на живых портах `KF-CS-*`, и при нём сетка люкселей GoldSrc в 16 юнитов ложится ровно на 32 UU в UE2.5) |
 
 Не попадают в мир невидимые tool-текстуры — `aaatrigger`, `clip`, `null`, `hint`, — которым там и не место: 48 из 3206 на cs_assault, 25 из 5383 на de_dust2, 36 из 8528 на cs_italy.
 

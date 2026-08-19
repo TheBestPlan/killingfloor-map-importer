@@ -123,9 +123,13 @@ const TOOL_NAME = manifest.productName;
 const TOOL_URL = manifest.repository.url.replace(/^git\+/, "").replace(/\.git$/, "");
 
 const DEFAULTS = {
-  // 2.0 is what the shipped KF-CS-* ports measured at (cs_estate); 1.9 reads slightly closer to
-  // the original in play, so that is the default. --scale overrides.
-  scale: 1.9,
+  // Both engines' own constants bracket this. Floor: a crouched KFHumanPawn is 2 x CrouchHeight 34
+  // = 68 uu and the smallest legal GoldSrc crouch gap is the 36-unit duck hull, so 68/36 = 1.8889.
+  // Ceiling: MAXSTEPHEIGHT is 35 uu against GoldSrc's STEPSIZE of 18, so 35/18 = 1.9444. The
+  // geometric mean sits at equal relative margin from both: sqrt(68/36 * 35/18) = 1.916465.
+  // 2.0 is what the shipped KF-CS-* ports measured at (cs_estate), and it breaks the step ceiling.
+  // --scale overrides. Full derivation in ../docs/RESEARCH.md 1.3.
+  scale: 1.9165,
   lightMapScale: 32,      // UE2.5 default luxel size; at scale 2 it lands on GoldSrc's 16-unit grid
   mapName: null,
   wadDirs: [],

@@ -173,7 +173,7 @@ function main() {
   }
 
   if (!a._.length) {
-    console.log("usage: node src/cli.js <map.bsp> [--out <dir|file>] [--name KF-Name] [--scale 2]");
+    console.log("usage: node src/cli.js <map.bsp> [--out <dir|file>] [--name KF-Name] [--scale 1.9165]");
     console.log("       [--lightmap-scale 32] [--wad <dir>]... [--verify] [--ase] [--no-spawns]");
     process.exit(1);
   }

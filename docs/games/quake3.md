@@ -152,8 +152,8 @@ void both come out right this way.
 
 ## Q3.10 Scale is 1.9, and it is the STAIR that fixes it, not the eye
 
-By eye height a Quake 3 map wants ×2.4: the Counter-Strike route uses ×1.9 for a 72-unit player, and
-a Quake 3 player is 56 units tall, so the same relative size is 1.9 × 72/56 = 2.44.
+By eye height a Quake 3 map wants ×2.5: the Counter-Strike route uses ×1.9165 for a 72-unit player,
+and a Quake 3 player is 56 units tall, so the same relative size is 1.9165 × 72/56 = 2.46.
 
 That number is unusable. Quake 3's `STEPSIZE` is **18 map units** — the tallest step the game itself
 lets a player walk up — and Unreal Engine 2's step limit is **35 Unreal units**, so any scale over

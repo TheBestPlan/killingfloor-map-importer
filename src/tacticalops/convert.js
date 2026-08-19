@@ -216,8 +216,23 @@ function convert(opts) {
     const hit = TO.resolveRef(pkg, matRef, client, (cls) => /Texture$/.test(cls));
     if (hit && /Texture$/.test(hit.pkg.classOf(hit.exp))) {
       try {
-        const t = readTexture(hit.pkg, hit.exp);
-        if (t.width && t.height && t.mips.length) src = { tex: t, key: (hit.pkg.pkgName || "?") + "." + t.name };
+        let owner = hit.pkg, exp = hit.exp;
+        let t = readTexture(owner, exp);
+        // Water is not a texture in UE1, it is a program. A `WetTexture` (`FractalTexture` ->
+        // `WaterTexture` -> this) computes its pixels every frame by distorting a still image with
+        // a wave field, and what it ships on disk is the empty buffer that program writes into -
+        // which is why TO-Crossfire's canal came across as a flat khaki slab. `SourceTexture` names
+        // the still image, and that is the frame to carry: the ripples are what is lost, not the
+        // water. Anything without one (a plain `WaterTexture`, a `FireTexture`) has no still image
+        // to fall back on and keeps whatever it stored.
+        if (t.sourceTexture && owner.classOf(exp) !== "Texture") {
+          const inner = TO.resolveRef(owner, t.sourceTexture, client, (cls) => /Texture$/.test(cls));
+          if (inner) {
+            const still = readTexture(inner.pkg, inner.exp);
+            if (still.width && still.height && still.mips.length) { owner = inner.pkg; exp = inner.exp; t = still; }
+          }
+        }
+        if (t.width && t.height && t.mips.length) src = { tex: t, key: (owner.pkgName || "?") + "." + t.name };
       } catch (e) { src = null; }
     }
     srcCache.set(matRef, src);
@@ -283,15 +298,22 @@ function convert(opts) {
   };
 
   const materialFor = (material, flags, sky) => {
+    const src = readSource(material);
+    // Whether a surface is a cut-out is the TEXTURE's answer as much as the surface's. UT99 ORs
+    // `UTexture.PolyFlags` - which carries PF_Masked whenever the texture is `bMasked` - into the
+    // surface's flags before drawing, and mappers rely on it: the railings on TO-Crossfire's bridge,
+    // TO-GlasgowKiss' fire escapes and TO-November-Rain's signs all sit on surfaces WITHOUT
+    // PF_Masked, and arrived as solid rectangles of whatever colour palette index 0 happened to be
+    // - black, magenta, red.
+    const masked = !!(flags & PF.Masked) || !!(src && src.tex.masked);
     // The sky is drawn flat and opaque whatever the room's own surfaces say: it is a backdrop, and
     // a backdrop that blends has nothing behind it to blend with.
     const kind = sky ? "opaque"
-      : (flags & PF.Masked) ? "masked" : (flags & PF.Translucent) ? "translucent"
+      : masked ? "masked" : (flags & PF.Translucent) ? "translucent"
         : (flags & PF.Modulated) ? "modulated" : "opaque";
     const twoSided = !sky && !!(flags & PF.TwoSided);
     const key = material + "|" + kind + "|" + (twoSided ? "2" : "1") + (sky ? "|s" : "");
     if (texCache.has(key)) return texCache.get(key);
-    const src = readSource(material);
     let rec;
     if (!src) {
       missingCount++;

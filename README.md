@@ -77,7 +77,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <file\|dir>` | next to the `.bsp` | where to write the `.rom` |
 | `--name KF-Xxx` | `KF-<bsp name>` | map name inside the package |
-| `--scale <n>` | `1.9` | GoldSrc units → Unreal units |
+| `--scale <n>` | `1.9165` | GoldSrc units → Unreal units |
 | `--lightmap-scale <n>` | `32` | luxel size in Unreal units |
 | `--cs-dir <dir>` | — | Counter-Strike 1.6 client folder: stock `.wad`s, `gfx/env` skies, `sprites/*.spr` |
 | `--wad <dir>` | map folder and two above it | extra folders to search for `.wad` files |
@@ -159,7 +159,7 @@ as on the other routes. All 33 stock maps convert; the details are in
 | sky | six `gfx/env/<skyname>*` images → DXT1 on a skybox cube (RGBA8 was two thirds of a converted map: 1.33 MB a face against 0.13 MB); `sky` faces are cut out of the meshes; no `skyname` falls back to the engine's `desert` |
 | lighting | four routes, see `--lighting`. The faithful one packs the map's own luxels into 512×512 atlas pages and multiplies them into the texture through a second UV channel, so the shadows and half-tones are the ones hlrad baked twenty years ago — and the wall stays lit geometry, so the torch and the muzzle flash still land on it |
 | player starts | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, lifted onto the floor |
-| scale | ×1.9 by default (×2 is what the shipped `KF-CS-*` ports measure at, and it lands GoldSrc's 16-unit luxel grid exactly on UE2.5's 32 UU one) |
+| scale | ×1.9165 by default (×2 is what the shipped `KF-CS-*` ports measure at, and it lands GoldSrc's 16-unit luxel grid exactly on UE2.5's 32 UU one) |
 
 Faces that do not make it are the invisible tool textures — `aaatrigger`, `clip`, `null`, `hint` — which have no business in the world: 48 of 3206 on cs_assault, 25 of 5383 on de_dust2, 36 of 8528 on cs_italy.
 
@@ -191,7 +191,7 @@ pnpm test          # node test/selfcheck.js
 - across 25 Counter-Strike maps: the computed lightmap footprint fits the `LIGHTING` lump, face winding is `Newell == −normal`, face vertices lie on the face plane;
 - every shipped `UPolys` object fits the layout exactly (6054 objects, 37136 polys, 0 mismatched);
 - across 36 Quake 3 maps: every face indexes inside the vertex and meshvert lumps, every surface shader resolves to an image, a sky or a fog volume (2733/2733), a tessellated bezier patch stays inside its control hull, and q3dm1 converts end to end and passes every invariant of the finished `.rom`;
-- across all 33 Tactical Ops maps: the Unreal Engine 1 `UModel` walks to the byte on every one, the per-surface shadow-bit runs account for `LightBits` exactly, every node vertex lands inside its own light mesh, every mover's brush polygons read, and TO-Crossfire converts end to end and passes every invariant of the finished `.rom`;
+- across all 33 Tactical Ops maps: the Unreal Engine 1 `UModel` walks to the byte on every one, the per-surface shadow-bit runs account for `LightBits` exactly, every node vertex lands inside its own light mesh, every mover's brush polygons read and wind into their own brush, a node ring comes out wound against the way UE1 stored it, a cut-out the surface does not declare is found on the texture, a `WetTexture` names the still image it distorts, and TO-Crossfire converts end to end and passes every invariant of the finished `.rom`;
 - the block-compression rules the client dies on: a level short in one dimension is still whole blocks, and a texture smaller than one block goes out uncompressed;
 - the DXT3 encoder, the `.mdl` and `.spr` readers, the TGA and baseline-JPEG decoders, the Lanczos resampler.
 

@@ -133,6 +133,30 @@ What ×2 breaks and needs fixing by hand:
 - steps: `MAXSTEPHEIGHT = 35.0` (a constant in `Actor.uc`, not a property) — obstacles of 9–17 HL
   units stop being obstacles.
 
+**The converter's default is ×1.9165, and it is the two engines' constants that pin it**, not the
+player-height ratio the paragraph above computes. Two of the five conversion constraints bind:
+
+| constraint | ratio | bound |
+|---|---|---:|
+| a crouched `KFHumanPawn` (2 × `CrouchHeight` 34 = 68 UU) through the smallest legal HL duck gap (36) | 68/36 | ≥ **1.8889** |
+| the tallest step an HL mapper may build (`STEPSIZE` 18) under `MAXSTEPHEIGHT` 35 | 35/18 | ≤ **1.9444** |
+| a specimen (`KFMonster` radius 26 → 52 UU wide) through a 32-unit HL passage | 52/32 | ≥ 1.6250 |
+| a standing `KFHumanPawn` (40 UU wide) through the same | 40/32 | ≥ 1.2500 |
+| a specimen (88 UU tall, `bCanCrouch=false`) through a 72-unit HL passage | 88/72 | ≥ 1.2222 |
+
+The window is 2.9 % wide. Both constraints are ratios, so the value at equal relative margin from
+each is their geometric mean: `sqrt(68/36 × 35/18) = 1.916465`, which is +1.46 % over the floor and
+−1.46 % under the ceiling. A 36-unit duck gap arrives at 68.99 UU against the 68 it needs; an
+18-unit step arrives at 34.50 UU against the 35 limit. `test/selfcheck.js` asserts both.
+
+×1.39 — the player-height ratio — is 26 % below the floor, which puts every vent, duck gap and low
+passage in the map under the crouched pawn. That is why the proportional number is the wrong tool:
+of the five constraints it optimises the slackest one.
+
+Two costs of not being ×2: the luxel grid no longer lands 1:1 (`--lightmap-scale 30.66` restores it —
+the field is a float, powers of two are not required), and no HL grid value lands on UnrealEd's grid,
+which only matters for hand-editing afterwards.
+
 ### 1.4 Precedent: how the 35 `KF-CS-*` maps were actually made
 
 Taking their packages apart shows two clearly distinct schools:

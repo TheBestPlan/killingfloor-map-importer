@@ -57,7 +57,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <ファイル\|フォルダ>` | `.bsp` の隣 | `.rom` の書き出し先 |
 | `--name KF-Xxx` | `KF-<bsp 名>` | パッケージ内のマップ名 |
-| `--scale <n>` | `1.9` | GoldSrc 単位 → Unreal 単位 |
+| `--scale <n>` | `1.9165` | GoldSrc 単位 → Unreal 単位 |
 | `--lightmap-scale <n>` | `32` | Unreal 単位での luxel サイズ |
 | `--cs-dir <フォルダ>` | — | Counter-Strike 1.6 クライアントのフォルダ: 標準 `.wad`、`gfx/env` の空、`sprites/*.spr` |
 | `--wad <フォルダ>` | マップのフォルダとその 2 階層上 | `.wad` を探す追加フォルダ |
@@ -84,7 +84,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | 空 | `gfx/env/<skyname>*` の 6 枚 → RGBA8（ブロック圧縮なし——グラデーションに縞が出るため）をスカイボックスキューブに。メッシュからは `sky` 面を切り取る。`skyname` が無ければエンジン既定の `desert` |
 | ライティング | マップ自身の luxel の影レベルから `ZoneInfo.AmbientBrightness`、加えてライトエンティティ由来の `Light`/`Sunlight` アクター。BSP ルートではさらに `UModel` 内の DXT3 ライトマップアトラス |
 | スポーン地点 | `info_player_start` / `info_player_deathmatch` → `PlayerStart`、床の上に持ち上げる |
-| スケール | 既定 ×1.9（×2 は公開済み `KF-CS-*` 移植から実測した値で、GoldSrc の 16 単位 luxel グリッドが UE2.5 の 32 UU にちょうど乗る） |
+| スケール | 既定 ×1.9165（×2 は公開済み `KF-CS-*` 移植から実測した値で、GoldSrc の 16 単位 luxel グリッドが UE2.5 の 32 UU にちょうど乗る） |
 
 world に入らないのは不可視のツールテクスチャ——`aaatrigger`、`clip`、`null`、`hint`——で、そもそも入るべきものではありません: cs_assault は 3206 面中 48、de_dust2 は 5383 面中 25、cs_italy は 8528 面中 36。
 

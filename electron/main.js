@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   outDir: "",
   csDir: "",
   wadDirs: [],
-  scale: 1.9,
+  scale: 1.9165,
   lightMapScale: 32,
   healthScale: 1,      // multiplies every func_breakable's Health; 1 is what the map itself says
   lighting: "ambient", // "ambient" plays as converted, "sunlight" is written for a Build in KFEd

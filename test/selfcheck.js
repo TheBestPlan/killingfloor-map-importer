@@ -200,6 +200,19 @@ console.log("\nUPolys layout (brush shapes)");
     model.nodes.length + " nodes, " + model.points.length + " points, hull " + model.leafHulls.length + " ints");
 }
 
+console.log("\nGoldSrc scale against Killing Floor's own physics");
+{
+  const s = require("../src/convert").DEFAULTS.scale;
+  // Floor: a crouched KFHumanPawn is 2 x CrouchHeight 34 = 68 uu, and the smallest crouch gap an HL
+  // mapper may build is the 36-unit duck hull. Under this, every vent in the map is sealed.
+  ok("the default scale keeps an HL duck gap crawlable in Killing Floor",
+    36 * s >= 68, "36 x " + s + " = " + (36 * s).toFixed(2) + " uu, crouched pawn 68");
+  // Ceiling: MAXSTEPHEIGHT is 35 uu against GoldSrc's STEPSIZE of 18 - the same bound the Quake 3
+  // and Tactical Ops routes are held to below.
+  ok("the default scale keeps an HL step climbable in Killing Floor",
+    18 * s <= 35, "18 x " + s + " = " + (18 * s).toFixed(2) + " uu, limit 35");
+}
+
 console.log("\nGoldSrc .mdl reader");
 {
   const dir = path.resolve(CS_MAPS, "../models");
@@ -766,6 +779,43 @@ console.log("\nTactical Ops: UE1 packages, the model, the shadow bits");
         }
       }
       ok("every node vertex lands inside its own light mesh", outside === 0, inside + " inside, " + outside + " outside");
+
+      // A cut-out is the texture's own answer as often as the surface's: UT99 ORs a bMasked
+      // texture's PF_Masked into the surface flags at draw time (TO.9). Read the surface flag alone
+      // and TO-Crossfire's bridge railings draw as solid black rectangles - all 54 of their
+      // surfaces are on a bMasked texture and NONE of them carries the flag.
+      {
+        const toTex = require("../src/tacticalops/texture");
+        let flagged = 0, textureOnly = 0;
+        for (const s of model.surfs) {
+          if (!s.material) continue;
+          const hit = TO.resolveRef(pkg, s.material, client, (c) => /Texture$/.test(c));
+          if (!hit) continue;
+          let t;
+          try { t = toTex.readTexture(hit.pkg, hit.exp); } catch (e) { continue; }
+          if (!t.masked) continue;
+          if (s.polyFlags & toModel.PF.Masked) flagged++; else textureOnly++;
+        }
+        ok("a cut-out the surface does not declare is found on the texture", textureOnly > 0,
+          textureOnly + " surface(s) masked by the texture alone, " + flagged + " by the flag");
+      }
+
+      // Water is a WetTexture: a program that distorts a still image, shipping the empty buffer it
+      // writes into. The still image is the SourceTexture, and carrying it is what makes the canal
+      // read as water rather than one flat colour.
+      {
+        const toTex = require("../src/tacticalops/texture");
+        const hit = TO.resolveRef(pkg, model.surfs.find((s) => {
+          if (!s.material) return false;
+          const h = TO.resolveRef(pkg, s.material, client, (c) => /Texture$/.test(c));
+          return !!h && h.pkg.classOf(h.exp) === "WetTexture";
+        }).material, client, (c) => /Texture$/.test(c));
+        const wet = toTex.readTexture(hit.pkg, hit.exp);
+        const still = wet.sourceTexture ? TO.resolveRef(hit.pkg, wet.sourceTexture, client, (c) => /Texture$/.test(c)) : null;
+        ok("a WetTexture names the still image it distorts",
+          hit.pkg.classOf(hit.exp) === "WetTexture" && !!still && still.exp.name !== hit.exp.name,
+          hit.exp.name + " -> " + (still ? still.exp.name : "nothing"));
+      }
 
       // A mover's geometry is its brush's UPolys, and 71 of the 400 in the stock maps carry a script
       // state frame in front of them.

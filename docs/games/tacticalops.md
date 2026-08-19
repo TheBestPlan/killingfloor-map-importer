@@ -218,12 +218,32 @@ for Half-Life. A cut-out is therefore handed over with 0 and 255 swapped and com
 side exactly as it went in — which also buys the fringe-bleeding and the indexed mip chain that
 writer already does.
 
+**Which surfaces are cut-outs is the TEXTURE's answer, not only the surface's.** UT99 ORs
+`UTexture.PolyFlags` — which carries `PF_Masked` for every `bMasked` texture — into the surface's
+flags at draw time, and mappers lean on it: on TO-GlasgowKiss 25 of the 47 surfaces wearing
+`coneymsk14` have no `PF_Masked` of their own, and on TO-Crossfire all 54 of `coneymsk13` have
+none. Reading only the surface flag leaves those drawn opaque, so the mask colour shows as a solid
+rectangle — black behind a bridge railing, magenta behind a fire escape, red behind a sign,
+whatever palette index 0 happens to be. The rule here is the engine's: masked if the surface says
+so **or** the texture does.
+
 Opaque textures go out as **DXT1**, not "DXT3 with an opaque alpha channel": a projector landing on
 the latter repaints the whole surface white (GOTCHAS 5.16), and it is half the bytes.
 
 Surface coverage over all 33 maps: **198818 of 198896 surfaces resolve their texture** (99.96%).
-What does not is 19 surfaces wearing the editor's own `Editor.Bad` placeholder and about 30
-procedural water/steam textures; they get a flat grey stand-in.
+What does not is 19 surfaces wearing the editor's own `Editor.Bad` placeholder and a handful of
+procedural steam textures; they get a flat grey stand-in.
+
+### Water is a program, not a texture
+
+A UE1 water surface wears a `WetTexture` (`Texture` → `FractalTexture` → `WaterTexture` → this):
+its pixels are computed every frame by distorting a still image with a wave field, and what the
+package stores is the flat buffer that program writes into. Carried at face value, TO-Crossfire's
+canal came out as a slab of one khaki colour.
+
+The still image is named by the texture's own `SourceTexture` property (`bwateranimold` →
+`bwatercliff`), so that is what gets carried and the water reads as water. What is lost is the
+ripple, which is generated code with no equivalent here.
 
 ## TO.10 Player starts: all of them, and on the floor
 
@@ -260,9 +280,9 @@ so there is water in the air at the outside of the bend.
   scenario info — all of it is Tactical Ops gameplay with no Killing Floor equivalent. What comes
   across is the place, not the round.
 * **Everything animated.** Panning textures (`PF_AutoUPan`/`AutoVPan`), the flames, the rain
-  generators and the `ScaledSprite` decorations arrive as their first frame or not at all. The
-  procedural `WaterTexture`s hold no pixels at all — UE1 generates their ripples at run time — so a
-  water surface using one comes across as the flat colour under it (TO-RapidWaters' pools).
+  generators and the `ScaledSprite` decorations arrive as their first frame or not at all. Water
+  keeps its picture and loses its motion (TO.9): the still image a `WetTexture` distorts is carried,
+  the wave field is not.
 * **Bot paths, zombie volumes, the trader.** As on every other route: a converted map has nothing
   to fight until somebody places them.
 

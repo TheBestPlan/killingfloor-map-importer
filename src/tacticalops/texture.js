@@ -90,8 +90,12 @@ function readTexture(pkg, exp) {
     height: props.VSize || (mips[0] && mips[0].height) || 0,
     mips,
     palette: palExp && pkg.classOf(palExp) === "Palette" ? readPalette(pkg, palExp) : null,
-    // The texture's own answer, which a surface's PF_Masked flag can override either way.
+    // The texture's own answer. UT99 ORs a texture's PolyFlags into the surface's before drawing,
+    // so bMasked cuts the texture out whether or not the surface carries PF_Masked - which most of
+    // them do not: 19 of TO-GlasgowKiss' 36 surfaces on `1tbmsk1` have the flag and 17 do not.
     masked: !!props.bMasked,
+    // A WetTexture (UE1's water) generates its pixels at run time from the still image named here.
+    sourceTexture: props.SourceTexture || 0,
     // A flipbook: AnimNext chains one frame to the next, and the last points back at the first.
     animNext: props.AnimNext || 0,
     // Anything after the mips is the optional DXT cache UT99 keeps beside the palettised master; it

@@ -57,7 +57,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <failas\|aplankas>` | šalia `.bsp` | kur rašyti `.rom` |
 | `--name KF-Xxx` | `KF-<bsp vardas>` | žemėlapio vardas pakete |
-| `--scale <n>` | `1.9` | GoldSrc vienetai → Unreal vienetai |
+| `--scale <n>` | `1.9165` | GoldSrc vienetai → Unreal vienetai |
 | `--lightmap-scale <n>` | `32` | lukselio dydis Unreal vienetais |
 | `--cs-dir <aplankas>` | — | Counter-Strike 1.6 kliento aplankas: originalūs `.wad`, `gfx/env` dangūs, `sprites/*.spr` |
 | `--wad <aplankas>` | žemėlapio aplankas ir du aukščiau | papildomi aplankai `.wad` paieškai |
@@ -84,7 +84,7 @@ Diagnostiniai jungikliai palikti tyčia: `--no-sky`, `--no-extras`, `--no-light`
 | dangus | šešios `gfx/env/<skyname>*` nuotraukos → RGBA8 (be blokinio suspaudimo — kitaip juostos gradientuose) ant skybox kubo; `sky` sienelės iškerpamos iš mesh'ų; nėra `skyname` — variklio numatytasis `desert` |
 | apšvietimas | `ZoneInfo.AmbientBrightness` pagal paties žemėlapio lukselių šešėlių lygį plius `Light`/`Sunlight` aktoriai iš šviesos entitetų; BSP kelyje dar ir DXT3 lightmap atlasai `UModel` viduje |
 | atsiradimo taškai | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, pakelti ant grindų |
-| mastelis | ×1.9 pagal nutylėjimą (×2 — tai, kas išmatuota gyvuose `KF-CS-*` portuose, ir tada GoldSrc 16 vienetų lukselių tinklelis tiksliai sutampa su UE2.5 32 UU) |
+| mastelis | ×1.9165 pagal nutylėjimą (×2 — tai, kas išmatuota gyvuose `KF-CS-*` portuose, ir tada GoldSrc 16 vienetų lukselių tinklelis tiksliai sutampa su UE2.5 32 UU) |
 
 Į pasaulį nepatenka nematomos įrankių tekstūros — `aaatrigger`, `clip`, `null`, `hint` — kurioms ten ir ne vieta: 48 iš 3206 cs_assault, 25 iš 5383 de_dust2, 36 iš 8528 cs_italy.
 

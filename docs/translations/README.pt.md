@@ -57,7 +57,7 @@ node src/cli.js "…/cstrike/maps/cs_assault.bsp" --out "…/KillingFloor/Maps" 
 | --- | --- | --- |
 | `--out <ficheiro\|pasta>` | ao lado do `.bsp` | onde escrever o `.rom` |
 | `--name KF-Xxx` | `KF-<nome do bsp>` | nome do mapa dentro do pacote |
-| `--scale <n>` | `1.9` | unidades GoldSrc → unidades Unreal |
+| `--scale <n>` | `1.9165` | unidades GoldSrc → unidades Unreal |
 | `--lightmap-scale <n>` | `32` | tamanho do luxel em unidades Unreal |
 | `--cs-dir <pasta>` | — | pasta do cliente de Counter-Strike 1.6: `.wad` originais, céus `gfx/env`, `sprites/*.spr` |
 | `--wad <pasta>` | a do mapa e duas acima | pastas extra onde procurar ficheiros `.wad` |
@@ -84,7 +84,7 @@ Interruptores de diagnóstico, deixados de propósito: `--no-sky`, `--no-extras`
 | céu | seis imagens `gfx/env/<skyname>*` → RGBA8 (sem compressão por blocos: cria bandas nos gradientes) num cubo de skybox; as faces `sky` são recortadas das malhas; sem `skyname` usa-se o `desert` por omissão do motor |
 | iluminação | `ZoneInfo.AmbientBrightness` a partir do nível de sombra dos próprios luxels do mapa, mais atores `Light`/`Sunlight` das entidades de luz; na rota BSP também atlas DXT3 de lightmaps dentro do `UModel` |
 | pontos de spawn | `info_player_start` / `info_player_deathmatch` → `PlayerStart`, levantados até ao chão |
-| escala | ×1.9 por omissão (×2 é o que medem os ports `KF-CS-*` publicados, e faz a grelha de luxels de 16 unidades do GoldSrc assentar exatamente nos 32 UU do UE2.5) |
+| escala | ×1.9165 por omissão (×2 é o que medem os ports `KF-CS-*` publicados, e faz a grelha de luxels de 16 unidades do GoldSrc assentar exatamente nos 32 UU do UE2.5) |
 
 As faces que ficam de fora são as texturas de ferramenta invisíveis — `aaatrigger`, `clip`, `null`, `hint` —, que não têm nada que fazer no mundo: 48 de 3206 em cs_assault, 25 de 5383 em de_dust2, 36 de 8528 em cs_italy.
 
