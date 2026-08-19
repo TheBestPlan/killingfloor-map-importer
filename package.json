@@ -1,7 +1,7 @@
 {
   "name": "killingfloor-map-importer",
   "productName": "Killing Floor Map Importer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Converts maps from other games into Killing Floor 1 levels (.rom, Unreal Engine 2.5)",
   "author": "geekrainian (https://github.com/geekrainian)",
   "license": "GPL-3.0-or-later",

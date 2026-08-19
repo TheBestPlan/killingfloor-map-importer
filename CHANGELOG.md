@@ -2,6 +2,20 @@
 
 All notable changes to Killing Floor Map Importer are documented here. The format follows [Conventional Commits](https://www.conventionalcommits.org/) and the version scheme is [Semantic Versioning](https://semver.org/).
 
+## [0.1.5](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.4...v0.1.5) (2026-08-19)
+
+
+### Features
+
+* **quake3:** read a Quake III Arena client into a Killing Floor level ([8aa3605](https://github.com/geekrainian/killingfloor-map-importer/commit/8aa3605d683531684234a9cde28468615acccf55))
+* **scale:** pin every route's default to its own engine bounds ([e9ca68b](https://github.com/geekrainian/killingfloor-map-importer/commit/e9ca68b0f37a551e5af64baf2501c3cd5b8a4aac))
+* **tacticalops:** read a Tactical Ops client into a Killing Floor level ([951173f](https://github.com/geekrainian/killingfloor-map-importer/commit/951173fa0bd0f082a56d53e9adbebeaaf9203e3b))
+
+
+### Bug Fixes
+
+* **tacticalops:** cut out what the texture says to cut out, and carry water's still image ([3a8a2db](https://github.com/geekrainian/killingfloor-map-importer/commit/3a8a2db889f5c89d43953679f7df4062630c16dc))
+
 ## [0.1.4](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.3...v0.1.4) (2026-08-17)
 
 
