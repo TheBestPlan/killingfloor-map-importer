@@ -84,7 +84,7 @@ function main() {
     const clientDir = a.clientDir || a._[0];
     if (!clientDir || !a.square) {
       console.log("usage: node src/cli.js --game l2 --client <Lineage 2 folder> --square 24_13");
-      console.log("       [--out <dir>] [--name KF-Name] [--scale 2] [--terrain-step 1]");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 2.1739] [--terrain-step 1]");
       console.log("       [--no-grass] [--no-blend] [--carve] [--verify]");
       process.exit(1);
     }
@@ -115,7 +115,7 @@ function main() {
     if (!bspFile && !a.map) {
       console.log("usage: node src/cli.js --game q3 --client <Quake III folder> --map q3dm6 [--mod missionpack]");
       console.log("       node src/cli.js --game q3 <map.bsp> --client <Quake III folder>");
-      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.9] [--patch-level 4] [--verify]");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.8634] [--patch-level 4] [--verify]");
       console.log("       [--light-gain 4] [--light-floor 20] [--ambient 40] [--glow 96] [--no-sky] [--no-doors]");
       process.exit(1);
     }
@@ -148,7 +148,7 @@ function main() {
     if (!mapFile && !a.map) {
       console.log("usage: node src/cli.js --game to --client <Tactical Ops folder> --map TO-Crossfire");
       console.log("       node src/cli.js --game to <TO-Crossfire.unr> --client <Tactical Ops folder>");
-      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.3] [--verify]");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.3397] [--verify]");
       console.log("       [--light-gain 3] [--light-floor 20] [--ambient 32] [--glow 64]");
       console.log("       [--no-light] [--no-sky] [--no-movers] [--no-water] [--spawn-limit N]");
       process.exit(1);

@@ -39,20 +39,23 @@ const TOOL_URL = manifest.repository.url.replace(/^git\+/, "").replace(/\.git$/,
 const GAME = "Tactical Ops: Assault on Terror";
 
 const DEFAULTS = {
-  // 1.3, and both of the numbers that bound it are the engines' own.
+  // Both engines' own constants bracket this. Floor: a Tactical Ops player is UT99's
+  // TournamentPlayer, CollisionRadius 17 and CollisionHeight 39, so 34 x 78 - the tightest passage
+  // a mapper may build is 78 tall and KFHumanPawn's 100 has to fit it, 100/78 = 1.2821. At 1.0 the
+  // Killing Floor player is simply TALLER than the doorways Tactical Ops built for its own.
+  // Ceiling: UE1's Pawn.MaxStepHeight is 25 against UE2.5's MAXSTEPHEIGHT of 35, so 35/25 = 1.4,
+  // above which a stair the mapper was allowed to build stops being climbable. The geometric mean
+  // sits at equal relative margin from both: sqrt(100/78 * 35/25) = 1.339728.
   //
-  // A Tactical Ops player is UT99's: CollisionRadius 17, CollisionHeight 39, so 78 units tall.
-  // KFHumanPawn is 100 (CollisionHeight 50), which puts pawn parity at 100/78 = 1.28 - and at 1.0
-  // the Killing Floor player is TALLER than the doorways Tactical Ops built for its own, so scaling
-  // up is not a matter of taste here.
+  // Checked and not binding: Tactical Ops crouches to CrouchHeight 29 (S_Player, s_SWAT.u), so 58
+  // units, and a crouched KFHumanPawn's 68 wants only 1.1724. See ../../docs/games/tacticalops.md.
   //
-  // The ceiling is the step: UE1's Pawn.MaxStepHeight is 25 and UE2.5's MAXSTEPHEIGHT is the
-  // constant 35, so anything over 35/25 = 1.4 makes a stair the mapper was allowed to build
-  // unclimbable. 1.3 clears pawn parity by 1% and sits under the step ceiling with room.
-  //
-  // What does not survive is the jump. Both games give the player JumpZ 325 against a gravity of
-  // -950, so a ledge that was exactly reachable there needs 1.3x the clearance here.
-  scale: 1.3,
+  // Two things no scale fixes. The jump: S_Player raises UT99's JumpZ to 350, which against the
+  // same -950 gravity both games use clears 64.5 units, where KF's 325 clears 55.6 - so a Tactical
+  // Ops ledge is out of reach here even at 1.0. And the specimen: 52 uu wide against a 34-unit
+  // passage wants 1.5294, which is past the step ceiling, so the tightest corridors stay closed to
+  // the zeds at every legal scale.
+  scale: 1.3397,
   // The zone's ambient lights the pawn and his hands; the actors' glow lights the walls. Same split,
   // and the same reasoning, as the Quake 3 route (GOTCHAS 4.11a).
   ambient: 32,

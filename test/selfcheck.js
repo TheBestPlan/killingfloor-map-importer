@@ -437,6 +437,18 @@ console.log("\nLineage 2 decoration scatter");
   const rock = box(3, [0, 0, -64], [512, 512, 64]);
   const buried = interiors(box(0, [0, 0, 0], [512, 512, 256]), hullsOf(rock), hullsOf(box(0, [0, 0, 0], [512, 512, 256])), [], {});
   ok("a floor buried in an additive brush is not drawn", buried.faces === 1, buried.faces + " flat face(s), the ceiling");
+
+  // Scale. Lineage 2 is the one route the two engines do not bracket: its own MAXSTEPHEIGHT is 10
+  // against Killing Floor's 35, and the client's standard building door (Door_Set_S/H_Door_OP_01)
+  // is 37 x 82 - wide enough that the clearances hold anywhere in between. So the default is
+  // character parity, 100/46, and what is worth asserting is that it stays inside the window.
+  const l2convert = require("../src/lineage2/convert");
+  ok("the default scale keeps a Lineage 2 step climbable in Killing Floor",
+    l2convert.DEFAULTS.scale * 10 <= 35,
+    "10 x " + l2convert.DEFAULTS.scale + " = " + (10 * l2convert.DEFAULTS.scale).toFixed(2) + " uu, limit 35");
+  ok("the default scale walks a specimen through a Lineage 2 door",
+    l2convert.DEFAULTS.scale * 37 >= 52,
+    "37 x " + l2convert.DEFAULTS.scale + " = " + (37 * l2convert.DEFAULTS.scale).toFixed(2) + " uu, specimen 52 wide");
 }
 console.log("\nQuake 3: archives, BSP, shaders, images");
 {
@@ -564,6 +576,12 @@ console.log("\nQuake 3: archives, BSP, shaders, images");
     // unclimbable and cuts the player off from half of q3dm7.
     ok("the default scale keeps a Quake 3 step climbable in Killing Floor",
       q3convert.DEFAULTS.scale * 18 <= 35, "18 x " + q3convert.DEFAULTS.scale + " = " + (18 * q3convert.DEFAULTS.scale) + " uu, limit 35");
+
+    // And the floor under it: a Quake 3 player is 56 units tall (playerMaxs[2] 32 over MINS_Z -24),
+    // so the tightest passage a mapper may build is 56 and KFHumanPawn's 100 has to come through it.
+    ok("the default scale fits the Killing Floor pawn through a Quake 3 passage",
+      q3convert.DEFAULTS.scale * 56 >= 100,
+      "56 x " + q3convert.DEFAULTS.scale + " = " + (56 * q3convert.DEFAULTS.scale).toFixed(2) + " uu, pawn 100");
 
     // End to end: one map, written and read back by the independent verifier.
     {
@@ -697,6 +715,12 @@ console.log("\nTactical Ops: UE1 packages, the model, the shadow bits");
   ok("the default scale keeps a Tactical Ops step climbable in Killing Floor",
     toConvert.DEFAULTS.scale * 25 <= 35,
     "25 x " + toConvert.DEFAULTS.scale + " = " + (25 * toConvert.DEFAULTS.scale) + " uu, limit 35");
+
+  // And the floor under it: TournamentPlayer is CollisionHeight 39, so a Tactical Ops player is 78
+  // units tall and the tightest passage built for him has to take KFHumanPawn's 100.
+  ok("the default scale fits the Killing Floor pawn through a Tactical Ops passage",
+    toConvert.DEFAULTS.scale * 78 >= 100,
+    "78 x " + toConvert.DEFAULTS.scale + " = " + (78 * toConvert.DEFAULTS.scale).toFixed(2) + " uu, pawn 100");
 
   // A UE1 node's ring winds the opposite way round from what a UE2.5 static mesh wants: emitted as
   // stored, every surface faces away and the client draws the level inside out - the "shredded"

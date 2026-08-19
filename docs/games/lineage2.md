@@ -1,7 +1,9 @@
 # Lineage 2 (Interlude / C6)
 
 What a Lineage 2 client is made of, and what reading one costs. Every entry was measured against the
-files in `D:\games\L2 Interlude CUZUS` or seen in the converted map running in Killing Floor.
+files in `D:\games\L2 Interlude CUZUS` or seen in the converted map running in Killing Floor. The
+scale entry (L2.26) was measured against a C1 client, `D:\games\L2 C1 Harbor`, because that is the
+one with `LineageNpc.u` and the door set on this machine.
 
 The engine these end up in has its own notes in [`../GOTCHAS.md`](../GOTCHAS.md); the other source
 game is in [`goldsrc.md`](goldsrc.md).
@@ -487,17 +489,53 @@ start in the street beats seven in houses.
 
 ## L2.26 The two games do not measure with the same ruler
 
-A Lineage 2 character is about half the height of a Killing Floor pawn, so a town carried across 1:1
-fits the world and not the player: the player stands as tall as a house door (Screenshot_53). The
-squares go through the same `scale` knob the Counter-Strike route uses to turn Half-Life units into
-Unreal ones, with a default of **2**.
+Both games count in Unreal units, but not with the same ruler: a town carried across 1:1 fits the
+world and not the player, who stands as tall as a house door (Screenshot_53). The squares go through
+the same `scale` knob the Counter-Strike route uses, with a default of **2.1739**.
 
-One thing has to move with it. The world box reaches 24000 units above the highest ground so the sky
-has somewhere to be, and the sky cube was centred on the box's middle — which is up there with it. At
-scale 2 that put the cube's floor 14000 units over the player's head: he stood outside his own sky
-and saw black at the horizon with the last frame smeared across it. The cube is centred on the ground
-and sized to hold the whole box, corners included; at scale 2 that is a half-size of about 62000, and
-the renderer draws it.
+**This is the one route the two engines do not bracket.** Everywhere else the answer is pinned
+between a clearance floor and a step ceiling within a few percent. Here the window is 149 % wide and
+decides nothing:
+
+| bound | where it comes from | value |
+|---|---|---:|
+| ceiling | Lineage 2's own `MAXSTEPHEIGHT` against Killing Floor's 35 | 35/10 = **3.5000** |
+| floor | a 52-uu-wide specimen through the client's standard door | 52/37 = **1.4054** |
+| floor | `KFHumanPawn`'s 100 uu through the same door | 100/82 = 1.2195 |
+
+Lineage 2 keeps its step height as a `UConst` in the client's own `Engine.u`, and it is **10.0** —
+`00 00 66 24 06 20 31 30 2e 30 00`, a length-prefixed `" 10.0"`. A quarter of Killing Floor's stride,
+which is why nothing this route produces has ever hit the step ceiling.
+
+The door is measured, not assumed. Reading the bounding box of every static mesh named `*door*` in
+`StaticMeshes\*.usx` puts the ordinary building door at **37 × 82** (`Door_Set_S/H_Door_OP_01` and
+`H_Door_MV_01`; the elf set is 30 × 93, castle gates run 244–496 tall). So the assumption the other
+three routes lean on — *the tightest passage a mapper builds is the player's own hull* — is false
+here. Lineage 2 is third person and builds generously: its people are 46 units tall and their doors
+are 82.
+
+That leaves character parity as the only thing left to aim at. `LineagePawn` does not carry a
+collision size — the server sends it — but the NPCs do, and the human ones in `LineageNpc.u` run
+`CollisionHeight` 21–27 at `CollisionRadius` 8 (101 classes, median 23). Half-heights, so **46 × 16
+units**, which independently matches the `collision_height 23` the game's own character templates
+carry. Against `KFHumanPawn`'s 100:
+
+```text
+100 / 46 = 2.173913
+```
+
+The Killing Floor player then stands in the world at the size its townsfolk had. The geometric mean
+of the useless window, 2.2179, lands within 2 % of it — a coincidence worth noting and not a second
+derivation.
+
+What ×2 was costing: nothing that breaks. Clearances at 2.0 are comfortable (door 164 × 74 against a
+100 × 40 pawn, step 20 uu against a limit of 35); the player was simply 8 % larger relative to the
+town than a Lineage 2 character had been.
+
+There is no jump constraint on this route, because Lineage 2 characters do not jump. `JumpZ=420` in
+the client's `Engine.Pawn` is the stock Unreal Engine 2 default and nothing uses it.
+
+One thing has to move with the scale. The world box reaches 24000 units above the highest ground so the sky has somewhere to be, and the sky cube was centred on the box's middle — which is up there with it. At ×2 that put the cube's floor 14000 units over the player's head: he stood outside his own sky and saw black at the horizon with the last frame smeared across it. The cube is centred on the ground and sized to hold the whole box, corners included; at ×2 that is a half-size of about 62000, it grows with the knob, and the renderer draws it.
 
 ## L2.27 The layer blend fits on a static mesh after all — as vertex alpha
 

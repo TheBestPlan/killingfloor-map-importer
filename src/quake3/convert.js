@@ -41,16 +41,23 @@ const TOOL_URL = manifest.repository.url.replace(/^git\+/, "").replace(/\.git$/,
 const GAME = Q3.GAME;
 
 const DEFAULTS = {
-  // 1.9, the same number the Counter-Strike route uses, and for a reason that has nothing to do
-  // with it: UE2.5's MaxStepHeight is 35 Unreal units and Quake 3's STEPSIZE is 18 map units, so
-  // anything above 35/18 = 1.94 makes a stock 16-unit staircase unclimbable and locks the player out
-  // of half of q3dm7. Under that ceiling this is also the honest scale: a Quake 3 player is 56 units
-  // tall and KFHumanPawn is 100 (CollisionHeight 50), so 56 x 1.9 = 106 puts the two within 6%.
+  // Both engines' own constants bracket this. Floor: a Quake 3 player is 30 x 56 (playerMins
+  // {-15,-15,-24}, playerMaxs {15,15,32}), so the tightest passage a mapper may build is 56 tall and
+  // KFHumanPawn's 100 has to fit it - 100/56 = 1.7857. Ceiling: MAXSTEPHEIGHT is 35 uu against
+  // Quake 3's STEPSIZE of 18, so 35/18 = 1.9444, above which a stock staircase stops being
+  // climbable and locks the player out of half of q3dm7. The geometric mean sits at equal relative
+  // margin from both: sqrt(100/56 * 35/18) = 1.863390.
   //
-  // What does NOT survive the scale is the jump: 325 JumpZ against KF's gravity clears 56 uu, where
-  // Quake 3's 270 against its own clears 46 map units = 87 uu. Ledges a Quake player hops onto need
-  // a run-up here, and the ones that needed a rocket jump there are simply out of reach.
-  scale: 1.9,
+  // Two constraints that do not bind, but were checked: a crouched KFHumanPawn (68 uu) through
+  // Quake 3's ducked hull (maxs[2] drops to 16, so 40 tall) wants 1.7000, and a 52-uu-wide specimen
+  // through a 30-unit passage wants 1.7333. Independent corroboration: Quake 3's eye is 50 uu off
+  // the floor (MINS_Z -24 + DEFAULT_VIEWHEIGHT 26) against KFHumanPawn's 94, and 94/50 = 1.88 lands
+  // within 1% of the mean. See ../../docs/games/quake3.md Q3.10.
+  //
+  // What does NOT survive the scale is the jump: 325 JumpZ against KF's gravity clears 55.6 uu,
+  // where Quake 3's JUMP_VELOCITY 270 against its own gravity of 800 clears 45.6 map units = 85 uu
+  // here. Ledges a Quake player hops onto need a run-up, and the rocket-jump ones are out of reach.
+  scale: 1.8634,
   patchLevel: 4,            // bezier tessellation: (L+1)^2 vertices per 3x3 control patch
   // The two together are what lights the world, and the zone's share alone is what lights the
   // player, his hands and the zeds (GOTCHAS 4.11a) - so the split is "what the pawn needs" against

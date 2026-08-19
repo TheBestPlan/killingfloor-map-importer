@@ -102,8 +102,8 @@
       <fieldset>
         <legend data-i18n="legend.l2Conv">Conversion</legend>
         <label data-i18n="label.q3Scale">Scale (Quake 3 units &rarr; Killing Floor units)</label>
-        <input type="number" id="q3Scale" step="0.1" min="0.1" max="1.94">
-        <div class="hint" data-i18n="hint.q3Scale">1.9 is the ceiling, not a preference: above 35/18 = 1.94 a stock 16-unit staircase is taller than the engine's step height and the player cannot climb it.</div>
+        <input type="number" id="q3Scale" step="0.0001" min="0.1" max="1.9444">
+        <div class="hint" data-i18n="hint.q3Scale">The window runs 1.79 to 1.94: below 100/56 the Killing Floor pawn no longer fits a Quake 3 passage, above 35/18 a stock staircase is taller than the engine's step height. 1.8634 is the middle of it.</div>
         <label data-i18n="label.q3Patch">Curve detail (bezier patches)</label>
         <input type="number" id="q3Patch" step="1" min="1" max="8">
         <div class="hint" data-i18n="hint.q3Patch">Every arch, pipe and hill in the game is a patch. 4 is the default; 2 halves their triangles and shows the facets.</div>
@@ -132,8 +132,8 @@
       <fieldset>
         <legend data-i18n="legend.l2Conv">Conversion</legend>
         <label data-i18n="label.toScale">Scale (Tactical Ops units &rarr; Killing Floor units)</label>
-        <input type="number" id="toScale" step="0.05" min="0.1" max="1.4">
-        <div class="hint" data-i18n="hint.toScale">1.3 puts the two games' players the same height (78 units against 100); 1.4 is the ceiling, above which a 25-unit step is taller than this engine's stride.</div>
+        <input type="number" id="toScale" step="0.0001" min="0.1" max="1.4">
+        <div class="hint" data-i18n="hint.toScale">The window runs 1.28 to 1.4: below 100/78 the Killing Floor pawn no longer fits a Tactical Ops passage, above 35/25 a 25-unit step is taller than this engine's stride. 1.3397 is the middle of it.</div>
         <label data-i18n="label.toLightGain">Light gain</label>
         <input type="number" id="toLightGain" step="0.5" min="0.5" max="16">
         <div class="hint" data-i18n="hint.toLightGain">Unreal Engine 1 stores one shadow bit per luxel per light, not a lightmap; the light is rebuilt from the map's own lamps and this is how bright it comes out.</div>
@@ -350,13 +350,13 @@ function save() {
   settings.l2Ambient = parseInt($("l2Ambient").value, 10);
   settings.l2Glow = parseInt($("l2Glow").value, 10);
   settings.q3Dir = $("q3Dir").value.trim();
-  settings.q3Scale = parseFloat($("q3Scale").value) || 1.9;
+  settings.q3Scale = parseFloat($("q3Scale").value) || 1.8634;
   settings.q3Patch = parseInt($("q3Patch").value, 10) || 4;
   settings.q3LightGain = parseFloat($("q3LightGain").value) || 4;
   settings.q3Ambient = parseInt($("q3Ambient").value, 10);
   settings.q3Glow = parseInt($("q3Glow").value, 10);
   settings.toDir = $("toDir").value.trim();
-  settings.toScale = parseFloat($("toScale").value) || 1.3;
+  settings.toScale = parseFloat($("toScale").value) || 1.3397;
   settings.toLightGain = parseFloat($("toLightGain").value) || 3;
   settings.toAmbient = parseInt($("toAmbient").value, 10);
   settings.toGlow = parseInt($("toGlow").value, 10);
@@ -408,13 +408,13 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("l2Ambient").value = settings.l2Ambient === undefined ? 32 : settings.l2Ambient;
   $("l2Glow").value = settings.l2Glow === undefined ? 40 : settings.l2Glow;
   $("q3Dir").value = settings.q3Dir || "";
-  $("q3Scale").value = settings.q3Scale === undefined ? 1.9 : settings.q3Scale;
+  $("q3Scale").value = settings.q3Scale === undefined ? 1.8634 : settings.q3Scale;
   $("q3Patch").value = settings.q3Patch === undefined ? 4 : settings.q3Patch;
   $("q3LightGain").value = settings.q3LightGain === undefined ? 4 : settings.q3LightGain;
   $("q3Ambient").value = settings.q3Ambient === undefined ? 40 : settings.q3Ambient;
   $("q3Glow").value = settings.q3Glow === undefined ? 96 : settings.q3Glow;
   $("toDir").value = settings.toDir || "";
-  $("toScale").value = settings.toScale === undefined ? 1.3 : settings.toScale;
+  $("toScale").value = settings.toScale === undefined ? 1.3397 : settings.toScale;
   $("toLightGain").value = settings.toLightGain === undefined ? 3 : settings.toLightGain;
   $("toAmbient").value = settings.toAmbient === undefined ? 32 : settings.toAmbient;
   $("toGlow").value = settings.toGlow === undefined ? 64 : settings.toGlow;

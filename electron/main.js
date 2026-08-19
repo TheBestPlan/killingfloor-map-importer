@@ -29,7 +29,7 @@ const DEFAULT_SETTINGS = {
   // Quake 3: the client folder, and the same two-way light split as Lineage 2. The defaults are the
   // converter's own - see src/quake3/convert.js for why the scale cannot go above 1.94.
   q3Dir: "",
-  q3Scale: 1.9,
+  q3Scale: 1.8634,
   q3Patch: 4,          // bezier tessellation level
   q3Ambient: 40,
   q3Glow: 96,
@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS = {
   // Tactical Ops: an Unreal Engine 1 install. The scale ceiling is the step again - see
   // src/tacticalops/convert.js - and the light gain is what the rebuilt UE1 light mesh ends in.
   toDir: "",
-  toScale: 1.3,
+  toScale: 1.3397,
   toAmbient: 32,
   toGlow: 64,
   toLightGain: 3,

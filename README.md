@@ -108,7 +108,7 @@ node src/cli.js --game q3 "…/maps/mymap.bsp" --client "…/Quake III Arena" --
 | `--client <dir>` | an installed Quake III Arena, if there is one | the folder holding `baseq3\` (`KF_QUAKE3` also sets it) |
 | `--map <name>` | — | map name inside the archives, without `.bsp` |
 | `--mod <name>` | `baseq3`, then `missionpack` | which folder to read; Team Arena is `missionpack` |
-| `--scale <n>` | `1.9` | Quake 3 units → Unreal units. Above 1.94 a stock staircase stops being climbable |
+| `--scale <n>` | `1.8634` | Quake 3 units → Unreal units. Above 1.94 a stock staircase stops being climbable |
 | `--patch-level <n>` | `4` | how finely bezier patches are tessellated |
 | `--light-gain <n>` / `--light-floor <n>` | `4` / `20` | the map's own lightmap, scaled and floored on the way into the atlas |
 | `--ambient <n>` / `--glow <n>` | `40` / `96` | the zone lights the player, the mesh actors' glow lights the world |
@@ -133,7 +133,7 @@ node src/cli.js --game to "…/TacticalOps/Maps/TO-Crossfire.unr" --client "…/
 | --- | --- | --- |
 | `--client <dir>` | an installed Tactical Ops, if there is one | the folder holding `TacticalOps\Maps` (`KF_TACTICALOPS` also sets it) |
 | `--map <name>` | — | map name without `.unr`, e.g. `TO-Avalanche` |
-| `--scale <n>` | `1.3` | UT99 units → Unreal units. Pawn parity is 1.28; above 1.4 a 25-unit step stops being climbable |
+| `--scale <n>` | `1.3397` | UT99 units → Unreal units. Pawn parity is 1.28; above 1.4 a 25-unit step stops being climbable |
 | `--light-gain <n>` / `--light-floor <n>` | `3` / `20` | how bright the rebuilt light mesh comes out, and the floor under it |
 | `--ambient <n>` / `--glow <n>` | `32` / `64` | the zone lights the player, the mesh actors' glow lights the world |
 | `--no-light` | off | skip the light rebuild entirely — geometry and textures only |
@@ -248,9 +248,9 @@ The notes are split the way the converter is: one file for the target, one per s
 - **[docs/RESEARCH.md](./docs/RESEARCH.md)** — the format research: what was measured on both sides, the `UModel` v128 serialization order, the three possible architectures and why this one, how the existing `KF-CS-*` ports were actually made.
 - **[docs/GOTCHAS.md](./docs/GOTCHAS.md)** — the Killing Floor side: every measured pitfall of writing UE2.5, including the invariants whose violation crashes the engine. Required reading before changing the writer, whatever you are reading from.
 - **[docs/games/goldsrc.md](./docs/games/goldsrc.md)** — what reading a Counter-Strike 1.6 `.bsp` costs: WADs, palettes and masking, sky images, brush entities, `.mdl` props, water.
-- **[docs/games/quake3.md](./docs/games/quake3.md)** — what reading a Quake III Arena client costs: the `.pk3` search path, IBSP v46, bezier patches, the `.shader` scripts and the one typo in id's own that costs 180 of them, the lightmap pages, why the scale is 1.9, and what Team Arena needs.
-- **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields, their layer blend and their grass, brush polygons, how a surface says it is blended, animated textures and particle systems, and why the sky cannot be carried across.
-- **[docs/games/tacticalops.md](./docs/games/tacticalops.md)** — what reading an Unreal Engine 1 client costs: the v69 `UModel` and the three fields that are not guessable, why the scale is 1.3, why every node ring has to be emitted reversed, UE1's baked light as one shadow BIT per luxel per light and the arithmetic that turns it back into pixels, the sky room, and movers as the only geometry outside the BSP.
+- **[docs/games/quake3.md](./docs/games/quake3.md)** — what reading a Quake III Arena client costs: the `.pk3` search path, IBSP v46, bezier patches, the `.shader` scripts and the one typo in id's own that costs 180 of them, the lightmap pages, why the scale is 1.8634, and what Team Arena needs.
+- **[docs/games/lineage2.md](./docs/games/lineage2.md)** — what reading a Lineage 2 client costs: the `Lineage2Ver111` XOR, the deltas between package version 123 and 128, terrain heightfields, their layer blend and their grass, brush polygons, how a surface says it is blended, animated textures and particle systems, why the sky cannot be carried across, and why this is the one route where the two engines do not bracket the scale and character parity has to.
+- **[docs/games/tacticalops.md](./docs/games/tacticalops.md)** — what reading an Unreal Engine 1 client costs: the v69 `UModel` and the three fields that are not guessable, why the scale is 1.3397, why every node ring has to be emitted reversed, UE1's baked light as one shadow BIT per luxel per light and the arithmetic that turns it back into pixels, the sky room, and movers as the only geometry outside the BSP.
 - **[harness/README.md](./harness/README.md)** — checking a converted map in the real client.
 
 ## Legal

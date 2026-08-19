@@ -63,23 +63,62 @@ Three details that are not guessable and cost time if assumed:
   header (a heritage list instead), and the name table is bare C strings rather than
   length-prefixed. `../unreal/read.js` handles both shapes.
 
-## TO.3 Scale is 1.3, and both bounds are the engines' own constants
+## TO.3 Scale is 1.3397, and both bounds are the engines' own constants
 
-A Tactical Ops player is UT99's: `CollisionRadius=17`, `CollisionHeight=39`, so **78 units tall**.
-`KFHumanPawn` is **100** (`CollisionHeight=50`). Pawn parity is 100/78 = **1.28** — and at 1.0 the
-Killing Floor player is *taller than the doorways Tactical Ops built for its own*, so scaling up is
-not a matter of taste here.
+Every number below was read out of the install's own packages, by walking each class export's
+tagged default-property block and keeping the parse that ends on a `None` terminator at the object's
+last byte — `S_Player` closes at +5584 of 5584, `Engine.Pawn` at +2539 of 2539:
 
-The ceiling is the step. UE1's `Pawn.MaxStepHeight` is a property with a default of **25**; UE2.5's
-`MAXSTEPHEIGHT` is the constant **35** in `Actor.uc`. Anything above 35/25 = **1.4** makes a
-staircase the mapper was allowed to build unclimbable.
+```text
+Botpack.u    TournamentPlayer   CollisionRadius=17  CollisionHeight=39   -> 34 x 78 units
+s_SWAT.u     S_Player           CrouchHeight=29                          -> 58 units crouched
+s_SWAT.u     S_Player           GroundSpeed=300  JumpZ=350  BaseEyeHeight=35
+Engine.u     Pawn               MaxStepHeight=25
+Engine.u     ZoneInfo           ZoneGravity=(0,0,-950)
+```
 
-**1.3** clears pawn parity by 1% and sits under the step ceiling with room: a 25-unit step arrives
-at 32.5 against the pawn's 35.
+Nothing in the chain `S_Player → s_BPlayer → TO_SysPlayer → TournamentPlayer` overrides the collision
+size or the step height — checked by searching each export's bytes for the property name itself, not
+by assuming. So the Tactical Ops player is UT99's, and `CrouchHeight=29` is Tactical Ops' own
+addition (Unreal Engine 1 has no crouch of its own).
 
-What does not survive is the jump. Both games give the player `JumpZ=325` against a gravity of
-−950, so a ledge that was exactly reachable in Tactical Ops needs 1.3× the clearance here. That is a
-property of the two games, not of the conversion.
+Against `KFHumanPawn` (100 × 40 standing, 68 crouched) and Killing Floor's `MAXSTEPHEIGHT` of 35:
+
+| constraint | ratio | bound |
+|---|---|---:|
+| `KFHumanPawn`'s 100 uu through the tightest passage a mapper may build (78) | 100/78 | ≥ **1.2821** |
+| a 25-unit step under `MAXSTEPHEIGHT` 35 | 35/25 | ≤ **1.4000** |
+| `KFHumanPawn`'s 40 uu of width through a 34-unit passage | 40/34 | ≥ 1.1765 |
+| a crouched `KFHumanPawn` (68 uu) through Tactical Ops' crouch hull (58) | 68/58 | ≥ 1.1724 |
+| a specimen's 88 uu of height through the same 78-unit passage | 88/78 | ≥ 1.1282 |
+
+At 1.0 the Killing Floor player is simply *taller than the doorways Tactical Ops built for its own*,
+so scaling up is not a matter of taste here. The window is 9.2 % wide, both bounds are ratios, and
+the value at equal relative margin from each is their geometric mean:
+
+```text
+sqrt(100/78 x 35/25) = 1.339728
+```
+
+A 78-unit passage arrives at 104.5 uu against the 100 the pawn needs; a 25-unit step arrives at 33.5
+uu against the 35 limit. `test/selfcheck.js` asserts both. The old default of 1.3 sat inside the
+window too, but 1.4 % over the floor with 7.1 % of unused room above it.
+
+`CrouchHeight=29` is read as a half-height, the Unreal convention `SetCollisionSize` takes — 74 % of
+the standing 39, a shallow tactical-shooter crouch. The conclusion does not depend on it: at 58 units
+the crouch wants 1.1724 and never binds.
+
+Two things no scale fixes:
+
+- **The jump.** `S_Player` raises UT99's `JumpZ` to **350**, and both games run gravity −950, so a
+  Tactical Ops player clears 350²/1900 = 64.5 units where Killing Floor's 325 clears 55.6. The ratio
+  is 0.86, *below one* — a ledge that was exactly reachable in Tactical Ops is out of reach here
+  even at scale 1.0, never mind 1.34. (An earlier version of this note said both games give
+  `JumpZ=325`; that is UT99's value, not Tactical Ops'.)
+- **The specimen.** 52 uu of zed width through a 34-unit passage wants 1.5294, which is past the step
+  ceiling of 1.4. The tightest corridors Tactical Ops allows stay closed to the zeds at every legal
+  scale — the only one of the four routes where a constraint is unsatisfiable rather than merely
+  tight.
 
 ## TO.4 A node's ring winds the other way round
 

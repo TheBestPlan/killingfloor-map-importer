@@ -42,12 +42,19 @@ const TOOL_URL = "https://github.com/geekrainian/killingfloor-map-importer";
 const GAME = "Lineage 2";
 
 const DEFAULTS = {
-  // Both games measure in Unreal units, but not with the same ruler: a Lineage 2 character is about
-  // half the height of a Killing Floor pawn, so a town carried across 1:1 fits the world and not the
-  // player - the player stands as tall as a house door (Screenshot_53). Two is the ratio of the two
-  // games' own characters, and it is the same knob the Counter-Strike route uses to turn Half-Life
-  // units into Unreal ones.
-  scale: 2,
+  // Both games measure in Unreal units, but not with the same ruler, and this is the one route
+  // where the two engines do NOT bracket the answer. Ceiling: Lineage 2's own MAXSTEPHEIGHT is the
+  // constant 10.0 (a UConst in the client's Engine.u) against Killing Floor's 35, so 35/10 = 3.5.
+  // Floor: the client's standard building door, Door_Set_S/H_Door_OP_01, measures 37 x 82, so a
+  // 52-uu-wide specimen through it wants 1.4054 and the 100-uu pawn wants 1.2195. A window that
+  // wide decides nothing - the clearances are comfortable anywhere inside it.
+  //
+  // So the number is character parity instead. Lineage 2's own people are 46 uu tall and 16 wide:
+  // LineagePawn takes its collision from the server, but the NPCs carry theirs, and the human ones
+  // in LineageNpc.u run CollisionHeight 21-27 (median 23, half-height) at CollisionRadius 8. Against
+  // KFHumanPawn's 100 that is 100/46 = 2.173913, which puts the Killing Floor player in the world at
+  // the size its own townsfolk had. See ../../docs/games/lineage2.md L2.26.
+  scale: 2.1739,
   terrainStep: 1,           // 1 keeps every terrain vertex, 2 halves the grid
   // The zone lights the player and the zeds; the ground takes its own share through AmbientGlow, so
   // one number does not have to serve both (GOTCHAS 4.11a). Judged on 24_13 against 20 and 168: at

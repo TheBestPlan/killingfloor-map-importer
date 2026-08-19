@@ -150,14 +150,41 @@ those get the cloud image itself on all six faces: a still sky of the map's own 
 seams and all, which is a great deal closer than a flat blue. q3dm1's hell sky and q3dm17's black
 void both come out right this way.
 
-## Q3.10 Scale is 1.9, and it is the STAIR that fixes it, not the eye
+## Q3.10 Scale is 1.8634, and both bounds are the engines' own constants
 
-By eye height a Quake 3 map wants ×2.5: the Counter-Strike route uses ×1.9165 for a 72-unit player,
-and a Quake 3 player is 56 units tall, so the same relative size is 1.9165 × 72/56 = 2.46.
+A Quake 3 player is **30 × 30 × 56** — `playerMins {-15,-15,-24}`, `playerMaxs {15,15,32}` in
+`bg_pmove.c` — and ducks to 40 by dropping `maxs[2]` to 16. `STEPSIZE` is **18 map units**, the
+tallest step the game itself lets him walk up. Against `KFHumanPawn` (100 × 40 standing, 68 crouched)
+and Killing Floor's `MAXSTEPHEIGHT` of 35, that gives five constraints, of which two bind:
 
-That number is unusable. Quake 3's `STEPSIZE` is **18 map units** — the tallest step the game itself
-lets a player walk up — and Unreal Engine 2's step limit is **35 Unreal units**, so any scale over
-35/18 = 1.94 puts a step the mapper was allowed to build past the height the pawn can climb.
+| constraint | ratio | bound |
+|---|---|---:|
+| `KFHumanPawn`'s 100 uu through the tightest passage a Quake 3 mapper may build (56) | 100/56 | ≥ **1.7857** |
+| a step the mapper was allowed to build (18) under `MAXSTEPHEIGHT` 35 | 35/18 | ≤ **1.9444** |
+| a 52-uu-wide specimen through a 30-unit passage | 52/30 | ≥ 1.7333 |
+| a crouched `KFHumanPawn` (68 uu) through Quake 3's ducked hull (40) | 68/40 | ≥ 1.7000 |
+| a specimen's 88 uu of height through the same 56-unit passage | 88/56 | ≥ 1.5714 |
+
+The window is 8.9 % wide. Both bounds are ratios, so the value at equal relative margin from each is
+their geometric mean:
+
+```text
+sqrt(100/56 x 35/18) = 1.863390
+```
+
+A 56-unit passage arrives at 104.3 uu against the 100 the pawn needs; an 18-unit step arrives at
+33.5 uu against the 35 limit. `test/selfcheck.js` asserts both.
+
+**The eye agrees, which is the part that is not a coincidence.** Quake 3's view sits at
+`MINS_Z` −24 + `DEFAULT_VIEWHEIGHT` 26 = **50 uu off the floor**, `KFHumanPawn`'s at
+`CollisionHeight` 50 + `BaseEyeHeight` 44 = 94. Camera parity is 94/50 = **1.88**, within 1 % of the
+mean. Quake 3 is the only one of the four routes where the clearance window and the camera land on
+the same number — on the Counter-Strike route camera parity is 1.4688 against a window starting at
+1.8889, which is why that route needs a field-of-view argument and this one does not.
+
+*(An earlier version of this note put the eye figure at ×2.4. That was 1.9 × 72/56 — the
+Counter-Strike scale rescaled by the ratio of the two players — not Quake 3's own camera, and it is
+wrong.)*
 
 *(The 35 is the engine's own constant. It is not a `Pawn` variable in this build — nothing under the
 SDK's `Engine/Classes` declares `MaxStepHeight` — so it could not be read back from the game files
@@ -165,14 +192,15 @@ here, and the harness drives the console rather than the player, so it could not
 The stock staircases this converter has been run against are 8 and 16 units, which clear the bound
 with room to spare at 15 and 30 uu.)*
 
-Under that ceiling 1.9 is also the honest number by accident: a 56-unit Quake 3 player scales to
-106 uu against `KFHumanPawn`'s 100 (`CollisionHeight=50`), so the two are within 6% and the world
-reads at its own size.
+*(Quake 3's own constants could not be read from the local install either: `pak0.pk3` ships the game
+logic as compiled QVM bytecode. They are id's published GPL source, the same footing as the
+Half-Life SDK constants the Counter-Strike route uses.)*
 
-What does not survive the scale is the **jump**. `JumpZ=325` against Killing Floor's gravity clears
-about 56 uu; Quake 3's 270 against its own clears 46 map units = 87 uu. Ledges a Quake player hops
-onto need a run-up here, and the ones that needed a rocket jump are out of reach. No scale fixes
-that — the ratio of jump to step is a property of the two games, not of the conversion.
+What does not survive the scale is the **jump**. `JumpZ=325` against Killing Floor's gravity of −950
+clears 55.6 uu; Quake 3's `JUMP_VELOCITY` 270 against its own 800 clears 45.6 map units, which is 85
+uu here. Ledges a Quake player hops onto need a run-up, and the ones that needed a rocket jump are
+out of reach. No scale fixes that — the ratio of jump to step is a property of the two games, not of
+the conversion.
 
 ## Q3.11 The props are already in the BSP
 
