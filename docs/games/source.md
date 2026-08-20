@@ -22,24 +22,48 @@ L4D2 are v21 of the same format.
 
 ## How it works
 
-The world model's brush faces are read from the `FACES` / `EDGES` / `SURFEDGES` / `VERTEXES` lumps,
-their UVs from `TEXINFO` (the `textureVecs` projection ÷ the texture size), and their material names
-from `TEXDATA` + the texture-string table. It reuses the whole 3D-model route below it — the same KF
-skeleton, sky, light and `--verify` path — so it takes the same `--scale`, `--crop`, `--ambient`,
-`--glow`, `--tex-gain`, `--no-sky` options (see [`model.md`](./model.md)). Source is Z-up like
-GoldSrc, so the scale defaults to the GoldSrc pawn-fit `1.9165`.
+Every brush model's faces are read from the `FACES` / `EDGES` / `SURFEDGES` / `VERTEXES` lumps —
+world model 0 **and** the brush entities after it (doors, windows, breakables, `func_brush`
+decoration), so a doorway or window frame is no longer a hole. UVs come from `TEXINFO` (the
+`textureVecs` projection ÷ the texture size) and material names from `TEXDATA` + the texture-string
+table. It reuses the whole 3D-model route below it — the same KF skeleton, sky, light and `--verify`
+path — so it takes the same `--scale`, `--crop`, `--ambient`, `--glow`, `--tex-gain`, `--no-sky`
+options (see [`model.md`](./model.md)). Source is Z-up like GoldSrc, so the scale defaults to the
+GoldSrc pawn-fit `1.9165`.
 
-Tool surfaces (sky, `nodraw`, `skip`, `hint`, `trigger`) are dropped, as on the GoldSrc route.
+Tool surfaces (sky, `nodraw`, `skip`, `hint`, `trigger`) are dropped by their `texinfo` flags, so the
+brush entities bring only visible geometry — triggers and clips on them are filtered out too.
+
+Source maps carry no KF lights, so this route leans on the zone ambient + per-actor glow; with the
+engine's ~2.5x unlit overbright that reads as a white-out, so the route lowers `texGain` (0.45),
+`ambient` (40) and `glow` (20) for it. `KF_TEX_GAIN` / `KF_AMBIENT` / `KF_GLOW` override.
+
+## What it carries
+
+- **World + entity brushes** — faces, UVs, materials from every brush model (above).
+- **Textures** — the `.vtf` each `.vmt` references, decoded (DXT1/3/5 + plain BGR/BGRA, alpha carried)
+  from the map's `PAKFILE` lump or the game's VPKs (`src/source/{vtf,vmt,vpk,zip}.js`).
+- **Cut-out foliage & glass** — a material with `$alphatest` / `$translucent` becomes an `STY_Masked`
+  texture the engine thresholds to a hard edge (grass blades, leaves, chain-link), `bTwoSided` when the
+  material is `$nocull`. Without this the grass came out as solid green rectangles.
+- **Displacements** — `dispinfo` surfaces (terrain ground, e.g. de_dust2's floor): each base quad
+  becomes a `(2^power+1)` grid displaced by its `DISP_VERTS`.
+- **Static props** — `prop_static` placements are read from the `GAME_LUMP` `sprp`, their `.mdl`/`.vvd`
+  /`.vtx` models loaded (`src/source/mdl.js`) and **instanced**: one shared `StaticMesh` per model, one
+  `StaticMeshActor` per placement. The prop's Source rotation is re-expressed as a KF rotator through
+  the Y-mirror (forward/up axes + `up × forward`), consistent with the player-start `-yaw`. A prop the
+  map marked `SOLID_NONE` (grass, small foliage) is placed **without collision** so the player walks
+  through it. A Garry's Mod DBD realm is almost entirely props; extract its `.gma` with `gmad` first. A
+  model over the 16-bit index limit is split into parts; `KF_PROP_LOD` (default 2) picks a lower LOD.
+- **Player starts** — from the entity lump (`info_player_*`, `info_survivor_position`).
 
 ## What is missing (yet)
 
-- **Textures.** Materials come out as flat colours hashed from their name. The real look needs the
-  VTF/VMT pipeline (decode the `.vtf` referenced by each `.vmt`, from the map's `PAKFILE` lump or the
-  game's VPKs) — next on this route.
-- **Displacements.** `dispinfo` surfaces (terrain-like ground on many maps, e.g. de_dust2's floor)
-  are skipped for now — the count is logged.
-- **Static props.** `prop_static` placements reference external `.mdl` models (trees, crates, most of
-  a map's detail); not read yet, so the output is the brush shell.
+- A prop's collision is the render mesh's own kDOP, not its Source VPHYSICS hull, so a highly detailed
+  solid mesh (a railed staircase) collides bump-for-bump rather than as the smooth hull Source uses.
+- A model over ~65000 *vertices* (none of the tested maps hit this) is still skipped.
+- Displacement edge-neighbour stitching is not done (small seams possible between adjacent displacements).
+- Prop LODs with per-LOD vertex fixups stay on LOD0.
 ## CS2 (Source 2)
 
 CS2 is **not** VBSP — it is Source 2: the compiled world lives in a `.vpk` (v2) as `.vwrld_c` /

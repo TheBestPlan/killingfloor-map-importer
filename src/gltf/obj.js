@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Wavefront OBJ (+ MTL) reader, producing the same scene shape as read.js loadScene:
 //   { prims:[{pos,nrm,uv,indices,material,matrix}], materials:[{name,factor,imageIndex}],
 //     lights:[], decodeMaterialImage, applyMat4, applyMat3 }

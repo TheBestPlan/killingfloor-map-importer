@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Self-check for the glTF -> Killing Floor route. Builds a synthetic scene (a PNG-textured cube with
 // a point light and a directional light), converts it, and runs the .rom back through the independent
 // reader's invariant checks. No game files needed - safe in CI.

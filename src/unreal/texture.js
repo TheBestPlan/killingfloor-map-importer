@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc miptex -> embedded UE2.5 UTexture + UPalette.
 // P8 is kept: GoldSrc textures are 8-bit palettised and so is Unreal's TEXF_P8, so the pixels go
 // across with no recompression and no colour loss. GoldSrc's own 4 mip levels are reused and the
@@ -360,11 +363,13 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
   // marker and a 64x2 fibre in the stock Tactical Ops maps are exactly that. Levels below 4x4
   // inside a valid texture are fine - it is only the top one that has to hold a block.
   const tiny = img.width < 4 || img.height < 4;
+  const masked = !!(opts && opts.masked);          // STY_Masked cut-out (foliage, fences, chain-link)
+  const twoSided = !!(opts && opts.twoSided);       // $nocull: draw both faces of a foliage card
   const dxt1 = !img.alpha && !(opts && opts.raw) && !tiny;
   // A cut-out wall texture cannot be DXT1 (one bit of alpha) and must not be RGBA8 either: a Team
   // Arena map carries 335 of them, and at 256x256 that is 44 MB of uncompressed pixels against
   // 11 MB as DXT3. `dxt3` is for those - callers that need the exact pixels still get RGBA8.
-  const dxt3 = !dxt1 && !tiny && !!(img.alpha && opts && opts.dxt3);
+  const dxt3 = !dxt1 && !tiny && !!(img.alpha && opts && (opts.dxt3 || masked));
   const texRef = pkg.addExport({
     classRef: refs.Texture, name: sanitizeName(name), flags: refs.flagsGame,
     serialize: (p) => {
@@ -384,6 +389,10 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
         pr.byte("VClampMode", 1);
       }
       if (img.alpha) pr.bool("bAlphaTexture", true);
+      // Cut-out foliage: STY_Masked thresholds the alpha to a hard edge, which is what a grass card or a
+      // leaf sprite needs (no depth-sort). bTwoSided keeps the back of the card from culling ($nocull).
+      if (masked) { pr.bool("bMasked", true); pr.byte("Style", 2); }
+      if (twoSided) pr.bool("bTwoSided", true);
       // One frame of a flipbook, the same way addRawTexture writes one: the next frame's export
       // does not exist yet when this one is registered - the last frame points back at the first -
       // so the reference is asked for at serialise time.

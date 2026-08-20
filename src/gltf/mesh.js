@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // glTF scene primitives -> UE2.5 static meshes.
 //
 // Output is the shape unreal/staticmesh.js serializes unchanged, the same one build/mesh.js and

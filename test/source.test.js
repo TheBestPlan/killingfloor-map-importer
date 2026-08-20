@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Self-check for the Source BSP route. Converts a stock Counter-Strike: Source map and runs the .rom
 // through the independent reader's invariants. Skips cleanly when CS:Source is not installed (CI).
 "use strict";
@@ -7,8 +10,22 @@ const os = require("os");
 const path = require("path");
 const assert = require("assert");
 
-const { convert } = require("../src/source/convert");
+const { convert, kfRotator } = require("../src/source/convert");
 const { verify } = require("../src/verify");
+
+// The prop rotator must agree with the player-start convention: a yaw-only Source angle becomes -yaw
+// in KF (the Y mirror), with pitch and roll zero. Getting this wrong only shows on oriented props
+// (crates, railings) - symmetric ones (trees, rocks) hide it - so it is asserted, not eyeballed.
+{
+  const deg = (u16) => ((u16 > 32768 ? u16 - 65536 : u16) / 65536 * 360);
+  const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);   // shortest arc, wraps at +-180
+  for (const y of [0, 45, 90, 180, -90]) {
+    const r = kfRotator([0, y, 0]);
+    assert.ok(angDiff(deg(r[1]), -y) < 0.5, "yaw " + y + " -> KF " + deg(r[1]) + ", want " + (-y));
+    assert.ok(Math.abs(deg(r[0])) < 0.5 && Math.abs(deg(r[2])) < 0.5, "yaw-only keeps pitch/roll zero");
+  }
+  console.log("  kfRotator: yaw-only -> -yaw, pitch/roll zero (matches player-start convention)");
+}
 
 const CANDIDATES = [
   process.env.KF_SOURCE_MAP,

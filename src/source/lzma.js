@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // LZMA1 decoder for Source BSP lumps.
 //
 // bspzip compresses individual lumps (common in Left 4 Dead 2 / CS:GO maps). A compressed lump begins

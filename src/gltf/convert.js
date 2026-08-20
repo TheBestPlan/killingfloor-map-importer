@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // End-to-end: one glTF/GLB scene -> Killing Floor .rom.
 //
 // The "3D model" route: a scene exported to glTF/GLB (Sketchfab, CGTrader, a Blender .blend, an
@@ -101,8 +104,14 @@ function convert(opts) {
   // --- materials -> textures ----------------------------------------------------------------------
   const usedMats = new Set();
   for (const m of meshBuild.meshes) usedMats.add(m.mat);
+  for (const parts of (o.propMeshes || [])) for (const pm of (parts || [])) for (const mi of pm.materialIndices) usedMats.add(mi);
   const matRef = new Map();
   const flatColor = (rgb) => { const side = 8, buf = Buffer.alloc(side * side * 3); for (let i = 0; i < side * side; i++) { buf[i * 3] = rgb[0]; buf[i * 3 + 1] = rgb[1]; buf[i * 3 + 2] = rgb[2]; } return { width: side, height: side, rgb: buf }; };
+  // A material draws cut-out when it carries $alphatest/$translucent (Source) or alphaMode MASK/BLEND
+  // (glTF); a $nocull / doubleSided one draws two-sided. Both only take effect when the image has an
+  // alpha channel to threshold.
+  const isMasked = (mat) => !!(mat && (mat.mask || /MASK|BLEND/i.test(mat.alphaMode || "")));
+  const isTwoSided = (mat) => !!(mat && (mat.twoSided || mat.doubleSided));
   let textured = 0, flat = 0;
   for (const mi of usedMats) {
     const mat = mi >= 0 ? scene.materials[mi] : null;
@@ -114,7 +123,8 @@ function convert(opts) {
     if (img) {
       const w = pot(img.width, o.maxTexture), h = pot(img.height, o.maxTexture);
       if (w !== img.width || h !== img.height) img = resample(img, w, h);
-      const rec = addRgbTexture(pkg, refs, nm, { width: img.width, height: img.height, rgb: img.rgb }, o.texGain, { wrap: true });
+      const mask = isMasked(mat) && img.alpha ? { masked: true, twoSided: isTwoSided(mat) } : null;
+      const rec = addRgbTexture(pkg, refs, nm, { width: img.width, height: img.height, rgb: img.rgb, alpha: mask ? img.alpha : undefined }, o.texGain, Object.assign({ wrap: true }, mask));
       matRef.set(mi, rec.texRef); textured++;
     } else {
       const c = mat ? mat.factor.slice(0, 3).map((v) => Math.round(v * 255)) : [160, 160, 160];
@@ -234,6 +244,45 @@ function convert(opts) {
     }));
   });
 
+  // --- static prop instances (Source): one shared StaticMesh per model, an actor per placement -----
+  if (o.propMeshes && o.propMeshes.length) {
+    // Each model is one or more StaticMesh parts (a big model is split to fit the 16-bit streams).
+    const modelParts = o.propMeshes.map((parts, i) => (parts || []).map((pm, j) => {
+      pm.materials = pm.materialIndices.map((mi) => matRef.get(mi));
+      const meshRef = pkg.addExport({ classRef: refs.StaticMesh, name: mapName.replace(/[^A-Za-z0-9_]/g, "") + "_prop" + i + "_" + j, flags: refs.flagsGame, serialize: (p) => buildMeshExport(p, pm) });
+      const instRef = pkg.addExport({ classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"), flags: refs.flagsGame, serialize: (p) => buildMeshInstance(p, pm) });
+      return { meshRef, instRef };
+    }));
+    let placed = 0, models = 0;
+    for (const parts of modelParts) if (parts.length) models++;
+    for (const inst of (o.propInstances || [])) {
+      const parts = modelParts[inst.model]; if (!parts || !parts.length) continue;
+      placed++;
+      // A prop the source marked SOLID_NONE (grass, small foliage) is decoration the player walks
+      // through - emit it without collision so it does not wall the map off.
+      const collide = inst.collide !== false;
+      for (const mr of parts) {
+        meshActors.push(pkg.addExport({
+          classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
+          serialize: (p) => {
+            const w = new Writer(256); writeStateFrame(w, refs.StaticMeshActor); const pr = p.props(w);
+            pr.object("StaticMesh", mr.meshRef); pr.object("StaticMeshInstance", mr.instRef);
+            pr.bool("bStatic", true); pr.bool("bStaticLighting", true); pr.byte("AmbientGlow", glow); pr.bool("bWorldGeometry", true);
+            pr.bool("bCollideActors", collide); pr.bool("bBlockActors", collide); pr.bool("bBlockPlayers", collide);
+            pr.bool("bBlockZeroExtentTraces", collide); pr.bool("bBlockNonZeroExtentTraces", collide);
+            pr.bool("bBlockKarma", collide && !process.env.KF_NO_KARMA);
+            pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
+            pr.vector("ColLocation", inst.location); pr.vector("Location", inst.location);
+            pr.rotator("Rotation", inst.rotation);
+            pr.end();
+            return w;
+          },
+        }));
+      }
+    }
+    log("props: " + models + " model(s) instanced " + placed + " time(s)");
+  }
+
   // --- a plain sky --------------------------------------------------------------------------------
   if (!o.noSky) {
     const SKY = [50, 63, 84];   // daylight blue, pre-divided for the ~2.5x unlit overbright
@@ -315,14 +364,19 @@ function convert(opts) {
   const starts = [];
   if (o.emitPlayerStarts !== false) {
     const at = process.env.KF_SPAWN_AT && process.env.KF_SPAWN_AT.split(",").map(Number);
-    const loc = at ? at.slice(0, 3) : [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, whi[2] + 64];
-    const yaw = at && at[3] !== undefined ? Math.round((-at[3] / 360) * 65536) & 0xffff : 0;
-    starts.push(pkg.addExport({
-      classRef: refs.PlayerStart, name: named("PlayerStart"), flags: ACTOR,
-      serialize: (p) => { const w = new Writer(160); writeStateFrame(w, refs.PlayerStart); const pr = p.props(w); pr.actorCommon(levelInfoRef, physVolRef, "PlayerStart", 1, zoneInfoRef); pr.vector("Location", loc); pr.rotator("Rotation", [0, yaw, 0]); pr.end(); return w; },
-    }));
+    // KF_SPAWN_AT overrides; else the map's own spawns (Source entities); else one over the middle.
+    let places;
+    if (at) places = [{ loc: at.slice(0, 3), yaw: at[3] !== undefined ? Math.round((-at[3] / 360) * 65536) & 0xffff : 0 }];
+    else if (o.spawns && o.spawns.length) places = o.spawns;
+    else places = [{ loc: [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, whi[2] + 64], yaw: 0 }];
+    for (const pl of places) {
+      starts.push(pkg.addExport({
+        classRef: refs.PlayerStart, name: named("PlayerStart"), flags: ACTOR,
+        serialize: (p) => { const w = new Writer(160); writeStateFrame(w, refs.PlayerStart); const pr = p.props(w); pr.actorCommon(levelInfoRef, physVolRef, "PlayerStart", 1, zoneInfoRef); pr.vector("Location", pl.loc); pr.rotator("Rotation", [0, pl.yaw || 0, 0]); pr.end(); return w; },
+      }));
+    }
     holder.starts = starts;
-    log("player start: 1" + (at ? " (KF_SPAWN_AT)" : " (synthetic, over the level)"));
+    log("player start: " + starts.length + (at ? " (KF_SPAWN_AT)" : (o.spawns && o.spawns.length) ? " (from map entities)" : " (synthetic)"));
   }
 
   holder.summaryRef = pkg.addExport({ classRef: refs.LevelSummary, name: "LevelSummary", flags: refs.flagsGame, serialize: (p) => { const w = new Writer(256); const pr = p.props(w); writeCredits(pr); pr.end(); return w; } });

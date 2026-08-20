@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // glTF 2.0 / GLB reader.
 //
 // The input for the "3D model" route: a scene exported to glTF/GLB (from Sketchfab, CGTrader, a

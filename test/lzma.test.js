@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Verifies the LZMA1 lump decoder against a python `lzma.FORMAT_ALONE` vector (wrapped in Valve's
 // lump header). The payload is deterministic, so it is regenerated here; only the compressed blob is
 // embedded. Self-contained - no python needed at test time.
