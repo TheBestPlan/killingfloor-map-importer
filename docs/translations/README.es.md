@@ -30,7 +30,7 @@ Este repositorio no distribuye contenido del juego en ninguna dirección. Tú lo
 
 ## Aplicación de escritorio (Windows / macOS / Linux)
 
-Las compilaciones autónomas listas están en la página de [Releases](https://github.com/geekrainian/killingfloor-map-importer/releases):
+Las compilaciones autónomas listas están en la página de [Releases](https://github.com/TheBestPlan/killingfloor-map-importer/releases):
 
 - **Windows** — `…-setup.exe` (instalador) o `…-portable.exe` (sin instalar).
 - **macOS** — `…-mac-x64.dmg` (Intel) o `…-mac-arm64.dmg` (Apple Silicon).
@@ -176,7 +176,7 @@ Proyecto personal de ingeniería inversa e interoperabilidad de formatos, public
 
 ## Licencia
 
-Copyright (c) 2026 Geekrainian.
+Copyright (c) 2026 TheBestPlan.
 
 Publicado bajo la **GNU General Public License v3.0 o posterior** (GPL-3.0-or-later). Texto completo en [LICENSE](../../LICENSE). Este programa es software libre: puedes redistribuirlo y modificarlo bajo esos términos, y viene **sin garantía**.
 

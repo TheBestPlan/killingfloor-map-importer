@@ -30,7 +30,7 @@
 
 ## 桌面应用（Windows / macOS / Linux）
 
-预编译的独立版本在 [Releases](https://github.com/geekrainian/killingfloor-map-importer/releases) 页面：
+预编译的独立版本在 [Releases](https://github.com/TheBestPlan/killingfloor-map-importer/releases) 页面：
 
 - **Windows** — `…-setup.exe`（安装版）或 `…-portable.exe`（免安装）。
 - **macOS** — `…-mac-x64.dmg`（Intel）或 `…-mac-arm64.dmg`（Apple Silicon）。
@@ -176,7 +176,7 @@ killingfloor-map-importer/
 
 ## 许可证
 
-Copyright (c) 2026 Geekrainian.
+Copyright (c) 2026 TheBestPlan.
 
 以 **GNU General Public License v3.0 或更新版本**（GPL-3.0-or-later）发布。完整文本见 [LICENSE](../../LICENSE)。本程序是自由软件：你可以在这些条款下重新分发和修改它，并且它**不带任何担保**。
 

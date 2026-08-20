@@ -30,7 +30,7 @@ Importuoja kitų žaidimų žemėlapius į **Killing Floor 1** kaip tikrus `.rom
 
 ## Darbalaukio programa (Windows / macOS / Linux)
 
-Paruoštos savarankiškos versijos yra [Releases](https://github.com/geekrainian/killingfloor-map-importer/releases) puslapyje:
+Paruoštos savarankiškos versijos yra [Releases](https://github.com/TheBestPlan/killingfloor-map-importer/releases) puslapyje:
 
 - **Windows** — `…-setup.exe` (diegiklis) arba `…-portable.exe` (be diegimo).
 - **macOS** — `…-mac-x64.dmg` (Intel) arba `…-mac-arm64.dmg` (Apple Silicon).
@@ -176,7 +176,7 @@ Asmeninis atvirkštinės inžinerijos ir formatų suderinamumo projektas, paskel
 
 ## Licencija
 
-Copyright (c) 2026 Geekrainian.
+Copyright (c) 2026 TheBestPlan.
 
 Išleista pagal **GNU General Public License v3.0 arba naujesnę** (GPL-3.0-or-later). Visas tekstas — [LICENSE](../../LICENSE). Ši programa yra laisva programinė įranga: gali ją platinti ir keisti pagal tas sąlygas, ir ji teikiama **be garantijų**.
 

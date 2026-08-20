@@ -309,7 +309,7 @@ submodels + `origin` энтити, список WAD из `worldspawn.wad`. Уж�
 | `strings.js` | ASCII-строки из `Editor.dll`/`Engine.dll` — так найдены коммандлеты и токены ASE |
 
 Читатель пакетов — `kfrom.js` из
-[killingfloor-map-viewer](https://github.com/geekrainian/killingfloor-map-viewer). Склонируй его
+[killingfloor-map-viewer](https://github.com/TheBestPlan/killingfloor-map-viewer). Склонируй его
 рядом с этим репозиторием либо укажи `KF_ROM_JS` на его `kfrom.js`.
 
 ```bash

@@ -64,12 +64,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            2>/dev/null || echo "release $GITHUB_REF_NAME exists — updating its assets"
+          # A draft does not occupy its tag name, so `gh release create` succeeds
+          # again on a re-pushed tag and leaves a second draft behind. Look the
+          # release up first and only create one when the tag has none.
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.tag_name == env.GITHUB_REF_NAME) | .id' | wc -l)
+          if [ "$existing" -eq 0 ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          else
+            echo "release $GITHUB_REF_NAME exists — updating its assets"
+          fi
           gh release upload "$GITHUB_REF_NAME" artifacts/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

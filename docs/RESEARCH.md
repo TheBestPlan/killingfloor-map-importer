@@ -343,7 +343,7 @@ running there; publishing to the Workshop is a different matter.
 | `strings.js` | ASCII strings out of `Editor.dll`/`Engine.dll` — how the commandlets and ASE tokens were found |
 
 The package reader they use is `kfrom.js` from
-[killingfloor-map-viewer](https://github.com/geekrainian/killingfloor-map-viewer). Clone it next to
+[killingfloor-map-viewer](https://github.com/TheBestPlan/killingfloor-map-viewer). Clone it next to
 this repository, or point `KF_ROM_JS` at its `kfrom.js`.
 
 ```bash

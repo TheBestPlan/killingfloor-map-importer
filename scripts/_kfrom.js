@@ -1,5 +1,5 @@
 // The .rom package reader these research scripts use lives in the sibling repository
-// killingfloor-map-viewer (https://github.com/geekrainian/killingfloor-map-viewer). Clone it next to
+// killingfloor-map-viewer (https://github.com/TheBestPlan/killingfloor-map-viewer). Clone it next to
 // this one, or point KF_ROM_JS at its kfrom.js.
 "use strict";
 

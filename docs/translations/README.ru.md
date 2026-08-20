@@ -30,7 +30,7 @@
 
 ## Десктопное приложение (Windows / macOS / Linux)
 
-Готовые самодостаточные сборки — на странице [Releases](https://github.com/geekrainian/killingfloor-map-importer/releases):
+Готовые самодостаточные сборки — на странице [Releases](https://github.com/TheBestPlan/killingfloor-map-importer/releases):
 
 - **Windows** — `…-setup.exe` (установщик) или `…-portable.exe` (запуск без установки).
 - **macOS** — `…-mac-x64.dmg` (Intel) или `…-mac-arm64.dmg` (Apple Silicon).
@@ -176,7 +176,7 @@ killingfloor-map-importer/
 
 ## Лицензия
 
-Copyright (c) 2026 Geekrainian.
+Copyright (c) 2026 TheBestPlan.
 
 Выпущено под **GNU General Public License v3.0 или новее** (GPL-3.0-or-later). Полный текст — в [LICENSE](../../LICENSE). Это свободное программное обеспечение: его можно распространять и изменять на этих условиях, и оно поставляется **без гарантий**.
 

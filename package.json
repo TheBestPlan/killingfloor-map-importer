@@ -3,17 +3,17 @@
   "productName": "Killing Floor Map Importer",
   "version": "0.1.6",
   "description": "Converts maps from other games into Killing Floor 1 levels (.rom, Unreal Engine 2.5)",
-  "author": "geekrainian (https://github.com/geekrainian)",
+  "author": "TheBestPlan (https://github.com/TheBestPlan)",
   "license": "GPL-3.0-or-later",
   "packageManager": "pnpm@11.13.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/geekrainian/killingfloor-map-importer.git"
+    "url": "git+https://github.com/TheBestPlan/killingfloor-map-importer.git"
   },
   "funding": [
-    "https://buymeacoffee.com/geekrainian",
-    "https://ko-fi.com/geekrainian",
-    "https://liberapay.com/geekrainian"
+    "https://buymeacoffee.com/TheBestPlan",
+    "https://ko-fi.com/TheBestPlan",
+    "https://liberapay.com/TheBestPlan"
   ],
   "main": "electron/main.js",
   "scripts": {
@@ -27,7 +27,7 @@
     "prepare": "husky"
   },
   "build": {
-    "appId": "com.geekrainian.killingfloormapimporter",
+    "appId": "com.thebestplan.killingfloormapimporter",
     "productName": "Killing Floor Map Importer",
     "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}.${ext}",
     "directories": {
@@ -78,12 +78,12 @@
       ],
       "category": "Game",
       "icon": "build/icon.png",
-      "maintainer": "Geekrainian"
+      "maintainer": "TheBestPlan"
     },
     "publish": [
       {
         "provider": "github",
-        "owner": "geekrainian",
+        "owner": "TheBestPlan",
         "repo": "killingfloor-map-importer"
       }
     ]

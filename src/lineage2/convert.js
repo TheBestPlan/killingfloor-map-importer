@@ -38,7 +38,7 @@ const { buildSkyboxMesh } = require("../build/skyboxmesh");
 const { SIDES } = require("../goldsrc/skybox");
 
 const TOOL_NAME = "killingfloor-map-importer";
-const TOOL_URL = "https://github.com/geekrainian/killingfloor-map-importer";
+const TOOL_URL = "https://github.com/TheBestPlan/killingfloor-map-importer";
 const GAME = "Lineage 2";
 
 const DEFAULTS = {

@@ -30,7 +30,7 @@
 
 ## デスクトップアプリ（Windows / macOS / Linux）
 
-ビルド済みの自己完結パッケージは [Releases](https://github.com/geekrainian/killingfloor-map-importer/releases) にあります:
+ビルド済みの自己完結パッケージは [Releases](https://github.com/TheBestPlan/killingfloor-map-importer/releases) にあります:
 
 - **Windows** — `…-setup.exe`（インストーラ）または `…-portable.exe`（インストール不要）。
 - **macOS** — `…-mac-x64.dmg`（Intel）または `…-mac-arm64.dmg`（Apple Silicon）。
@@ -176,7 +176,7 @@ killingfloor-map-importer/
 
 ## ライセンス
 
-Copyright (c) 2026 Geekrainian.
+Copyright (c) 2026 TheBestPlan.
 
 **GNU General Public License v3.0 以降**（GPL-3.0-or-later）で公開しています。全文は [LICENSE](../../LICENSE) を参照してください。本プログラムはフリーソフトウェアであり、この条件のもとで再配布・改変でき、**無保証**で提供されます。
 

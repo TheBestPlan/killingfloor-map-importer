@@ -51,7 +51,7 @@ No game content ships with this repo, in either direction. You point it at your 
 
 ## Desktop app (Windows / macOS / Linux)
 
-Prebuilt, self-contained apps are on the [Releases](https://github.com/geekrainian/killingfloor-map-importer/releases) page:
+Prebuilt, self-contained apps are on the [Releases](https://github.com/TheBestPlan/killingfloor-map-importer/releases) page:
 
 - **Windows** — `…-setup.exe` (installer) or `…-portable.exe` (run without installing).
 - **macOS** — `…-mac-x64.dmg` (Intel) or `…-mac-arm64.dmg` (Apple Silicon).
@@ -269,7 +269,7 @@ A personal reverse-engineering and format-interoperability project, published fo
 
 ## License
 
-Copyright (c) 2026 Geekrainian.
+Copyright (c) 2026 TheBestPlan.
 
 Released under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later). See [LICENSE](./LICENSE) for the full text. This program is free software: you can redistribute it and/or modify it under those terms, and it comes with **no warranty**.
 
