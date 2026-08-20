@@ -2,6 +2,19 @@
 
 All notable changes to Killing Floor Map Importer are documented here. The format follows [Conventional Commits](https://www.conventionalcommits.org/) and the version scheme is [Semantic Versioning](https://semver.org/).
 
+## [0.1.6](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.5...v0.1.6) (2026-08-20)
+
+
+### Features
+
+* add Source BSP and 3D-model import routes ([e915577](https://github.com/geekrainian/killingfloor-map-importer/commit/e9155779022705b634063c8f26bab17a59a417c9))
+
+
+### Bug Fixes
+
+* **render:** the bugs two play-tests turned up in all three routes ([f3e4b70](https://github.com/geekrainian/killingfloor-map-importer/commit/f3e4b703157e1c6b56452cd70151689262214de7))
+* **tacticalops,quake3:** the render bugs a play-test turned up ([0ad65d4](https://github.com/geekrainian/killingfloor-map-importer/commit/0ad65d48acec295ac73f4a21315a6febc124f26b))
+
 ## [0.1.5](https://github.com/geekrainian/killingfloor-map-importer/compare/v0.1.4...v0.1.5) (2026-08-19)
 
 
