@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 TheBestPlan
+
 # Launch a map, drive the game by posting keys to its window (no desktop capture), take a burst of
 # engine screenshots while turning the view, and convert them to PNG.
 param([string]$Map = "KF-CS-Assault", [int]$Wait = 16, [string[]]$Cmd = @(), [string]$Tag = "play", [int]$MaxW = 700,

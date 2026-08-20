@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Quake 3 BSP reader (IBSP v46) - Quake III Arena and Team Arena.
 //
 // Same family as GoldSrc, five years later, and the differences are the ones that matter to a

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 TheBestPlan
+
 # Render test. Launches the KF client straight into the map with a game type that has no lobby /
 # ready-up, so the level is actually drawn without anyone touching the window. The verdict comes
 # from the log ("Critical:" lines), not from whether the process happens to still be alive.

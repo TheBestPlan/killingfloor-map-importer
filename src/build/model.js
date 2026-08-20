@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc BSP -> UE2.5 UModel.
 //
 // The two trees are the same kind of object (convex-leaf BSP with faces attached to nodes), so the
@@ -637,10 +640,11 @@ function buildModel(map, opts) {
       for (const ent of map.entities) {
         const mm = /^\*(\d+)$/.exec(ent.model || "");
         if (!mm) continue;
-        // A trigger or a zone is a shape the engine tests against, never a surface it draws.
-        if (brushEnts.invisible(ent)) continue;
         const sm = map.models[+mm[1]];
         if (!sm || sm.numfaces <= 0) continue;
+        // A trigger, or a zone the mapper drew in tool textures, is a shape the engine tests
+        // against and never a surface it draws.
+        if (brushEnts.invisible(ent, brushEnts.modelIsToolOnly(map, sm))) continue;
         const org = ent.origin ? ent.origin.trim().split(/\s+/).map(Number) : [0, 0, 0];
         jobs.push({
           model: sm, offset: [org[0] || 0, org[1] || 0, org[2] || 0],

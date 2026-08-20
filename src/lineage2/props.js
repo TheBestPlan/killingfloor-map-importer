@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The UE2 tagged property block, read as a LIST rather than a map.
 //
 // A map object needs the array index (`Layers` is eight entries under one name) and the raw span of

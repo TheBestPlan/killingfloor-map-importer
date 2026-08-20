@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Reading a UStaticMesh out of a Lineage 2 package.
 //
 // Walked by hand against water.usx and then against the town packages: the object is byte for byte

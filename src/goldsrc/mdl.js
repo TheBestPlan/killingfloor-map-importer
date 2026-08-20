@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Half-Life .mdl (IDST version 10) - the props a CS map places with cycler_sprite, monster_furniture
 // and friends. Only the first body part of each model, in its bind pose: these are scenery, and a
 // static level cannot animate them anyway.

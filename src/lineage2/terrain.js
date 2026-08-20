@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The ground of a Lineage 2 square.
 //
 // `TerrainInfo` is a heightfield, not geometry: a G16 texture where every texel is one vertex, laid

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 "use strict";
 // UI translations + live language switching. English is the source and the fallback: a missing key
 // in any locale falls back to en, so a partial translation never blanks the window.

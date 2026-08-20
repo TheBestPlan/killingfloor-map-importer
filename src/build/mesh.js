@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc BSP -> UE2.5 UStaticMesh.
 //
 // The world becomes one or more static meshes instead of BSP. That is how every working manual
@@ -117,11 +120,11 @@ function buildMeshes(map, opts) {
   for (const ent of map.entities) {
     const mm = /^\*(\d+)$/.exec(ent.model || "");
     if (!mm) continue;
-    // A trigger or a zone draws nothing in GoldSrc; here it would be a slab of geometry standing in
-    // the middle of the level (build/brushents.js).
-    if (brushEnts.invisible(ent)) { invisibleEnts++; continue; }
     const sm = map.models[+mm[1]];
     if (!sm || sm.numfaces <= 0) continue;
+    // A trigger or a tool-textured zone draws nothing in GoldSrc; here it would be a slab of
+    // geometry standing in the middle of the level (build/brushents.js).
+    if (brushEnts.invisible(ent, brushEnts.modelIsToolOnly(map, sm))) { invisibleEnts++; continue; }
     const org = ent.origin ? ent.origin.trim().split(/\s+/).map(Number) : [0, 0, 0];
     jobs.push({
       model: sm, offset: [org[0] || 0, org[1] || 0, org[2] || 0], top: sm.maxs[2],

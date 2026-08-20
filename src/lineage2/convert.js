@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // End-to-end conversion: one Lineage 2 map square -> Killing Floor .rom.
 //
 // The two games run the same engine five package versions apart, so this front end is small: it

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // UStaticMesh (UE2.5 / KF v128) reader and writer.
 //
 // Layout, worked out against the shipped meshes with a byte-exact round-trip as the oracle:

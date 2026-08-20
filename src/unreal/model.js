@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Serializer for the UE2.5 v128 UModel. Mirrors read.js field for field; the round-trip test in
 // test/selfcheck.js reads a shipped map with read.js, writes it back with this, and compares bytes.
 "use strict";

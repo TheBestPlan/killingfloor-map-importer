@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 "use strict";
 // Self-test for the window translations (the Language picker in the header). Catches the three ways
 // a locale rots: a missing/extra key, a dropped {placeholder} (the string would render "{n}" to the

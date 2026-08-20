@@ -395,3 +395,31 @@ meshes. Each has to move, and each does - they share the mover's Tag. The `KFUse
 split with them: `KFDoorMover.PostBeginPlay` keeps the FIRST trigger whose `Event` matches its Tag,
 warns "Multiple triggers found!" for the rest, and the player is left in front of as many use prompts
 as the door had materials. q3dm12: 88 movers, 34 triggers.
+
+### Q3.16 A surface is the whole stage stack, not one stage of it
+The single-stage reading kept being wrong in a new way, so it is gone: every drawing stage is
+carried, bottom to top, with the blendFunc it had, and they are composited into one image at load
+(`additive` adds, `filter` multiplies, `blend` mixes by the layer's own alpha, `opaque` replaces).
+
+What that fixes, in the order the play-tests found it: a shiny rail drawing its environment map
+instead of the rail; a broken floor's hole coming out black instead of showing the electric plate
+under it; q3ctf2's slime a pale grey-green because the bright slime is the SECOND stage; and Team
+Arena's jump pads an orange SQUARE, because the swirl is the bottom stage and the metal plate with
+the round hole in it is the fourth. `textures/sfx2/ntrl_jumpad3` is four stages - swirl, fan, glowing
+core, plate - and only the four together are a jump pad.
+
+Not for a flipbook (the stage's own frames are the animation, written as an AnimNext chain) and not
+for a cut-out (its alpha is the shape, and painting over it would fill the shape in).
+
+### Q3.17 A fog volume's surface is a surface
+`surfaceparm fog` was read as "this draws nothing" and the faces were dropped. Quake 3 renders fog
+volumetrically - everything seen through the brush is tinted by `fogparms` and goes opaque within its
+depth - but q3map still emits drawsurfaces for the brush, and in q3dm9 and q3dm15 those are the
+sheets of death fog at the bottom of the map: 864x1124 units of it in one piece. Dropped, they left a
+hard-edged hole with the level below showing through, which is the "hole in the static mesh" of the
+second report.
+
+One material cannot be volumetric, so the sheet carries it: the shader's own cloud image tinted with
+the `fogparms` colour and drawn at alpha 210, since the fog closes over within 128 to 256 units and
+these sheets are the top of a pit. A fog volume with no `fogparms` and no image of its own still
+draws nothing.

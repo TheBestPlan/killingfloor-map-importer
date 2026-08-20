@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Full UE2.5 (v128) UModel reader — including the trailer that carries the baked BSP lighting.
 // Order (UT2004-era UModel::Serialize, Ver>=110 path):
 //   Vectors, Points, Nodes, Surfs, Verts, NumSharedSides, NumZones, Zones[NumZones], Polys,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The grass, and everything else Lineage 2 scatters over its terrain.
 //
 // A `TerrainInfo` carries `DecoLayers`, and each one is a static mesh plus a density map: a grey

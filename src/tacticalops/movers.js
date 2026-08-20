@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Movers: the doors, gates, lifts and glass panes a Tactical Ops map keeps OUT of its BSP.
 //
 // A mover is an actor with a UModel of its own, and the only copy of its geometry is that model's

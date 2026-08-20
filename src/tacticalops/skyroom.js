@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Tactical Ops' sky room -> six cube faces, rendered here rather than carried as geometry.
 //
 // UT99 draws a sky by rendering a small room - the one holding the `SkyZoneInfo` - through every

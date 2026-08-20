@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // End-to-end conversion: Counter-Strike 1.6 .bsp -> Killing Floor .rom.
 "use strict";
 
@@ -163,8 +166,8 @@ function placeholderMiptex(name) {
 // Height of the first GoldSrc face directly below a point, or null over the void. Spawns come from
 // CS at the player's centre; dropping a KF pawn from there is a 90-unit fall it does not always
 // survive, so the converter puts the PlayerStart on the floor instead.
-function floorUnder(map, pos) {
-  let best = null;
+function floorUnder(map, pos, want) {
+  let best = null, bestFace = null;
   for (const face of map.faces) {
     const ring = map.faceVertices(face);
     if (ring.length < 3) continue;
@@ -177,10 +180,54 @@ function floorUnder(map, pos) {
       const l3 = 1 - l1 - l2;
       if (l1 < -0.001 || l2 < -0.001 || l3 < -0.001) continue;
       const z = l1 * a[2] + l2 * b[2] + l3 * c[2];
-      if (z <= pos[2] + 1 && (best === null || z > best)) best = z;
+      if (z <= pos[2] + 1 && (best === null || z > best)) { best = z; bestFace = face; }
     }
   }
-  return best;
+  return want === "face" ? (bestFace && { z: best, face: bestFace }) : best;
+}
+
+// What GoldSrc would light a .mdl prop with: the luxel of the surface it is standing on.
+//
+// The engine has no per-vertex light for a model - it samples the lightmap under the entity and
+// lights the whole model with it. A converted prop used to take a flat 150 instead, which is right
+// on a daylight map and blinding on a night one: de_winter_austria's snow-covered firs glowed white
+// in a courtyard whose walls are nearly black.
+//
+// 128 is "normally lit" in GoldSrc - its renderer doubles the lightmap - so the flat value is kept
+// as the value AT 128 and everything else scales from there.
+const PROP_LIGHT_AT_128 = 150;
+
+// The map's own mean luxel, for a prop standing on a surface that has no lightmap of its own.
+// Sampled once; a face is one sample, so a big wall does not outvote a small one.
+function meanLuxel(map) {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const face of map.faces) {
+    const hl = map.faceLightmapRGB(face);
+    if (!hl || !hl.rgb.length) continue;
+    let fr = 0, fg = 0, fb = 0;
+    const px = hl.rgb.length / 3;
+    for (let i = 0; i < px; i++) { fr += hl.rgb[i * 3]; fg += hl.rgb[i * 3 + 1]; fb += hl.rgb[i * 3 + 2]; }
+    r += fr / px; g += fg / px; b += fb / px; n++;
+  }
+  return n ? [r / n, g / n, b / n] : [128, 128, 128];
+}
+
+function propLight(map, org, fallback) {
+  const hit = floorUnder(map, org, "face");
+  const scale = (rgb) => [0, 1, 2].map((c) => Math.max(24, Math.min(255,
+    Math.round(rgb[c] * PROP_LIGHT_AT_128 / 128))));
+  if (!hit) return fallback && scale(fallback);
+  const hl = map.faceLightmapRGB(hit.face);
+  const ti = map.texinfo[hit.face.texinfo];
+  if (!hl || !ti) return fallback && scale(fallback);
+  const p = [org[0], org[1], hit.z];
+  const s = p[0] * ti.s[0] + p[1] * ti.s[1] + p[2] * ti.s[2] + ti.sShift;
+  const t = p[0] * ti.t[0] + p[1] * ti.t[1] + p[2] * ti.t[2] + ti.tShift;
+  const x = Math.max(0, Math.min(hl.width - 1, Math.round(s / 16 - hl.baseS)));
+  const y = Math.max(0, Math.min(hl.height - 1, Math.round(t / 16 - hl.baseT)));
+  const at = (y * hl.width + x) * 3;
+  // A floor of 24 so a prop in a shadow is still a shape and not a silhouette.
+  return scale([hl.rgb[at], hl.rgb[at + 1], hl.rgb[at + 2]]);
 }
 
 // Unreal stores light colour as byte hue/saturation rather than RGB.
@@ -467,7 +514,13 @@ function convert(opts) {
         // to 1024 does not invent detail, but it stops the GPU's bilinear stretch from being the
         // only thing between the source and the screen. ~85 ms per face, once, at convert time.
         const img = upscale(oriented.images[side] || box[side], o.skyUpscale || 2, 512);
-        const t = addRgbTexture(pkg, refs, "sky_" + skyName + "_" + side, img, SKY_GAIN);
+        // UNCOMPRESSED. A sky is a smooth, low-contrast gradient stretched over a whole field of
+        // view, which is the worst case a block codec can be handed: DXT1's two 5:6:5 endpoints per
+        // 4x4 block turn it into flat squares, and magnified across 90 degrees each block is 15
+        // screen pixels. de_winter_austria's night sky is where it shows worst (the user's
+        // Screenshot_161) because its whole range is a handful of dark blues. The Tactical Ops route
+        // reached the same conclusion about its own rendered cube.
+        const t = addRgbTexture(pkg, refs, "sky_" + skyName + "_" + side, img, SKY_GAIN, { raw: true });
         skySides[side] = t;
       }
       log("skybox: " + skyName + " (" + box.up.width + "x" + box.up.height + " x6) " + oriented.report.join(" ") +
@@ -1162,15 +1215,67 @@ function convert(opts) {
     const wanted = o.noExtras ? [] : map.entities.filter((e) =>
       /\.mdl$/i.test(e.model || "") && !/^\*/.test(e.model) && !isSpawn(e));
     const cache = new Map();
+    // The .mdl's textures are read once per FILE even when the model is built more than once.
+    const texByModel = new Map();
+    // Computed once, and only if a prop actually needs it.
+    let fallbackLuxel = null;
+    const propFallback = () => (fallbackLuxel || (fallbackLuxel = meanLuxel(map)));
+    // A prop's light has to reach it the same way a wall's does, or the two cannot match.
+    //
+    // A wall is `Combiner(texture x atlas)` on an actor whose light is the zone ambient plus the
+    // world's AmbientGlow: the map's own luxel MULTIPLIES the texture. A prop carried its luxel in
+    // the vertex colour stream instead, and that stream ADDS - so on de_winter_austria, whose mean
+    // luxel is 26 of 255, the walls came out nearly black while the trees kept most of their white,
+    // whatever the vertex colour said. Multiply instead: one ConstantColor of the luxel under the
+    // prop, one Combiner over its skin, and the prop is lit by exactly the arithmetic the wall
+    // beside it is.
+    const litProp = new Map();
+    const litPropTex = (texRef, light) => {
+      const key = texRef + "@" + light.join(",");
+      if (litProp.has(key)) return litProp.get(key);
+      const colRef = pkg.addExport({
+        classRef: refs.ConstantColor, name: "PropLight" + litProp.size, flags: refs.flagsGame,
+        serialize: (p) => {
+          const w = new Writer(64);
+          const pr = p.props(w);
+          pr.color("Color", [light[0], light[1], light[2], 255]);
+          pr.end();
+          return w;
+        },
+      });
+      const ref = pkg.addExport({
+        classRef: refs.Combiner, name: "LitProp" + litProp.size, flags: refs.flagsGame,
+        serialize: (p) => {
+          const w = new Writer(128);
+          const pr = p.props(w);
+          pr.object("Material1", texRef);
+          pr.object("Material2", colRef);
+          pr.byte("CombineOperation", 2);            // CO_Multiply
+          pr.byte("AlphaOperation", 3);              // AO_Use_Alpha_From_Material1
+          pr.end();
+          return w;
+        },
+      });
+      litProp.set(key, ref);
+      return ref;
+    };
+
     let missing = 0, propTris = 0;
     for (const e of wanted) {
       const rel = e.model.replace(/\\/g, "/").toLowerCase();
-      if (!cache.has(rel)) {
+      // The luxel of the surface the prop stands on, the way GoldSrc lights a model. Quantised to 16
+      // levels a channel so a map with 61 trees does not build 61 of everything.
+      const org0 = bspReader.num3(e.origin, [0, 0, 0]);
+      const lit = (propLight(map, org0, propFallback()) || [150, 150, 150])
+        .map((v) => Math.round(v / 16) * 16);
+      const key = rel + "|" + lit.join(",");
+      if (!cache.has(key)) {
         const file = resources.modFile(o.bspFile, rel, o.wadDirs);
         const model = file && mdlReader.load(file);
         let built = null;
         if (model) {
-          const texRefs = new Map();
+          if (!texByModel.has(rel)) texByModel.set(rel, new Map());
+          const texRefs = texByModel.get(rel);
           const texRefOf = (t) => {
             if (!t) return null;
             if (!texRefs.has(t.name)) {
@@ -1179,11 +1284,18 @@ function convert(opts) {
               texRefs.set(t.name, addRgbTexture(pkg, refs, "mdl_" + path.basename(rel, ".mdl") + "_" + t.name.replace(/\.[a-z]+$/i, ""),
                 { width: pot.w, height: pot.h, rgb: img.rgb, alpha: img.alpha }, 1).texRef);
             }
-            return texRefs.get(t.name);
+            // In the lit route the luxel multiplies the skin; every other route lights the mesh
+            // some other way and the flat vertex colour below is what it gets.
+            return lightingMode === "lightmap" ? litPropTex(texRefs.get(t.name), lit) : texRefs.get(t.name);
           };
-          built = buildPropMesh(model, { scale: o.scale, texRefOf, light: [150, 150, 150] });
+          // The colour stream ADDS to whatever lights the actor, so in the lit route it goes out at
+          // zero: the light is already in the material, and a second helping here is a light nobody
+          // can turn down. Same rule the world meshes follow (build/mesh.js).
+          built = buildPropMesh(model, {
+            scale: o.scale, texRefOf, light: lightingMode === "lightmap" ? [0, 0, 0] : lit,
+          });
         }
-        cache.set(rel, built && {
+        cache.set(key, built && {
           mesh: built,
           meshRef: pkg.addExport({
             classRef: refs.StaticMesh, name: "prop_" + sanitizeName(path.basename(rel, ".mdl")) + "_" + cache.size,
@@ -1198,9 +1310,9 @@ function convert(opts) {
         });
         if (built) propTris += built.indices.length / 3;
       }
-      const hit = cache.get(rel);
+      const hit = cache.get(key);
       if (!hit) { missing++; continue; }
-      const org = bspReader.num3(e.origin, [0, 0, 0]);
+      const org = org0;
       const loc = [org[0] * o.scale, -org[1] * o.scale, org[2] * o.scale];
       // GoldSrc `angles` is "pitch yaw roll" in degrees; the Y mirror reverses the sense of a yaw.
       // A cycler_sprite draws its model a quarter turn past the yaw it declares - measured, not

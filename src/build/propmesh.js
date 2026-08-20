@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // A loaded .mdl turned into the same mesh shape build/mesh.js produces, so it can go through
 // unreal/staticmesh.js unchanged.
 //

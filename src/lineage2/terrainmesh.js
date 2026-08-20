@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The heightfield, cut into static meshes Killing Floor can hold.
 //
 // KFEd crashes importing a mesh over 20000 polygons and the index stream is 16-bit either way, so a

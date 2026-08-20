@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // For an existing CS->KF port: bounding box of the whole-level StaticMesh (x DrawScale) so the
 // HL-units -> Unreal-units scale factor the porters actually used can be measured.
 const fs = require("fs");

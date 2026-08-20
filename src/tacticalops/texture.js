@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Reading a UTexture out of an Unreal Engine 1 package, and turning one into a Killing Floor
 // material.
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Read back the tagged property block of a .rom's LevelSummary - the fields KFEd shows under
 // Level Properties. Use it to check what a converted map signs itself with, and to see how the
 // shipped maps spell a field before writing it (DecoTextName and ExtraInfo are Str, not Name).

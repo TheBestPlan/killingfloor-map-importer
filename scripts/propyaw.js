@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // How much does a cycler_sprite turn its model? The entity's `angles` is not the answer.
 //
 // A mapper who wants a prop to block the player wraps it in a hand-built AAATRIGGER or CLIP brush,

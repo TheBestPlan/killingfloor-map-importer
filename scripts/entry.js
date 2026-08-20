@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Decode the UModel trailer on the smallest possible case: Entry.rom = 6 surfs, 6 nodes.
 // Hypothesis: trailer = NumSharedSides + Polys + LightMap[FLightMapIndex] + LightBits(1 bit/luxel/light)
 // + Bounds + LeafHulls + Leaves + Lights + RootOutside/Linked + NumZones + Zones.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Tactical Ops: Assault on Terror - an Unreal Tournament 99 total conversion, so its files are plain
 // Unreal Engine 1 packages (file version 69, tag 0x9E2A83C1) with no encryption of any kind.
 //

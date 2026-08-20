@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc skybox -> one big inward-facing textured cube, as a static mesh.
 //
 // A GoldSrc sky is six images (gfx/env/<name>{up,dn,lf,rt,ft,bk}). The right way to show them in KF

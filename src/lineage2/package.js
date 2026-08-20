@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Lineage 2 client packages: the same Unreal Engine 2 container Killing Floor uses, wrapped in one
 // of NCSoft's header encryptions.
 //

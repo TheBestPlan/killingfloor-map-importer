@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The brush geometry of a Lineage 2 square.
 //
 // A town is not only static meshes: its floors, walls and stairs are CSG brushes, and in 16_12 there

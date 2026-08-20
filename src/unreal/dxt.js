@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // DXT3 encode/decode. Killing Floor stores its baked BSP lightmap atlases as DXT3 512x512
 // (ETextureFormat 7), so that is what this tool writes. Lightmaps are smooth, so the cheap
 // min/max endpoint fit is visually adequate; the decoder exists to check the encoder.

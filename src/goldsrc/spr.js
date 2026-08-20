@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc sprites (.spr). Only what a converter needs: the first frame, as RGB + alpha.
 //
 // env_sprite / env_glow / cycler_sprite point at one of these with their `model` key. Animated

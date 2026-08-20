@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Work out how each skybox image has to be rotated/flipped, by matching the pictures themselves.
 //
 // The six GoldSrc sky images sit on known faces (ft +X, bk -X, lf +Y, rt -Y, up +Z, dn -Z), but the

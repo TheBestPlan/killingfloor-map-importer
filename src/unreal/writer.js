@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Low-level Unreal Engine 2.5 package primitives: growable byte writer, compact indices,
 // FString, and the tagged-property encoding used by every UObject property block.
 "use strict";

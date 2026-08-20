@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // WAD3 reader plus the shared miptex decoder. GoldSrc stores map textures either inside the BSP's
 // TEXTURES lump or, more often, in external WAD3 files listed in worldspawn's "wad" key. The lump
 // body is byte-identical in both cases, so one decoder serves both.

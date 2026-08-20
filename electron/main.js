@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Electron shell around the converter. The conversion itself runs in a child process so a crash or
 // a huge map cannot take the window down with it.
 "use strict";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Quake 3 .pk3 archives, and the layered file system the engine builds out of them.
 //
 // A .pk3 is a plain zip. Everything a map needs that is not in the .bsp - the wall textures, the

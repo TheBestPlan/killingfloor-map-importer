@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The brush entities that are not scenery: doors that open and glass that breaks.
 //
 // Everything else in a CS map (func_wall, func_illusionary, func_ladder…) is geometry and gets
@@ -17,17 +20,46 @@ function isGlass(e) {
   return /glass|window/i.test(e.texture || "") && m === -1;
 }
 
-// Brush entities GoldSrc never DRAWS. Their model is a volume - a shape the engine tests against -
-// and it renders nothing at all, whatever texture the mapper happened to leave on the brush. Carried
-// across as geometry they are the white slabs standing across bside_paintball's walkways
-// (trigger_hurt, trigger_teleport, trigger_push) and the buy-zone boxes in the middle of
-// fy_dinoiceworld, which cannot be deleted in the editor without tearing the map around them.
+// Brush entities that draw nothing.
 //
-// func_illusionary is NOT one of these: it draws, it just does not block.
-function invisible(e) {
+// Two rules, because the two groups differ in how sure the engine is:
+//
+// `trigger_*` is a volume and only a volume. `CBaseTrigger::Spawn` sets `EF_NODRAW`, so the texture
+// on it is never seen - half the trigger faces in the stock Counter-Strike maps carry an ordinary
+// wall texture and not one of them shows in game. Carried across as geometry they are the white
+// slabs across bside_paintball's walkways (trigger_hurt, trigger_teleport, trigger_push).
+//
+// The zone entities and `func_ladder` are the same idea in the SDK, but a mapper can and does build
+// the room out of them. Every buy zone, bomb site and hostage zone in the 14 stock maps is textured
+// with `aaatrigger` - that is the mapper saying "this is a volume". fy_dinoiceworld's are textured
+// with `snow`, they sit above the last world face at the top of each ladder, and dropping them took
+// the walls of every ladder alcove with them. So these go only when the mapper drew them the way a
+// volume is drawn: entirely in tool textures. Same for `func_ladder`, which as often as not IS the
+// visible ladder.
+//
+// func_illusionary is in neither group: it draws, it just does not block.
+const NEVER_DRAWN = /^trigger_/;
+const VOLUME_IF_TOOL =
+  /^func_(buyzone|ladder|bomb_target|hostage_rescue|escapezone|vip_safetyzone|friction|vehiclecontrols)$/;
+
+// `toolOnly` answers "is every face of this brush model a tool texture" - the caller has the map.
+function invisible(e, toolOnly) {
   const c = (e.classname || "").toLowerCase();
-  return /^trigger_/.test(c) ||
-    /^func_(buyzone|ladder|bomb_target|hostage_rescue|escapezone|vip_safetyzone|friction|vehiclecontrols)$/.test(c);
+  if (NEVER_DRAWN.test(c)) return true;
+  return VOLUME_IF_TOOL.test(c) && toolOnly !== false;
+}
+
+// Every face of a brush model wears a texture the compiler treats as a tool one.
+function modelIsToolOnly(map, model) {
+  if (!model || model.numfaces <= 0) return true;
+  for (let i = model.firstface; i < model.firstface + model.numfaces; i++) {
+    const face = map.faces[i];
+    if (!face) continue;
+    const ti = map.texinfo[face.texinfo];
+    const mt = ti && map.miptex[ti.miptex];
+    if (mt && mt.kind !== "tool") return false;
+  }
+  return true;
 }
 
 // SF_BREAK_TRIGGER_ONLY (func_break.cpp): the brush cannot be shot at all, only a trigger takes it
@@ -96,4 +128,6 @@ function doorMotion(item, scale) {
   };
 }
 
-module.exports = { collect, doorMotion, isGlass, slideDir, slideDistance, triggerOnly, invisible };
+module.exports = {
+  collect, doorMotion, isGlass, slideDir, slideDistance, triggerOnly, invisible, modelIsToolOnly,
+};

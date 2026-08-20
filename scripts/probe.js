@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // What actually fills the UModel trailer? Probe byte statistics + samples across the range.
 const fs = require("fs");
 const KFRom = require("./_kfrom");

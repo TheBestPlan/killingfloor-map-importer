@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Reads a produced .rom back with the independent reader and checks the invariants that decide
 // whether Killing Floor and KFEd will accept it. A converted map that fails these will not open.
 "use strict";

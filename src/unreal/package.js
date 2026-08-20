@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Assembles a complete Unreal Engine 2.5 package (Killing Floor .rom, file version 128 / licensee 29).
 // Layout, matching the shipped maps: header(64) | name table | export data | import table | export table.
 // Writing the data before the tables means every serial offset is known before the export table is

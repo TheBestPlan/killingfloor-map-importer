@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Rebuilding Unreal Engine 1's baked light as pixels.
 //
 // UE1 does not store a lightmap. It stores, per surface, one BIT per luxel per light - "this light

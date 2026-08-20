@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Rasterise a converted .rom offline, so "the client draws shards" can be told apart from "the
 // geometry IS shards". Flat grey shading, no textures - the question it answers is which surfaces
 // are there and which way they face.

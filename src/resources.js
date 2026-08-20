@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Where to look for the things a .bsp needs but does not contain: WADs, and the gfx/env skybox.
 //
 // A downloaded map is usually the .bsp on its own, with `worldspawn.wad` naming halflife.wad,

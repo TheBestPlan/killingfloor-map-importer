@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Backend B: the editor-assisted route. Emits what UnrealEd/KFEd can import by hand —
 //   <name>.ase   world geometry as one static mesh, per-vertex baked lighting, multi-material
 //   <name>.t3d   level skeleton: world shell brush, player starts, converted light actors

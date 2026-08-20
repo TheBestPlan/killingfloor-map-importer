@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Is this frame the artefact? The artefact is a FLAT frame: the world is missing, so almost every
 // pixel outside the weapon and HUD is the one clear colour. A dark wall is dark but never flat.
 const fs = require("fs"), zlib = require("zlib");

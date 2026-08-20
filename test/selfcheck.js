@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Runnable checks for the pieces that would silently produce a broken map.
 // Run: node test/selfcheck.js  [pathToKFMaps] [pathToCSMaps]
 "use strict";
@@ -959,6 +962,39 @@ console.log("\nBrush entities that draw nothing, and breakables nothing can shoo
     got.length + " of 2");
   ok("...and one flagged SF_BREAK_TRIGGER_ONLY stays world geometry",
     !got.some((s) => s.mi === 2));
+
+  // A zone brush is a volume when the mapper drew it like one, and the room when he did not.
+  ok("a buy zone in tool textures is a volume", be.invisible({ classname: "func_buyzone" }, true));
+  ok("...and one the mapper textured is the room, and stays",
+    !be.invisible({ classname: "func_buyzone" }, false) &&
+    !be.invisible({ classname: "func_ladder" }, false));
+  ok("a trigger draws nothing whatever is on it",
+    be.invisible({ classname: "trigger_hurt" }, false));
+
+  const texMap = {
+    faces: [{ texinfo: 0 }, { texinfo: 1 }],
+    texinfo: [{ miptex: 0 }, { miptex: 1 }],
+    miptex: [{ kind: "tool" }, { kind: "normal" }],
+  };
+  ok("modelIsToolOnly sees a real texture among the tool ones",
+    be.modelIsToolOnly(texMap, { firstface: 0, numfaces: 1 }) === true &&
+    be.modelIsToolOnly(texMap, { firstface: 0, numfaces: 2 }) === false);
+}
+
+console.log("\nA .mdl prop takes the light it is handed");
+{
+  const { buildPropMesh } = require("../src/build/propmesh");
+  const mdl = {
+    parts: [{
+      tex: { name: "t", width: 4, height: 4 },
+      tris: [[{ pos: [0, 0, 0], uv: [0, 0] }, { pos: [8, 0, 0], uv: [1, 0] }, { pos: [0, 8, 0], uv: [0, 1] }]],
+    }],
+  };
+  const built = buildPropMesh(mdl, { scale: 1, texRefOf: () => 7, light: [30, 40, 50] });
+  // FColor is B, G, R, A on disk.
+  ok("the vertex colours are the light the caller sampled, not a constant",
+    built.colors.every((c) => c[0] === 50 && c[1] === 40 && c[2] === 30),
+    JSON.stringify(built.colors[0]));
 }
 
 console.log("\nQuake 3 shader stages");
@@ -982,6 +1018,19 @@ console.log("\nQuake 3 shader stages");
     "models/x/energy {",
     "  { map models/x/energy.tga  blendfunc GL_ONE GL_ONE  tcMod scroll 2.2 1.3 }",
     "}",
+    "textures/a/pad {",
+    "  { map textures/a/swirl.tga  blendFunc GL_ONE GL_ZERO  tcmod rotate 130 }",
+    "  { map textures/a/fan.tga  blendFunc blend }",
+    "  { map textures/a/core.tga  blendfunc Add }",
+    "  { map textures/a/plate.tga  blendFunc blend }",
+    "  { map $lightmap  blendFunc GL_DST_COLOR GL_ONE_MINUS_DST_ALPHA }",
+    "}",
+    "textures/a/deathfog {",
+    "  surfaceparm trans",
+    "  surfaceparm fog",
+    "  fogparms ( .55 .11 .1 ) 256",
+    "  { map textures/a/fogcloud.tga  blendfunc gl_dst_color gl_zero }",
+    "}",
   ].join("\n");
   const sh = parseShaders(text);
   const gamefs = { has: (p) => /\.tga$/.test(p), read: () => Buffer.alloc(0) };
@@ -993,8 +1042,10 @@ console.log("\nQuake 3 shader stages");
   ok("a wall painted over an environment map draws the WALL", shiny.file === "textures/a/shiny.tga",
     String(shiny.file));
   ok("...stays opaque, because its first stage is", shiny.kind === "normal", shiny.kind);
-  ok("...and carries what it is painted over, to composite in",
-    shiny.under === "textures/effects/tinfx.tga", String(shiny.under));
+  ok("...and carries the stage under it, to composite in",
+    shiny.layers.length === 2 && shiny.layers[0].file === "textures/effects/tinfx.tga" &&
+    shiny.layers[1].file === "textures/a/shiny.tga" && shiny.layers[1].blend === "blend",
+    JSON.stringify(shiny.layers));
 
   const lit = set.resolve("textures/a/lit", gamefs);
   ok("GL_DST_COLOR GL_SRC_ALPHA is a filter, not a pane of glass", lit.kind === "normal", lit.kind);
@@ -1007,6 +1058,21 @@ console.log("\nQuake 3 shader stages");
     energy.scroll[0] === 2.2 && energy.scroll[1] === 1.3, JSON.stringify(energy.scroll));
   ok("diffuseStage without a name still takes the first drawing stage",
     diffuseStage(sh.get("models/x/energy")).map === "models/x/energy.tga");
+
+  // Team Arena's jump pads: a metal plate with a round hole over a spinning swirl. Carrying the
+  // bottom stage alone left the pad an orange SQUARE.
+  const pad = set.resolve("textures/a/pad", gamefs);
+  ok("every drawing stage of a jump pad is carried, in order, with its blend",
+    pad.layers.length === 4 && pad.layers[0].blend === "opaque" &&
+    pad.layers[1].blend === "blend" && pad.layers[2].blend === "additive" &&
+    pad.layers[3].file === "textures/a/plate.tga" && pad.layers[3].blend === "blend",
+    pad.layers.map((l) => l.blend).join(","));
+  ok("...and $lightmap is not one of them", !pad.layers.some((l) => /\$/.test(l.file)));
+
+  const fog = set.resolve("textures/a/deathfog", gamefs);
+  ok("fogparms gives a fog volume its colour and depth",
+    !!fog.fog && fog.fog.rgb.join(",") === "0.55,0.11,0.1" && fog.fog.depth === 256,
+    JSON.stringify(fog.fog));
 }
 
 console.log("\nThe lightmap atlas' mip chain");

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The sky a Quake 3 map asks for.
 //
 // A sky shader carries `skyparms <farbox> <cloudheight> <nearbox>`, and a farbox is six images named

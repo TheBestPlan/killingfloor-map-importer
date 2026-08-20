@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The GoldSrc lightmap, carried onto the static meshes.
 //
 // Everything Counter-Strike shows on a surface - the shadow a building drops on the sand, the pool

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // End-to-end conversion: one Tactical Ops map -> Killing Floor .rom.
 //
 // The shortest hop this tool makes. Tactical Ops is Unreal Engine 1 and Killing Floor is Unreal

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc BSP v30 reader (Half-Life / Counter-Strike 1.6).
 // Struct layouts per the Half-Life SDK utils/common/bspfile.h.
 "use strict";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // BMP -> downscaled PNG, without GDI+ (which refuses the engine's 32-bit BMPs at some sizes).
 const fs = require("fs"), zlib = require("zlib");
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Rebuilds an existing .rom with this tool's package writer: same names, same imports, same
 // exports in the same order, every object's bytes copied verbatim except the world UModel, which is
 // re-serialized from the parsed structure. If the result is byte-identical to the input then the

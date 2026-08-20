@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Find the map with the smallest world-Model trailer (= easiest to decode by hand),
 // and report how many trailer bytes each map carries per BSP surface (lighting density).
 const fs = require("fs");

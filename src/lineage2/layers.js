@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Which of the terrain's layers paints which quad.
 //
 // A Lineage 2 square blends up to ten layers, each with a texture and an `AlphaMap` - a real texture

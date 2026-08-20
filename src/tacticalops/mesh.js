@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Unreal Engine 1 BSP nodes -> UE2.5 static meshes.
 //
 // The easiest source geometry of the three games this tool reads. Both engines are Unreal, so there

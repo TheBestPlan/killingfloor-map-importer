@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The two image formats a Quake 3 client stores its textures in: Targa and JPEG.
 //
 // Node has neither, and adding a dependency for a converter that ships no other one is a bad

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // UPolys: the convex faces a brush actor is made of.
 //
 // A Volume or a Mover is an ABrush, and an ABrush with `Brush = None` has no shape at all - it

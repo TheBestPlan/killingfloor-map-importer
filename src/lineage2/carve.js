@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Subtracting Lineage 2's carved volumes out of the polygons that are drawn.
 //
 // A doorway, a cave mouth, a window in a stone wall: none of them is modelled. The wall is one

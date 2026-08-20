@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Quake 3 surfaces -> Killing Floor textures.
 //
 // A BSP surface names a SHADER; shader.js says which image file that is and how it blends. What is
@@ -49,7 +52,7 @@ function loadTextures(pkg, refs, bsp, opts) {
   const maxSize = opts.maxSize || 512;
   const byFile = new Map();                   // resolved image path + flags -> { texRef, ... }
   const out = new Map();
-  const stats = { used: 0, images: 0, missing: 0, tool: 0, sky: 0, resampled: 0, cutout: 0, graded: 0, animated: 0, layered: 0, composited: 0, glowed: 0 };
+  const stats = { used: 0, images: 0, missing: 0, tool: 0, sky: 0, resampled: 0, cutout: 0, graded: 0, animated: 0, layered: 0, composited: 0, fog: 0 };
   const missingNames = [];
 
   const used = new Set();
@@ -60,11 +63,13 @@ function loadTextures(pkg, refs, bsp, opts) {
     if (!t) continue;
     if (t.tool) { stats.tool++; out.set(idx, null); continue; }
     stats.used++;
-    const r = shaders.resolve(t.name, gamefs);
+    let r = shaders.resolve(t.name, gamefs);
     // Fog volumes and sky are not surfaces this converter draws: the sky is a cube of its own and a
     // fog brush has no picture at all.
     if (r.kind === "sky") { stats.sky++; out.set(idx, { ref: 0, kind: "sky", name: t.name }); continue; }
-    if (r.shader && r.shader.params.has("fog")) { out.set(idx, null); continue; }
+    // A fog volume with no `fogparms` and no picture is a shape the engine tints through, and it
+    // draws nothing at all.
+    if (r.shader && r.shader.params.has("fog") && !(r.fog && r.file)) { out.set(idx, null); continue; }
 
     const liquid = !!(t.contents & (CONTENTS.WATER | CONTENTS.LAVA | CONTENTS.SLIME));
     let img = null;
@@ -74,40 +79,61 @@ function loadTextures(pkg, refs, bsp, opts) {
     }
     if (!img) { stats.missing++; if (missingNames.length < 12) missingNames.push(t.name); img = placeholder(); }
 
-    // What this image is painted OVER (shader.js `under`): an environment map under a shiny rail, a
-    // scrolling electric plate under a broken floor. A UE2.5 surface draws one material, so the two
-    // are composited here by the top image's own alpha. Without it the alpha was simply dropped and
-    // the see-through part of the surface came out as the top texture's black - which is the hole in
-    // pro-q3tourney4's floor reading as a black blob.
-    if (r.under && img.alpha) {
+    // The shader's stages, flattened into this one image (shader.js `layers`).
+    //
+    // Killing Floor draws one material per surface and Quake 3 draws a stack, so the stack is
+    // composited here, bottom to top, each layer with the blendFunc its stage carried. Whatever the
+    // stack ends up being - a wall over an environment map, a broken plate over a scrolling
+    // backdrop, bright slime over flat slime, a jump pad's metal plate with its round hole over a
+    // spinning swirl - one stage of it alone is not the surface.
+    //
+    // The base is layer 0 and it keeps its alpha: whether the SURFACE is see-through was already
+    // decided from that same first stage, and a later stage only says how it sits on the ones under
+    // it. What is baked here is a still: a stage that pulses or scrolls is drawn at full and at
+    // rest, which is as much of it as one material can hold.
+    if (r.layers && r.layers.length > 1) {
       try {
-        let u = decode(r.under, gamefs.read(r.under));
-        if (u.width !== img.width || u.height !== img.height) u = resample(u, img.width, img.height);
-        const rgb = Buffer.alloc(img.width * img.height * 3);
-        for (let i = 0, n = img.width * img.height; i < n; i++) {
-          const a = img.alpha[i] / 255;
-          for (let k = 0; k < 3; k++) rgb[i * 3 + k] = Math.round(img.rgb[i * 3 + k] * a + u.rgb[i * 3 + k] * (1 - a));
+        let base = null;
+        for (const layer of r.layers) {
+          let im = decode(layer.file, gamefs.read(layer.file));
+          if (!base) { base = { width: im.width, height: im.height, rgb: Buffer.from(im.rgb), alpha: im.alpha && Buffer.from(im.alpha) }; continue; }
+          if (im.width !== base.width || im.height !== base.height) im = resample(im, base.width, base.height);
+          const n = base.width * base.height;
+          for (let i = 0; i < n; i++) {
+            for (let k = 0; k < 3; k++) {
+              const d = base.rgb[i * 3 + k], s = im.rgb[i * 3 + k];
+              let v;
+              if (layer.blend === "additive") v = d + s;
+              else if (layer.blend === "filter") v = (d * s) / 255;
+              else if (layer.blend === "blend") {
+                const a = im.alpha ? im.alpha[i] / 255 : 1;
+                v = s * a + d * (1 - a);
+              } else v = s;                       // opaque: this stage replaces what is under it
+              base.rgb[i * 3 + k] = v > 255 ? 255 : v < 0 ? 0 : Math.round(v);
+            }
+          }
         }
-        img = { width: img.width, height: img.height, rgb, alpha: null };
-        stats.composited++;
-      } catch (e) { /* the backdrop is not on disk; the surface keeps its own image alone */ }
+        if (base && base.rgb !== img.rgb) { img = base; stats.composited++; }
+      } catch (e) { /* a stage's image is not on disk; the surface keeps what it already had */ }
     }
 
-    // ...and the glow stage added over it (shader.js `over`): the bright slime over the flat one,
-    // a lamp's `.blend` over its housing, a console's lit screen. Additive, because that is the
-    // blendFunc the stage carries, and the picture is a still of what Quake 3 pulses.
-    if (r.over) {
-      try {
-        let g = decode(r.over, gamefs.read(r.over));
-        if (g.width !== img.width || g.height !== img.height) g = resample(g, img.width, img.height);
-        const rgb = Buffer.alloc(img.width * img.height * 3);
-        for (let i = 0; i < img.width * img.height * 3; i++) {
-          const v = img.rgb[i] + g.rgb[i];
-          rgb[i] = v > 255 ? 255 : v;
-        }
-        img = { width: img.width, height: img.height, rgb, alpha: img.alpha };
-        stats.glowed++;
-      } catch (e) { /* the glow is not on disk; the surface keeps its base alone */ }
+    // A fog volume's own surface. Quake 3 renders fog volumetrically - everything seen through the
+    // brush is tinted by `fogparms` and goes opaque at its depth - and the pools of death fog at the
+    // bottom of q3dm9 and q3dm15 are 864x1124-unit sheets of it. Dropped, they left a hard-edged
+    // hole with the room below showing through, which is what the report calls a hole in the mesh.
+    //
+    // One material cannot be volumetric, so the sheet is what carries it: the shader's own cloud
+    // image tinted with the fog colour, drawn nearly opaque because `fogparms` says the fog closes
+    // over within 128-256 units and these sheets are the top of a pit.
+    if (r.fog) {
+      const tint = r.fog.rgb;
+      const rgb = Buffer.alloc(img.width * img.height * 3);
+      for (let i = 0, n = img.width * img.height; i < n; i++) {
+        for (let k = 0; k < 3; k++) rgb[i * 3 + k] = Math.min(255, Math.round(img.rgb[i * 3 + k] * tint[k]));
+      }
+      img = { width: img.width, height: img.height, rgb, alpha: Buffer.alloc(img.width * img.height, 210) };
+      r = Object.assign({}, r, { kind: "translucent" });
+      stats.fog++;
     }
 
     let kind = r.kind === "masked" ? "masked" : r.kind === "additive" ? "additive"
@@ -122,7 +148,8 @@ function loadTextures(pkg, refs, bsp, opts) {
     if (kind === "masked") stats.cutout++;
     if (ak === "graded" && kind === "normal") stats.graded++;
 
-    const key = (r.file || "?" + t.name) + "|" + kind + (r.under ? "|" + r.under : "") + (r.over ? "|+" + r.over : "");
+    const key = (r.file || "?" + t.name) + "|" + kind +
+      (r.layers && r.layers.length > 1 ? "|" + r.layers.map((l) => l.blend[0] + l.file).join("|") : "");
     let rec = byFile.get(key);
     if (!rec) {
       let w = Math.min(maxSize, nextPow2(img.width)), h = Math.min(maxSize, nextPow2(img.height));
@@ -217,9 +244,9 @@ function loadTextures(pkg, refs, bsp, opts) {
       stats.resampled + " resampled to power-of-two" +
       (stats.animated ? ", " + stats.animated + " flipbook" : "") +
       (stats.layered ? ", " + stats.layered + " painted second layer" : "") +
-      (stats.composited ? ", " + stats.composited + " composited over a backdrop" : "") +
-      (stats.glowed ? ", " + stats.glowed + " with a glow stage added in" : "") +
-      (stats.missing ? ", " + stats.missing + " MISSING -> placeholder: " + missingNames.join(" ") : "") + ")");
+      (stats.composited ? ", " + stats.composited + " with their shader stages flattened" : "") +
+      (stats.fog ? ", " + stats.fog + " fog sheet(s)" : "") +
+            (stats.missing ? ", " + stats.missing + " MISSING -> placeholder: " + missingNames.join(" ") : "") + ")");
   }
   return { textures: out, stats };
 }

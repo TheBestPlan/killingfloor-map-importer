@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // GoldSrc skyboxes are not in the .bsp: worldspawn's `skyname` names six images under
 // gfx/env/<name>{up,dn,lf,rt,ft,bk}.tga, and the brushes that show them are textured with a 16x16
 // placeholder called `sky`. Converting that placeholder is what turns the sky into a white wall.

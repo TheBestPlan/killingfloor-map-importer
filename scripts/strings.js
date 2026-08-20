@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Pull ASCII strings out of a DLL/EXE and grep them — used to confirm which editor exec commands
 // and commandlets the shipped KF binaries actually implement.
 const fs = require("fs");

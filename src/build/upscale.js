@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Lanczos-3 upscaling for the skybox images.
 //
 // A GoldSrc sky face is 256x256 and, spread across a 90-degree field of view, that is roughly 3

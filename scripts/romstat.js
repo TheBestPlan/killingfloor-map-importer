@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Inspect a KF .rom: what a shipped CS->KF port actually contains.
 const fs = require("fs");
 const path = require("path");

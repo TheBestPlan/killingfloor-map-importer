@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The Unreal Engine 1 UModel, as Unreal Tournament 99 (file version 69) writes it.
 //
 // Same object Killing Floor stores three engine versions later, and the differences are all in the

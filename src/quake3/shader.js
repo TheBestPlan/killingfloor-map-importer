@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Quake 3 .shader scripts: what a surface name actually draws.
 //
 // A BSP names its surfaces after SHADERS, not after files. Most of them happen to be an image on
@@ -112,7 +115,19 @@ function parseShaders(text, into) {
       else if (wl === "surfaceparm") sh.params.add((t[i++] || "").toLowerCase());
       else if (wl === "qer_editorimage") sh.editorImage = t[i++];
       else if (wl === "cull") sh.cull = (t[i++] || "").toLowerCase();
-      else if (wl === "skyparms") {
+      else if (wl === "fogparms") {
+        // `fogparms ( r g b ) depth` - the colour and the distance the fog goes opaque in. The
+        // parentheses may or may not be tokens of their own, so numbers are taken as they come.
+        const nums = [];
+        while (i < t.length && nums.length < 4 && !/^[{}]$/.test(t[i])) {
+          const w2 = t[i++].replace(/[()]/g, "");
+          if (w2 === "") continue;
+          const v = parseFloat(w2);
+          if (!Number.isFinite(v)) { i--; break; }
+          nums.push(v);
+        }
+        if (nums.length >= 3) sh.fog = { rgb: nums.slice(0, 3), depth: nums[3] || 256 };
+      } else if (wl === "skyparms") {
         // farbox cloudheight nearbox; "-" means none.
         const far = t[i++], height = t[i++], near = t[i++];
         sh.sky = { farbox: far === "-" ? null : far, cloudHeight: parseFloat(height) || 128, nearbox: near === "-" ? null : near };
@@ -213,7 +228,6 @@ class ShaderSet {
     // pewter rail in Quake 3 into a pane of glass.
     const firstReal = sh && sh.stages.find((s) => s.map && !/^\$/.test(s.map));
     let kind = "normal";
-    let under = null;
     if (sh) {
       if (sh.sky || sh.params.has("sky")) kind = "sky";
       else if (sh.params.has("nodraw") || sh.params.has("trans") && !file) kind = "normal";
@@ -225,29 +239,28 @@ class ShaderSet {
       }
       // A shader whose FIRST stage is additive over a solid one is a glow on top, not glass.
       if (kind === "additive" && sh.stages.some((s) => s.map && !/^\$/.test(s.map) && s.blend === "opaque")) kind = "normal";
-      // ...and what IS under it gets carried, so the alpha that the drawn stage blends by still
-      // shows something. `base_trim/pewter_shiney` blends its metal over an environment map;
-      // `base_floor/metalbridge04dbroke` blends a broken plate over a scrolling electric one, and
-      // that is what you see through the hole. Composited into one image at load, since a UE2.5
-      // surface draws one material - without it the hole came out flat black (Q3 bug 5).
-      if (stage && firstReal && stage !== firstReal && stage.blend === "blend" && !stage.alphaFunc &&
-        (firstReal.blend === "opaque" || firstReal.blend === "filter")) {
-        const u = tryFile(firstReal.map);
-        if (u && u !== file) under = u;
-      }
     }
-    // ...and what is added ON TOP of it. A Quake 3 surface is as often base + glow as it is
-    // backdrop + surface: `liquids/slime1_2000` draws a flat green and adds the bright slime over
-    // it, `base_light/trianglelight` adds its own `.blend` lamp, `base_wall/dooreye` its lit eye.
-    // Taking the base alone is why q3ctf2's slime came out a pale grey-green slab and every light
-    // panel came out unlit. Only when the surface is not itself the glow.
-    let over = null;
-    if (sh && stage && kind !== "additive" && kind !== "sky") {
-      const after = sh.stages.slice(sh.stages.indexOf(stage) + 1)
-        .find((s) => s.map && !/^\$/.test(s.map) && s.blend === "additive");
-      const o = after && tryFile(after.map);
-      if (o && o !== file && o !== under) over = o;
-    }
+    // EVERY drawing stage, bottom to top, with how it combines with what is under it.
+    //
+    // A UE2.5 surface draws one material and a Quake 3 surface is a stack, so the stack is flattened
+    // into one image at load. Taking one stage out of it and calling that the surface was wrong in
+    // both directions: `base_trim/pewter_shiney` blends its metal over an environment map,
+    // `base_floor/metalbridge04dbroke` blends a broken plate over a scrolling electric one - and
+    // that plate's alpha IS the hole in the floor - while `liquids/slime1_2000` adds the bright
+    // slime over a flat one and Team Arena's jump pads paint a metal plate with a round hole over a
+    // spinning swirl. Carrying only the bottom stage left the hole black, the slime grey and the
+    // jump pad an orange SQUARE.
+    //
+    // Not for a flipbook: there the stage's own frames are the animation and the caller writes them
+    // as an AnimNext chain. Not for a cut-out either: its alpha is the shape, and painting anything
+    // over it would fill the shape in.
+    const layers = (sh && !(stage && stage.frames) && kind !== "masked" && kind !== "sky")
+      ? sh.stages
+        .filter((s) => s.map && !/^\$/.test(s.map) && !s.alphaFunc)
+        .map((s) => ({ file: tryFile(s.map), blend: s.blend }))
+        .filter((l) => l.file)
+        .slice(0, 6)
+      : [];
     // The frames of the flipbook this surface draws, in order, as files that exist.
     const frames = stage && stage.frames && stage.frames.length > 1
       ? stage.frames.map(tryFile).filter(Boolean) : null;
@@ -272,8 +285,10 @@ class ShaderSet {
       scroll: (stage && stage.scroll) || null,
       rotate: (stage && stage.rotate) || 0,
       overlay,
-      // What `file` is blended over, and what is added on top of it, to be composited at load.
-      under, over,
+      // Every drawing stage, bottom to top, to be flattened into one image at load.
+      layers,
+      // `fogparms` - the colour a fog volume's surface is tinted with, and how deep it goes opaque.
+      fog: (sh && sh.fog) || null,
       // A billboard, not a wall: see the deformVertexes note above.
       sprite: !!(sh && sh.autoSprite),
       twoSided: !!(sh && /^(none|disable|twosided)$/.test(sh.cull || "")),

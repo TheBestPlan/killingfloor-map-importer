@@ -445,3 +445,48 @@ back to - `KF_FOG` is off by default because it washes the map.
 So the water volumes carry no `bDistanceFog` at all. Swimming is `bWaterVolume`'s job, not the fog's,
 and without `bDistanceFog` the HUD never picks the volume up. `KF_WATER_TINT=1` puts the blue back,
 stuck-on and all, for checking from outside whether a volume took.
+
+### 5.30g A zone brush is a volume only when the mapper drew it like one
+Every buy zone, bomb site and hostage zone in the 14 stock Counter-Strike maps is textured with
+`aaatrigger` - 208 faces of them, not one with a wall texture. That is the mapper saying "this is a
+shape, not a surface", and it is what makes dropping the class safe there.
+
+fy_dinoiceworld does not: its three `func_buyzone` brushes are textured with `snow`, they are the
+ladder alcoves, and the world's own faces under them stop at the floor (z -64) while the buy zone
+spans -74 to 48. Dropping the class took the walls of every alcove with it and left a ladder-shaped
+hole with the sky behind - which is what the user had already predicted ("deleting it breaks the
+map") before it was ever removed.
+
+So the rule is split. `trigger_*` goes on the CLASS: `CBaseTrigger::Spawn` sets `EF_NODRAW` and half
+the trigger faces in the stock maps carry an ordinary wall texture without ever showing. The zone
+entities and `func_ladder` go on the TEXTURE: they are dropped only when every face of the brush
+model is a tool texture. `func_ladder` needs it for the same reason - as often as not, the brush IS
+the visible ladder.
+
+While checking this: two of fy_dinoiceworld's four ladders have a `sky` face as the first surface
+facing the player behind them (d = 116 and 256 units, normal pointing at the camera, the wall between
+them facing the other way). Counter-Strike draws the sky through those ladders as well; that pair is
+the map, not the conversion.
+
+### 5.31b A .mdl prop is lit by the surface it stands on
+GoldSrc has no per-vertex light for a model - it samples the lightmap under the entity and lights
+the whole thing with it. A converted prop took a flat 150 instead, which is right on a daylight map
+and blinding on a night one: de_winter_austria's mean luxel is 26 and its snow-covered firs came out
+white against nearly black walls.
+
+The luxel under the prop's origin is what it takes now, scaled so that 128 - "normally lit" in
+GoldSrc, whose renderer doubles the lightmap - still gives the old 150. On de_winter_austria that is
+24 to 29 instead of 150. A prop standing on a surface with no lightmap of its own falls back to the
+map's mean luxel, and 24 is the floor so a prop in shadow is a shape and not a silhouette.
+
+The light is baked into the mesh's vertex colours, so the prop mesh cache is keyed by the light as
+well as by the file, quantised to 16 levels a channel: de_winter_austria's 61 props build 32 meshes
+from 34 files.
+
+### 5.20a The sky is the one texture a block codec must not have
+A sky is a smooth, low-contrast gradient stretched over a whole field of view. DXT1's two 5:6:5
+endpoints per 4x4 block turn that into flat squares, and magnified across 90 degrees each block is
+about 15 screen pixels - which is what de_winter_austria's `fullmoon` night sky reads as, its whole
+range being a handful of dark blues. The six faces go out uncompressed; at 512 that is about 7 MB a
+map, and it is the largest single thing on the screen. The Tactical Ops route reached the same
+conclusion about its own rendered cube (tacticalops.md TO.12).

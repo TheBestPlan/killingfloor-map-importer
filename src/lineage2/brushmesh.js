@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Brush polygons -> static meshes.
 //
 // A Lineage 2 poly is a convex ring with the UE texture mapping on it: the texel coordinate of a

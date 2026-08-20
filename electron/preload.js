@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 "use strict";
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 

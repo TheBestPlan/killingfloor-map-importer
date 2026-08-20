@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // CLI front end. Example:
 //   node src/cli.js "D:/.../cstrike/maps/cs_assault.bsp" --out "D:/.../KillingFloor/Maps" --verify
 "use strict";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Quake 3 BSP faces -> UE2.5 static meshes.
 //
 // The Quake 3 side of this is easier than GoldSrc's and harder in one place. Easier, because a

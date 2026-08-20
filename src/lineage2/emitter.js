@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Lineage 2's particle systems, read as a property tree that can be written back out.
 //
 // An `Emitter` is an ordinary actor holding an `Emitters` array of `SpriteEmitter` objects, and both

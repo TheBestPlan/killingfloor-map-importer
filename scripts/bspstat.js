@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Minimal GoldSrc BSP v30 reader: lump inventory + face/lightmap/texture stats + entity histogram.
 // Self-check: every face's plane index, texinfo index and lightmap offset must be in range,
 // and the computed lightmap byte total must fit inside the LIGHTING lump.

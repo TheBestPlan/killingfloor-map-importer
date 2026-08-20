@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Reader for UE2.5 (v128/29) packages and the full world UModel, including the trailer that holds
 // the baked BSP lighting. Used to verify what this tool writes, and to study the shipped maps.
 "use strict";

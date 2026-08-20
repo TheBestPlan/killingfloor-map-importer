@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // End-to-end conversion: one Quake 3 / Team Arena map -> Killing Floor .rom.
 //
 // The Killing Floor level skeleton below (LevelInfo, the builder brush, the world box, the zone,

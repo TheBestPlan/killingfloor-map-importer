@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // The .rom package reader these research scripts use lives in the sibling repository
 // killingfloor-map-viewer (https://github.com/TheBestPlan/killingfloor-map-viewer). Clone it next to
 // this one, or point KF_ROM_JS at its kfrom.js.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 TheBestPlan
+
 // Reading a UTexture out of a Lineage 2 package.
 //
 // Same object Killing Floor stores, one file version older: a tagged property block that carries
