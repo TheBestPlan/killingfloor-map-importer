@@ -19,7 +19,8 @@ const crypto = require("crypto");
 
 const TO = require("./package");
 const { readModel, findWorldModel, floorUnder, inSolid, nodePoints, PF } = require("./model");
-const { readTexture, addUE1Texture } = require("./texture");
+const { readTexture, addUE1Texture, topAsRgba } = require("./texture");
+const { renderSkyCube } = require("./skyroom");
 const { buildMeshes } = require("./mesh");
 const { buildLightmap } = require("./light");
 const { readMovers } = require("./movers");
@@ -30,6 +31,7 @@ const { writePolys, boxPolys, boxBrushModel } = require("../unreal/polys");
 const { addRgbTexture, sanitizeName } = require("../unreal/texture");
 const { buildMeshExport, buildMeshInstance } = require("../unreal/staticmesh");
 const { buildModel } = require("../build/model");
+const { buildSkyboxMesh } = require("../build/skyboxmesh");
 const { tagsOf, pick, val } = require("../lineage2/props");
 const { installedTacticalOps } = require("../resources");
 
@@ -220,6 +222,8 @@ function convert(opts) {
     if (hit && /Texture$/.test(hit.pkg.classOf(hit.exp))) {
       try {
         let owner = hit.pkg, exp = hit.exp;
+        const cls = owner.classOf(exp);
+        const liquid = /Water|Wet/i.test(cls);
         let t = readTexture(owner, exp);
         // Water is not a texture in UE1, it is a program. A `WetTexture` (`FractalTexture` ->
         // `WaterTexture` -> this) computes its pixels every frame by distorting a still image with
@@ -228,14 +232,29 @@ function convert(opts) {
         // the still image, and that is the frame to carry: the ripples are what is lost, not the
         // water. Anything without one (a plain `WaterTexture`, a `FireTexture`) has no still image
         // to fall back on and keeps whatever it stored.
-        if (t.sourceTexture && owner.classOf(exp) !== "Texture") {
+        if (t.sourceTexture && cls !== "Texture") {
           const inner = TO.resolveRef(owner, t.sourceTexture, client, (cls) => /Texture$/.test(cls));
           if (inner) {
             const still = readTexture(inner.pkg, inner.exp);
             if (still.width && still.height && still.mips.length) { owner = inner.pkg; exp = inner.exp; t = still; }
           }
         }
-        if (t.width && t.height && t.mips.length) src = { tex: t, key: (owner.pkgName || "?") + "." + t.name };
+        // A procedural texture with no still image to fall back on - a `FireTexture`, a plain
+        // `WaterTexture` - ships the UNINITIALISED buffer its generator writes into: whatever was in
+        // that memory when the package was saved. Carried at face value it is the white, yellow and
+        // cyan noise that covered TO-Oilrig's lower deck. Its palette is real, though, so the
+        // stand-in is a ramp through it: fire colours for a fire, water colours for water.
+        if (cls !== "Texture" && t.palette && (!t.mips.length || t.mips.length === 1)) {
+          const side = 64;
+          const data = Buffer.alloc(side * side);
+          for (let y = 0; y < side; y++) {
+            const shade = Math.round((1 - y / (side - 1)) * 255);
+            for (let x = 0; x < side; x++) data[y * side + x] = shade;
+          }
+          t = { name: t.name, format: 0, width: side, height: side, palette: t.palette, masked: false,
+            sourceTexture: 0, animNext: 0, exact: true, mips: [{ data, width: side, height: side }] };
+        }
+        if (t.width && t.height && t.mips.length) src = { tex: t, liquid, key: (owner.pkgName || "?") + "." + t.name };
       } catch (e) { src = null; }
     }
     srcCache.set(matRef, src);
@@ -255,38 +274,27 @@ function convert(opts) {
   // A surface that does not draw plainly gets a Shader: how a material blends is a property of its
   // OUTPUT, and a bare texture has no way to say "cut this out" or "see through this".
   //
-  // UE1's own translucency reads the texture's brightness as its opacity, which is closest to
-  // OB_Brighten here - but a pale texture then adds itself to a lit floor and burns to white, which
-  // is what TO-Crossfire's pool did. A flat opacity through OB_Translucent keeps the pane and the
-  // water see-through without ever blowing out; what is lost is the glow on a genuinely additive
-  // surface.
-  let flatOpacity = 0;
+  // UE1's translucency IS the texel's brightness: a black pane is invisible, a white highlight is
+  // solid. That per-texel figure rides in the alpha channel of the texture written for the surface
+  // (texture.js, "luma"), so the Shader's Opacity is the texture itself - the same shape the cut-out
+  // path already had. A flat opacity was tried first and it is what made TO-Resurrection's museum
+  // cases a slab of black and TO-Scope's windows a mirror: every texel of a dark pane came out 60%
+  // opaque, which is exactly what dark glass must NOT be.
+  //
   // `diffuse` is what the surface draws - the texture, or the Combiner that multiplies the map's
-  // light into it - and `mask` is always the raw texture, because the cut-out lives in ITS alpha.
-  const shaderFor = (diffuse, kind, twoSided, mask) => {
+  // light into it - and `alphaOf` is always the raw texture, because both the cut-out and the
+  // brightness live in ITS alpha.
+  const shaderFor = (diffuse, kind, twoSided, alphaOf) => {
     const key = diffuse + "|" + kind + "|" + (twoSided ? "2" : "1");
     if (shaders.has(key)) return shaders.get(key);
     const blend = kind === "masked" ? 1 : kind === "modulated" ? 2 : 3;   // OB_Masked / OB_Modulate / OB_Translucent
-    if (kind === "translucent" && !flatOpacity) {
-      flatOpacity = out.addExport({
-        classRef: refs.ConstantColor, name: "Opacity0", flags: refs.flagsGame,
-        serialize: (p) => {
-          const w = new Writer(64);
-          const pr = p.props(w);
-          pr.color("Color", [255, 255, 255, 150]);
-          pr.end();
-          return w;
-        },
-      });
-    }
     const ref = out.addExport({
       classRef: refs.Shader, name: (kind === "masked" ? "Masked" : "Blend") + shaders.size, flags: refs.flagsGame,
       serialize: (p) => {
         const w = new Writer(128);
         const pr = p.props(w);
         pr.object("Diffuse", diffuse);
-        if (kind === "masked") pr.object("Opacity", mask);
-        else if (kind === "translucent") pr.object("Opacity", flatOpacity);
+        if (kind === "masked" || kind === "translucent") pr.object("Opacity", alphaOf);
         pr.byte("OutputBlending", blend);
         if (twoSided || kind !== "masked") pr.bool("TwoSided", true);
         pr.end();
@@ -309,12 +317,17 @@ function convert(opts) {
     // PF_Masked, and arrived as solid rectangles of whatever colour palette index 0 happened to be
     // - black, magenta, red.
     const masked = !!(flags & PF.Masked) || !!(src && src.tex.masked);
+    // Water is see-through whatever the flags say. A UE1 water surface is a program that DISTORTS
+    // what is behind it (TO.9), so the one thing it never is, is opaque - and TO-RapidWaters came
+    // across with a wall of flat teal standing in a dry room because the flags on it say nothing at
+    // all: NotSolid, TwoSided, AutoUPan, Portal.
+    const liquid = !!(src && src.liquid);
     // The sky is drawn flat and opaque whatever the room's own surfaces say: it is a backdrop, and
     // a backdrop that blends has nothing behind it to blend with.
     const kind = sky ? "opaque"
-      : masked ? "masked" : (flags & PF.Translucent) ? "translucent"
+      : masked ? "masked" : (flags & PF.Translucent) || liquid ? "translucent"
         : (flags & PF.Modulated) ? "modulated" : "opaque";
-    const twoSided = !sky && !!(flags & PF.TwoSided);
+    const twoSided = !sky && (!!(flags & PF.TwoSided) || liquid);
     const key = material + "|" + kind + "|" + (twoSided ? "2" : "1") + (sky ? "|s" : "");
     if (texCache.has(key)) return texCache.get(key);
     let rec;
@@ -325,12 +338,15 @@ function convert(opts) {
       if (t) missingNames.add((t.pkg || "?") + "." + t.name);
       rec = placeholder();
     } else {
-      const baseKey = src.key + "|" + (kind === "masked" ? "m" : "o") + (sky ? "s" : "");
+      // A translucent surface needs its own copy of the texture: the alpha channel carries the
+      // per-texel opacity, and the opaque copy of the same image is DXT1 with no alpha at all.
+      const suffix = kind === "masked" ? "_m" : kind === "translucent" ? "_t" : "";
+      const baseKey = src.key + "|" + (suffix || "o") + (sky ? "s" : "");
       let base = texCache.get(baseKey);
       if (!base) {
         const added = addUE1Texture(out, refs, src.tex, {
-          masked: kind === "masked", gain: sky ? SKY_GAIN : 1,
-          name: sanitizeName(src.key.replace(/\./g, "_")) + (kind === "masked" ? "_m" : "") + (sky ? "_sky" : ""),
+          masked: kind === "masked", lumaAlpha: kind === "translucent", gain: sky ? SKY_GAIN : 1,
+          name: sanitizeName(src.key.replace(/\./g, "_")) + suffix + (sky ? "_sky" : ""),
         });
         base = added ? { ref: added.texRef, origWidth: added.origWidth || src.tex.width, origHeight: added.origHeight || src.tex.height } : null;
         if (!base) base = placeholder();
@@ -376,8 +392,45 @@ function convert(opts) {
       (missingNames.size > 6 ? " +" + (missingNames.size - 6) + " more" : ""));
   }
 
+  // The sky room's own geometry never reaches the level: it is rendered into a cube instead.
   const worldMeshes = build.meshes.filter((m) => m.tag !== "sky");
-  const skyMeshes = o.noSky ? [] : build.meshes.filter((m) => m.tag === "sky");
+
+  // --- the sky room, rendered -------------------------------------------------------------------
+  // Six pictures taken from where the SkyZoneInfo stands, with the room's own textures. See
+  // skyroom.js for why the room cannot simply be scaled up and hung around the level.
+  let skyCube = null;
+  if (!o.noSky && skyZone >= 0) {
+    const camera = skyZoneActor && pick(skyZoneActor.tags, "Location")
+      ? val.vector(pkg, pick(skyZoneActor.tags, "Location")) : null;
+    const skyNodes = model.nodes.filter((n) => inSkyZone(n));
+    if (camera && skyNodes.length) {
+      const pixCache = new Map();
+      const pixelsOf = (iSurf, surf) => {
+        if (pixCache.has(iSurf)) return pixCache.get(iSurf);
+        let rec = null;
+        const src = readSource(surf.material);
+        if (src) {
+          const masked = !!(surf.polyFlags & PF.Masked) || !!src.tex.masked;
+          const img = topAsRgba(src.tex, masked ? "mask" : null);
+          if (img) {
+            rec = {
+              rgb: img.rgb, width: src.tex.width, height: src.tex.height,
+              origWidth: src.tex.width, origHeight: src.tex.height,
+              indexed: masked && src.tex.mips[0] ? src.tex.mips[0].data : null,
+              kind: masked ? "masked"
+                : (surf.polyFlags & PF.Modulated) ? "modulated"
+                  : (surf.polyFlags & PF.Translucent) ? "translucent" : "opaque",
+            };
+          }
+        }
+        pixCache.set(iSurf, rec);
+        return rec;
+      };
+      const size = +process.env.KF_SKY_SIZE || 512;
+      const rendered = renderSkyCube(model, skyNodes, camera, pixelsOf, size);
+      if (rendered) skyCube = Object.assign({ size }, rendered);
+    }
+  }
 
   // --- the world box --------------------------------------------------------------------------
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -394,8 +447,8 @@ function convert(opts) {
   const skyR = +process.env.KF_SKY_R || Math.max(12000, Math.min(30000, levelRadius * 4));
   const MARGIN = 512;
   const box = {
-    min: [0, 1, 2].map((k) => Math.min(lo[k] - MARGIN, skyMeshes.length ? centre[k] - skyR - MARGIN : Infinity)),
-    max: [0, 1, 2].map((k) => Math.max(hi[k] + MARGIN, skyMeshes.length ? centre[k] + skyR + MARGIN : -Infinity)),
+    min: [0, 1, 2].map((k) => Math.min(lo[k] - MARGIN, skyCube ? centre[k] - skyR - MARGIN : Infinity)),
+    max: [0, 1, 2].map((k) => Math.max(hi[k] + MARGIN, skyCube ? centre[k] + skyR + MARGIN : -Infinity)),
   };
 
   // --- the level skeleton ---------------------------------------------------------------------
@@ -735,67 +788,49 @@ function convert(opts) {
   });
   if (Number.isFinite(lowest)) holder.killZ = lowest - 2000;
 
-  // --- the sky room, enlarged ------------------------------------------------------------------
-  if (skyMeshes.length) {
-    const slo = [Infinity, Infinity, Infinity], shi = [-Infinity, -Infinity, -Infinity];
-    for (const m of skyMeshes) {
-      for (let k = 0; k < 3; k++) {
-        slo[k] = Math.min(slo[k], m.origin[k] + m.bbox.min[k]);
-        shi[k] = Math.max(shi[k], m.origin[k] + m.bbox.max[k]);
-      }
+  // --- the sky, as a cube ----------------------------------------------------------------------
+  // The room is RENDERED here rather than carried (skyroom.js has the why), which is what lets the
+  // sky be a cube big enough to have no parallax and nothing of its own inside the level.
+  if (skyCube) {
+    const sides = {};
+    for (const side of Object.keys(skyCube.faces)) {
+      const img = skyCube.faces[side];
+      sides[side] = addRgbTexture(out, refs, mapName.replace(/[^A-Za-z0-9_]/g, "") + "_sky_" + side,
+        { width: img.width, height: img.height, rgb: img.rgb }, SKY_GAIN);
     }
-    const skyCentre = [0, 1, 2].map((k) => (slo[k] + shi[k]) / 2);
-    const skyRoom = Math.max(1, Math.hypot(...[0, 1, 2].map((k) => (shi[k] - slo[k]) / 2)));
-    const K = skyR / skyRoom;
-    skyMeshes.forEach((mesh, i) => {
-      // The room is blown up around the level, so the player ends up INSIDE it and sees the walls
-      // from the side the mapper meant them to be seen from - the same side mesh.js already winds
-      // every node for. Nothing to flip here.
-      for (const v of mesh.vertices) v.pos = v.pos.map((c) => c * K);
-      mesh.bbox = { min: mesh.bbox.min.map((c) => c * K), max: mesh.bbox.max.map((c) => c * K) };
-      mesh.radius *= K;
-      // The room's own centre becomes the level's, so the player stands where the SkyZoneInfo did.
-      const at = [0, 1, 2].map((k) => centre[k] + (mesh.origin[k] - skyCentre[k]) * K);
-      mesh.lightPage = undefined;
-      const meshRef = out.addExport({
-        classRef: refs.StaticMesh, name: mapName.replace(/[^A-Za-z0-9_]/g, "") + "_sky" + i,
-        flags: refs.flagsGame, serialize: (p) => buildMeshExport(p, mesh),
-      });
-      const instRef = out.addExport({
-        classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"), flags: refs.flagsGame,
-        serialize: (p) => buildMeshInstance(p, mesh),
-      });
-      meshActors.push(out.addExport({
-        classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
-        serialize: (p) => {
-          const w = new Writer(256);
-          writeStateFrame(w, refs.StaticMeshActor);
-          const pr = p.props(w);
-          pr.object("StaticMesh", meshRef);
-          pr.object("StaticMeshInstance", instRef);
-          pr.bool("bUnlit", true);
-          pr.bool("bHiddenEd", true);
-          pr.bool("bStatic", true);
-          pr.bool("bWorldGeometry", true);
-          pr.bool("bCollideActors", false);
-          pr.bool("bBlockActors", false);
-          pr.bool("bBlockKarma", false);
-          pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
-          pr.vector("ColLocation", at);
-          pr.vector("Location", at);
-          pr.end();
-          return w;
-        },
-      }));
+    const mesh = buildSkyboxMesh(centre, skyR, sides, { grid: 4, mirrorY: false });
+    const meshRef = out.addExport({
+      classRef: refs.StaticMesh, name: mapName.replace(/[^A-Za-z0-9_]/g, "") + "_sky",
+      flags: refs.flagsGame, serialize: (p) => buildMeshExport(p, mesh),
     });
-    const sl = [Infinity, Infinity, Infinity], sh = [-Infinity, -Infinity, -Infinity];
-    for (const m of skyMeshes) for (let k = 0; k < 3; k++) {
-      sl[k] = Math.min(sl[k], centre[k] + (m.origin[k] - skyCentre[k]) * K + m.bbox.min[k]);
-      sh[k] = Math.max(sh[k], centre[k] + (m.origin[k] - skyCentre[k]) * K + m.bbox.max[k]);
-    }
-    log("sky: the map's own sky room, " + skyMeshes.length + " mesh(es), scaled x" + K.toFixed(1) +
-      " to a radius of " + Math.round(skyR) + "; it spans " + sl.map(Math.round).join(",") + " .. " +
-      sh.map(Math.round).join(",") + " around a level of " + lo.map(Math.round).join(",") + " .. " + hi.map(Math.round).join(","));
+    const instRef = out.addExport({
+      classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"), flags: refs.flagsGame,
+      serialize: (p) => buildMeshInstance(p, mesh),
+    });
+    meshActors.push(out.addExport({
+      classRef: refs.StaticMeshActor, name: named("StaticMeshActor"), flags: ACTOR,
+      serialize: (p) => {
+        const w = new Writer(256);
+        writeStateFrame(w, refs.StaticMeshActor);
+        const pr = p.props(w);
+        pr.object("StaticMesh", meshRef);
+        pr.object("StaticMeshInstance", instRef);
+        pr.bool("bUnlit", true);
+        pr.bool("bHiddenEd", true);
+        pr.bool("bStatic", true);
+        pr.bool("bWorldGeometry", true);
+        pr.bool("bCollideActors", false);
+        pr.bool("bBlockActors", false);
+        pr.bool("bBlockKarma", false);
+        pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
+        pr.vector("ColLocation", centre);
+        pr.vector("Location", centre);
+        pr.end();
+        return w;
+      },
+    }));
+    log("sky: the map's own sky room rendered into a " + skyCube.size + "x" + skyCube.size +
+      " cube of half-size " + Math.round(skyR) + " (" + skyCube.surfaces + " surface(s) in the room)");
   }
 
   // --- movers ------------------------------------------------------------------------------------
@@ -1062,7 +1097,7 @@ function convert(opts) {
 
   return {
     out: outFile, size: buf.length, mapName, map: baseName,
-    stats: build.stats, meshes: worldMeshes.length, skyMeshes: skyMeshes.length,
+    stats: build.stats, meshes: worldMeshes.length, skyMeshes: skyCube ? 6 : 0,
     lightmapPages: light ? light.pages.length : 0, model: built.model,
   };
 }

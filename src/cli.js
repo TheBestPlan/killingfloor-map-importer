@@ -66,6 +66,9 @@ function parseArgs(argv) {
     else if (t === "--light-gain") a.lightGain = parseFloat(argv[++i]);
     else if (t === "--light-floor") a.lightFloor = parseFloat(argv[++i]);
     else if (t === "--no-doors") a.doors = false;
+    // The second layer of a terrain shader is a second pass over the same triangles; a Team Arena
+    // terrain map pays about 4% more of them for it, and this turns it off.
+    else if (t === "--no-terrain-layers") a.terrainLayers = false;
     // Tactical Ops: the movers (doors, gates, glass) and the water volumes, for bisecting a build.
     else if (t === "--no-movers") a.movers = false;
     else if (t === "--no-water") a.water = false;
@@ -127,7 +130,7 @@ function main() {
       scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the Q3 one
       patchLevel: a.patchLevel, maxTexture: a.maxTexture, textureFormat: a.textureFormat,
       ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightFloor: a.lightFloor,
-      lightScale: a.lightScale, noSky: a.noSky, doors: a.doors,
+      lightScale: a.lightScale, noSky: a.noSky, doors: a.doors, terrainLayers: a.terrainLayers,
       emitPlayerStarts: !a.noSpawns, spawnLimit: a.spawnLimit,
       log: (m) => console.log("  " + m),
     });

@@ -44,18 +44,47 @@ function loadSky(gamefs, shaderInfo) {
       return { sides, kind: "farbox", name: farbox + " (incomplete, " + found + "/6)" };
     }
   }
-  // No farbox: the cloud layer's own image, on every face.
-  const stage = sh && diffuseStage(sh);
-  const cloud = (stage && stage.map) || (sh && sh.editorImage);
-  if (cloud) {
-    const img = readImage(gamefs, String(cloud).replace(/\\/g, "/").replace(/\.[a-z]+$/i, ""));
-    if (img) {
-      const sides = {};
-      for (const s of SIDES) sides[s] = img;
-      return { sides, kind: "clouds", name: String(cloud) };
+  // No farbox: the cloud LAYERS, flattened into one picture.
+  //
+  // Taking the diffuse stage alone is what made a Team Arena sky black: `xproto_sky2` draws a nearly
+  // black cloud sheet ADDITIVELY over a lit one, and on its own that sheet is the black. Compositing
+  // the stages the way the engine stacks them - the first as the base, the rest blended or added
+  // over it - gets the map's own sky colour back.
+  const stages = (sh && sh.stages || []).filter((s) => s.map && !/^\$/.test(s.map));
+  const layers = [];
+  for (const st of stages) {
+    const img = readImage(gamefs, String(st.map).replace(/\\/g, "/").replace(/\.[a-z]+$/i, ""));
+    if (img) layers.push({ img, blend: st.blend });
+  }
+  if (!layers.length) {
+    const stage = sh && diffuseStage(sh);
+    const cloud = (stage && stage.map) || (sh && sh.editorImage);
+    const img = cloud && readImage(gamefs, String(cloud).replace(/\\/g, "/").replace(/\.[a-z]+$/i, ""));
+    if (!img) return null;
+    layers.push({ img, blend: "opaque" });
+  }
+  const base = layers[0].img;
+  const rgb = Buffer.from(base.rgb);
+  for (let i = 1; i < layers.length; i++) {
+    const { img, blend } = layers[i];
+    for (let p = 0; p < base.width * base.height; p++) {
+      // Sample the layer at the base's resolution; the layers of a Quake 3 sky are the same size in
+      // every stock shader, so this is a straight read in practice.
+      const sx = Math.min(img.width - 1, Math.floor((p % base.width) * img.width / base.width));
+      const sy = Math.min(img.height - 1, Math.floor(Math.floor(p / base.width) * img.height / base.height));
+      const o = (sy * img.width + sx) * 3;
+      for (let c = 0; c < 3; c++) {
+        const src = img.rgb[o + c], dst = rgb[p * 3 + c];
+        rgb[p * 3 + c] = blend === "additive" ? Math.min(255, dst + src)
+          : blend === "filter" ? (dst * src) / 255
+            : blend === "blend" ? (dst + src) / 2 : src;
+      }
     }
   }
-  return null;
+  const flat = { width: base.width, height: base.height, rgb, alpha: null };
+  const sides = {};
+  for (const s of SIDES) sides[s] = flat;
+  return { sides, kind: "clouds", name: String(layers.map((l) => l.blend).length) + " layer(s)" };
 }
 
 module.exports = { loadSky, SIDES };

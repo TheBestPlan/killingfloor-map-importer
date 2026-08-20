@@ -43,6 +43,7 @@ function convertQ3(job, log) {
     outDir: job.outDir || null,
     scale: job.q3Scale, patchLevel: job.patchLevel,
     ambient: job.ambient, glow: job.glow, lightGain: job.lightGain,
+    terrainLayers: job.terrainLayers !== false,
     emitPlayerStarts: job.emitPlayerStarts !== false,
     log,
   });

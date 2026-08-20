@@ -475,6 +475,38 @@ console.log("\nQuake 3: archives, BSP, shaders, images");
     ok("a stage's image is read", (sh.get("textures/a/one").stages[0] || {}).map === "x.tga");
     ok("an alphaFunc stage is a cut-out",
       parseShaders("t/x\n{\n{\nmap a.tga\nalphaFunc GE128\n}\n}\n").get("t/x").stages[0].alphaFunc === "GE128");
+    // id writes its blend factors in CAPITALS. Matching only lowercase read every
+    // `blendFunc GL_ONE GL_ONE` as the one-word form and called it opaque, which is how every
+    // additive sprite in the game - the flames, the lamp glows, the portals - came across as a
+    // rectangle of solid black.
+    const add = parseShaders("t/a\n{\n{\nmap f.tga\nblendFunc GL_ONE GL_ONE\n}\n}\n").get("t/a");
+    ok("an upper-case additive blendFunc is additive", add.stages[0].blend === "additive",
+      "blend = " + add.stages[0].blend);
+    // A terrain shader paints a second texture over the first and blends the two by the vertex
+    // alpha. Both layers have to be found, or a Team Arena hillside is one flat rock.
+    {
+      const text = "textures/terrain/x_0to1\n{\n{\nmap rock1.tga\nrgbGen vertex\nalphaGen vertex\ntcmod scale 0.125 0.125\n}\n" +
+        "{\nmap rock2.tga\nrgbGen vertex\nalphaGen vertex\ntcmod scale 0.25 0.25\nblendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA\n}\n}\n";
+      const set = parseShaders(text);
+      const sh2 = set.get("textures/terrain/x_0to1");
+      const gamefs = { has: (p) => /rock[12]\.tga$/.test(p) };
+      const { ShaderSet: SS } = require("../src/quake3/shader");
+      const holder = Object.create(SS.prototype);
+      holder.shaders = set;
+      const r = holder.resolve("textures/terrain/x_0to1", gamefs);
+      ok("a terrain shader's second layer and both UV scales are found",
+        r.file === "rock1.tga" && r.tcScale && r.tcScale[0] === 0.125 &&
+        r.overlay && r.overlay.file === "rock2.tga" && r.overlay.tcScale[0] === 0.25,
+        r.file + " @" + (r.tcScale || []).join("x") + " + " + (r.overlay ? r.overlay.file + " @" + r.overlay.tcScale.join("x") : "nothing"));
+      ok("...and the blend stage is the one carrying alphaGen vertex",
+        sh2.stages[1].alphaGen === "vertex" && sh2.stages[1].blend === "blend");
+    }
+    // A flipbook keeps every frame, not just the first: Killing Floor plays them through AnimNext.
+    const anim = parseShaders("t/b\n{\n{\nanimMap 10 a.tga b.tga c.tga\nblendFunc GL_ONE GL_ONE\n}\n}\n").get("t/b");
+    ok("animMap keeps its frames and its rate",
+      anim.stages[0].frames && anim.stages[0].frames.length === 3 && anim.stages[0].fps === 10 &&
+      anim.stages[0].blend === "additive",
+      (anim.stages[0].frames || []).join(",") + " @ " + anim.stages[0].fps + " fps, " + anim.stages[0].blend);
   }
 
   if (Q3_DIR) {
@@ -710,6 +742,26 @@ console.log("\nTactical Ops: UE1 packages, the model, the shadow bits");
       hsvToRgb(0, 255).every((c) => c === 1) && hsvToRgb(0, 0).join() === "1,0,0" &&
       hsvToRgb(85, 0).map((c) => Math.round(c)).join() === "0,1,0");
   }
+  // UE1 translucency is the texel's BRIGHTNESS, and that figure has to reach Killing Floor as an
+  // alpha channel or a dark pane comes out as a slab of black (TO-Resurrection's museum cases).
+  {
+    const { topAsRgba } = require("../src/tacticalops/texture");
+    const palette = Buffer.alloc(256 * 3);
+    palette[0] = 0; palette[1] = 0; palette[2] = 0;               // index 0: black
+    palette[3] = 255; palette[4] = 255; palette[5] = 255;         // index 1: white
+    const tex = {
+      format: 0, width: 2, height: 1, palette,
+      mips: [{ data: Buffer.from([0, 1]), width: 2, height: 1 }],
+    };
+    const luma = topAsRgba(tex, "luma");
+    const mask = topAsRgba(tex, "mask");
+    ok("a translucent surface's alpha is the texel's own brightness",
+      luma && luma.alpha[0] === 0 && luma.alpha[1] === 255,
+      luma ? "alpha " + luma.alpha[0] + "," + luma.alpha[1] : "no pixels");
+    ok("...and a cut-out still masks on palette index 0",
+      mask && mask.alpha[0] === 0 && mask.alpha[1] === 255);
+  }
+
   // The scale ceiling, from the two engines' own constants: UE1's Pawn.MaxStepHeight is 25 and
   // UE2.5's MAXSTEPHEIGHT is 35, so anything above 1.4 makes a stock staircase unclimbable.
   ok("the default scale keeps a Tactical Ops step climbable in Killing Floor",

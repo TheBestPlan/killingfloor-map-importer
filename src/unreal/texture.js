@@ -365,6 +365,15 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
         pr.byte("VClampMode", 1);
       }
       if (img.alpha) pr.bool("bAlphaTexture", true);
+      // One frame of a flipbook, the same way addRawTexture writes one: the next frame's export
+      // does not exist yet when this one is registered - the last frame points back at the first -
+      // so the reference is asked for at serialise time.
+      if (opts && opts.anim) {
+        const next = typeof opts.anim.next === "function" ? opts.anim.next() : opts.anim.next;
+        if (next) pr.object("AnimNext", next);
+        if (opts.anim.minFrameRate) pr.float("MinFrameRate", opts.anim.minFrameRate);
+        if (opts.anim.maxFrameRate) pr.float("MaxFrameRate", opts.anim.maxFrameRate);
+      }
       pr.end();
       const chain = mipChain(px, img.width, img.height);
       w.cidx(chain.length);

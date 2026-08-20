@@ -27,13 +27,16 @@ const collinear = (a, b, c) => {
 };
 
 // One face, ready to be packed into a mesh: its own vertices plus indices into them.
-function surfaceOf(bsp, face, offset, S, patchLevel) {
+function surfaceOf(bsp, face, offset, S, patchLevel, tcScale) {
   const toUE = (p) => [(p[0] + offset[0]) * S, -(p[1] + offset[1]) * S, (p[2] + offset[2]) * S];
   const lit = face.lmIndex >= 0;
+  // `tcMod scale` from the shader, baked in: the terrain shaders draw their rock at 0.125, and
+  // without it the ground wears a texture eight times too big.
+  const su = tcScale ? tcScale[0] : 1, sv = tcScale ? tcScale[1] : 1;
   const conv = (v) => ({
     pos: toUE(v.pos),
     normal: [v.normal[0], -v.normal[1], v.normal[2]],
-    uv: [v.uv[0], v.uv[1]],
+    uv: [v.uv[0] * su, v.uv[1] * sv],
     uv2: lit ? [v.lm[0], v.lm[1]] : [0, 0],
     color: v.color,
   });
@@ -70,7 +73,7 @@ function buildMeshes(bsp, opts) {
     });
   }
 
-  const stats = { faces: 0, skipped: 0, billboards: 0, patches: 0, triangles: 0, flat3: 0, sky: 0, liquid: 0 };
+  const stats = { faces: 0, skipped: 0, billboards: 0, patches: 0, triangles: 0, flat3: 0, sky: 0, liquid: 0, reoriented: 0, layers: 0 };
   const surfaces = [];
   for (const job of jobs) {
     for (let fi = job.model.face; fi < job.model.face + job.model.nFaces; fi++) {
@@ -83,7 +86,7 @@ function buildMeshes(bsp, opts) {
       // cube behind it. The holes they leave are exactly the view onto the skybox.
       if (tex && tex.kind === "sky") { stats.sky++; continue; }
       if (!tex || !tex.ref) { stats.skipped++; continue; }
-      const s = surfaceOf(bsp, face, job.offset, S, patchLevel);
+      const s = surfaceOf(bsp, face, job.offset, S, patchLevel, tex.tcScale);
       if (!s || s.verts.length < 3 || s.indices.length < 3) { stats.skipped++; continue; }
       if (face.type === FACE.PATCH) stats.patches++;
       if (tex.liquid) stats.liquid++;
@@ -91,23 +94,64 @@ function buildMeshes(bsp, opts) {
       // Reversed winding: Quake -> Unreal mirrors Y, and a mirror flips triangle orientation as the
       // rasteriser sees it, so the original order presents every face back-first and back-face
       // culling removes it.
+      //
+      // Reversing blindly is not enough, because a Quake 3 face is not always wound consistently:
+      // on q3ctf2, 33 of 24939 polygon triangles run the OTHER way from their own siblings, spread
+      // over 15 faces. Those 33 come out facing away and leave exactly what they are - a triangular
+      // hole in a floor or a wall, with the room behind showing through. So each triangle is
+      // oriented against the face's own normal first, and the mirror is applied to that.
+      const fn = face.normal;
+      const oriented = fn && (fn[0] || fn[1] || fn[2]);
       const tris = [];
       for (let i = 0; i + 2 < s.indices.length; i += 3) {
         const a = s.indices[i], b = s.indices[i + 1], c = s.indices[i + 2];
         if (!s.verts[a] || !s.verts[b] || !s.verts[c]) continue;
         if (collinear(s.verts[a].pos, s.verts[b].pos, s.verts[c].pos)) { stats.flat3++; continue; }
-        tris.push(a, c, b);
+        let flip = true;
+        if (oriented) {
+          // The vertices are already in Unreal space (Y mirrored), so the face normal is mirrored
+          // too before they are compared.
+          const A = s.verts[a].pos, B = s.verts[b].pos, C = s.verts[c].pos;
+          const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+          const e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+          const cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+          // The mirror negates the sign of this dot product, so the majority of a well-wound face
+          // lands on d > 0 and it is the ODD ones - the handful wound the other way - that keep the
+          // file's order.
+          const d = cr[0] * fn[0] - cr[1] * fn[1] + cr[2] * fn[2];
+          if (d < 0) { flip = false; stats.reoriented++; }
+        }
+        if (flip) tris.push(a, c, b); else tris.push(a, b, c);
       }
       if (!tris.length) { stats.skipped++; continue; }
       stats.triangles += tris.length / 3;
 
       const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
       for (const v of s.verts) for (let k = 0; k < 3; k++) { if (v.pos[k] < lo[k]) lo[k] = v.pos[k]; if (v.pos[k] > hi[k]) hi[k] = v.pos[k]; }
+      const mid = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2);
       surfaces.push({
         verts: s.verts, tris, matRef: tex.ref, page: face.lmIndex >= 0 ? face.lmIndex : -1,
-        liquid: !!tex.liquid, ent: job.ent, kind: tex.kind,
-        mid: [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2),
+        liquid: !!tex.liquid, ent: job.ent, kind: tex.kind, mid,
       });
+
+      // A terrain surface is drawn TWICE: the base rock, then the second rock over it, blended by
+      // the vertex alpha the mapper painted (`alphaGen vertex`). The second pass is the same
+      // triangles with the other texture and its own UV scale; what makes it a blend rather than a
+      // second opaque coat is the material convert.js hangs on it.
+      if (tex.overlay) {
+        const su = tex.overlay.tcScale ? tex.overlay.tcScale[0] : 1;
+        const sv = tex.overlay.tcScale ? tex.overlay.tcScale[1] : 1;
+        const base = tex.tcScale || [1, 1];
+        const verts = s.verts.map((v) => Object.assign({}, v, {
+          // s.verts already carry the BASE stage's scale, so the overlay's is applied relative to it.
+          uv: [(v.uv[0] / (base[0] || 1)) * su, (v.uv[1] / (base[1] || 1)) * sv],
+        }));
+        surfaces.push({
+          verts, tris: tris.slice(), matRef: tex.overlay.texRef, page: -1,
+          liquid: false, ent: job.ent, kind: "normal", overlay: true, mid,
+        });
+        stats.layers++;
+      }
     }
   }
 
@@ -117,7 +161,7 @@ function buildMeshes(bsp, opts) {
   const byCell = new Map();
   for (const s of surfaces) {
     // A door has to stay one mesh: chunking it by the grid would give it halves that open apart.
-    const cell = s.ent !== undefined ? "E" + s.ent : (s.liquid ? "W|" : "") + cellOf(s);
+    const cell = s.ent !== undefined ? "E" + s.ent : (s.liquid ? "W|" : s.overlay ? "L|" : "") + cellOf(s);
     const key = cell + "|" + s.matRef + "@" + s.page;
     let list = byCell.get(key);
     if (!list) { list = []; byCell.set(key, list); }
@@ -133,7 +177,7 @@ function buildMeshes(bsp, opts) {
     const start = () => {
       cur = {
         materials: [list[0].matRef], vertices: [], uvs: [], uvs2: [], colors: [], indices: [], sections: [],
-        liquid: list[0].liquid, kind: list[0].kind,
+        liquid: list[0].liquid, kind: list[0].kind, overlay: !!list[0].overlay,
       };
       if (list[0].page >= 0) cur.lightPage = list[0].page;
       if (list[0].ent !== undefined) cur.ent = list[0].ent;
@@ -155,11 +199,16 @@ function buildMeshes(bsp, opts) {
         // flame, a light panel - and Quake 3 lights exactly those from this same per-vertex colour,
         // sampled out of its light grid at compile time. So carry it: the statues in q3dm1's
         // courtyard keep their shading instead of standing there as flat white cut-outs.
-        if (lit) cur.colors.push([0, 0, 0, 255]);
+        //
+        // The ALPHA is the terrain's blend weight: `alphaGen vertex` paints it per vertex, and the
+        // overlay pass's material reads it through an Engine.VertexColor. On every other surface it
+        // is 255 and nothing looks at it.
+        const weight = s.overlay ? (v.color[3] === undefined ? 255 : v.color[3]) : 255;
+        if (lit) cur.colors.push([0, 0, 0, weight]);
         else {
           // FColor is B, G, R, A on disk (GOTCHAS 1.8).
           const g2 = (c) => Math.min(255, Math.round(c * vertexGain));
-          cur.colors.push([g2(v.color[2]), g2(v.color[1]), g2(v.color[0]), 255]);
+          cur.colors.push([g2(v.color[2]), g2(v.color[1]), g2(v.color[0]), weight]);
         }
       }
       for (const i of s.tris) cur.indices.push(base + i);

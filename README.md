@@ -18,13 +18,14 @@ Four source games so far. Reading each is a module of its own behind the same bu
 ## Status
 
 Counter-Strike 1.6 is the deepest route and the table below is about it. Quake 3 carries geometry,
-textures, its own baked lightmap, the sky, doors and player starts: all 59 stock maps of Quake III
-Arena and Team Arena convert, pass every invariant of the finished `.rom` and run in the client —
-details and what is missing in [`docs/games/quake3.md`](./docs/games/quake3.md).
+textures, its own baked lightmap, the sky, doors, player starts, swimmable water, jump pads,
+teleporters and animated sprites: all 59 stock maps of Quake III Arena and Team Arena convert, pass
+every invariant of the finished `.rom` and run in the client — details and what is missing in
+[`docs/games/quake3.md`](./docs/games/quake3.md).
 
-Tactical Ops carries the same, plus its movers as `KFDoorMover`s and its sky room enlarged around
-the level, and its baked light is *rebuilt* rather than copied — UE1 stores one shadow bit per luxel
-per light rather than a lightmap. All 33 stock maps convert and run;
+Tactical Ops carries the same, plus its movers as `KFDoorMover`s and its sky room *rendered* into a
+cube around the level, and its baked light is *rebuilt* rather than copied — UE1 stores one shadow
+bit per luxel per light rather than a lightmap. All 33 stock maps convert and run;
 [`docs/games/tacticalops.md`](./docs/games/tacticalops.md) has the format work behind it.
 
 | Capability | State |
@@ -111,10 +112,11 @@ node src/cli.js --game q3 "…/maps/mymap.bsp" --client "…/Quake III Arena" --
 | `--scale <n>` | `1.8634` | Quake 3 units → Unreal units. Above 1.94 a stock staircase stops being climbable |
 | `--patch-level <n>` | `4` | how finely bezier patches are tessellated |
 | `--light-gain <n>` / `--light-floor <n>` | `4` / `20` | the map's own lightmap, scaled and floored on the way into the atlas |
-| `--ambient <n>` / `--glow <n>` | `40` / `96` | the zone lights the player, the mesh actors' glow lights the world |
+| `--ambient <n>` / `--glow <n>` | `32` / `72` | the zone lights the player, the mesh actors' glow lights the world |
 | `--max-texture <n>` | `512` | cap on a texture's size |
 | `--texture-format raw` | off | uncompressed textures instead of DXT — three times the file, no block artefacts |
 | `--no-doors` | off | leave `func_door` as static geometry instead of a `KFDoorMover` |
+| `--no-terrain-layers` | off | drop the painted second layer of a terrain shader. It is a second pass over those surfaces only: mpterra1 +3.6% triangles (33236 → 34422, +0.55 MB), mpterra2 +6.5% (42641 → 45429, +0.57 MB), every other stock map unchanged |
 
 `--out`, `--name`, `--scale`, `--light-scale`, `--no-sky`, `--no-spawns` and `--verify` mean the same
 thing as on the Counter-Strike route.

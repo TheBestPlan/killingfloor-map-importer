@@ -25,7 +25,7 @@ const { loadSky, SIDES } = require("./sky");
 const { Package, RF } = require("../unreal/package");
 const { Writer, writeStateFrame } = require("../unreal/writer");
 const { writeModel, emptyModel, emptyPolys } = require("../unreal/model");
-const { writePolys, boxPolys } = require("../unreal/polys");
+const { writePolys, boxPolys, boxBrushModel } = require("../unreal/polys");
 const { addRgbTexture, sanitizeName } = require("../unreal/texture");
 const { buildMeshExport, buildMeshInstance } = require("../unreal/staticmesh");
 const { buildModel } = require("../build/model");
@@ -63,8 +63,12 @@ const DEFAULTS = {
   // player, his hands and the zeds (GOTCHAS 4.11a) - so the split is "what the pawn needs" against
   // "what the walls need minus that". 40 + 96 was judged on q3dm1 against 12+40 (a black corridor),
   // 40+128 (the lit half burning out) and 96+72.
-  ambient: 40,
-  glow: 96,
+  // Lowered from 40 + 96 after the maps were played: Quake 3's own look is contrasty, and the pair
+  // that reads right on a screenshot of one wall is a notch too hot across a whole map - the ceiling
+  // of every arena washes out and the shadowed halves stop being shadowed. This is the Quake 3
+  // route's own number; the other games keep theirs.
+  ambient: 32,
+  glow: 72,
   // Quake 3 lightmaps are dark on purpose: measured over both games' stock maps the mean luxel is
   // 20-35 of 255, with a third of them at pure black, because the engine doubles the lightmap on
   // load (r_mapOverBrightBits) and the hardware gamma ramp lifts it again. Nothing here does either,
@@ -162,6 +166,12 @@ function convert(opts) {
     LevelSummary: pkg.importClass("Engine", "LevelSummary"),
     Level: pkg.importClass("Engine", "Level"),
     DefaultPhysicsVolume: pkg.importClass("Engine", "DefaultPhysicsVolume"),
+    PhysicsVolume: pkg.importClass("Engine", "PhysicsVolume"),
+    FinalBlend: pkg.importClass("Engine", "FinalBlend"),
+    VertexColor: pkg.importClass("Engine", "VertexColor"),
+    Teleporter: pkg.importClass("Engine", "Teleporter"),
+    Kicker: pkg.importClass("XGame", "xKicker"),
+    Pawn: pkg.importClass("Engine", "Pawn"),
     PlayerStart: pkg.importClass("Engine", "PlayerStart"),
     StaticMesh: pkg.importClass("Engine", "StaticMesh"),
     StaticMeshActor: pkg.importClass("Engine", "StaticMeshActor"),
@@ -180,6 +190,8 @@ function convert(opts) {
   // --- textures -----------------------------------------------------------------------------------
   const { textures } = loadTextures(pkg, refs, bsp, {
     gamefs: fsys, shaders, log, maxSize: o.maxTexture || 512, rawTextures: o.textureFormat === "raw",
+    // The painted second layer of a terrain shader costs a second pass over the same triangles.
+    terrainLayers: o.terrainLayers !== false,
   });
   // A sky record carries no material and is handed through anyway: the mesh builder has to know a
   // face is sky to cut it out rather than count it as a surface it could not resolve.
@@ -209,8 +221,27 @@ function convert(opts) {
       // easy to get wrong from memory - so it is solved from the pictures instead. A single-image
       // cloud sky has nothing to solve and nothing to gain from trying.
       const images = box.kind === "farbox" ? orientSkybox(faceCorners(1), box.sides).images : box.sides;
+      // A cloud sky is TILED across the dome in Quake 3 - `tcMod scale 3 4` in id's own shaders - so
+      // one copy stretched over a whole cube face is both wrong and blurry. Repeating it three times
+      // a side puts the detail back at the density the map was drawn with.
+      // A power of two: a cube face has to stay one, and 4 x a 128-pixel cloud sheet is the density
+      // `tcMod scale 3 4` asks for within a factor the eye cannot tell apart.
+      const tile = box.kind === "clouds" ? 4 : 1;
+      const repeat = (img, n) => {
+        if (n <= 1) return img;
+        const w = img.width * n, h = img.height * n;
+        const rgb = Buffer.alloc(w * h * 3);
+        for (let y = 0; y < h; y++) {
+          const sy = y % img.height;
+          for (let x = 0; x < w; x++) {
+            const o = ((y * w) + x) * 3, s = (sy * img.width + (x % img.width)) * 3;
+            rgb[o] = img.rgb[s]; rgb[o + 1] = img.rgb[s + 1]; rgb[o + 2] = img.rgb[s + 2];
+          }
+        }
+        return { width: w, height: h, rgb, alpha: null };
+      };
       for (const side of SIDES) {
-        const img = upscale(images[side] || box.sides[side], 2, 512);
+        const img = upscale(repeat(images[side] || box.sides[side], tile), 2, 1024);
         skySides[side] = addRgbTexture(pkg, refs, "sky_" + sanitizeName(baseName) + "_" + side,
           { width: img.width, height: img.height, rgb: img.rgb }, SKY_GAIN);
       }
@@ -249,7 +280,9 @@ function convert(opts) {
   log("mesh: " + st.faces + " faces -> " + st.triangles + " triangles in " + meshBuild.meshes.length +
     " mesh(es) (" + st.patches + " patch, " + st.skipped + " skipped, " + st.sky + " sky cut out for the cube" +
     (st.billboards ? ", " + st.billboards + " billboard flares dropped" : "") +
-    (st.flat3 ? ", " + st.flat3 + " collinear triangles dropped" : "") + ")");
+    (st.flat3 ? ", " + st.flat3 + " collinear triangles dropped" : "") +
+    (st.reoriented ? ", " + st.reoriented + " wound against their own face and turned back" : "") +
+    (st.layers ? ", " + st.layers + " drawn twice for a painted second layer" : "") + ")");
 
   // --- the world box ------------------------------------------------------------------------------
   const wm = bsp.models[0];
@@ -528,8 +561,8 @@ function convert(opts) {
     const key = diffuse + "|" + rec.kind + "|" + (rec.liquid ? "l" : "");
     if (blends.has(key)) return blends.get(key);
     // A jpg has no alpha channel, so a shader that asked to blend one needs a constant instead.
-    const graded = rec.liquid || rec.kind === "translucent";
-    if (graded && !flatOpacity) {
+    const needsFlat = (rec.liquid || rec.kind === "translucent") && !rec.graded;
+    if (needsFlat && !flatOpacity) {
       flatOpacity = pkg.addExport({
         classRef: refs.ConstantColor, name: "Opacity0", flags: refs.flagsGame,
         serialize: (p) => {
@@ -547,7 +580,11 @@ function convert(opts) {
         const w = new Writer(128);
         const pr = p.props(w);
         pr.object("Diffuse", diffuse);
-        pr.object("Opacity", rec.kind === "masked" ? rec.texRef : flatOpacity);
+        // A cut-out and a graded pane are their own opacity map; an additive glow needs none at all,
+        // because OB_Brighten adds the colour and black adds nothing - which is what makes a Quake 3
+        // flame a flame rather than a black rectangle with a flame painted on it.
+        if (rec.kind === "masked" || (rec.graded && rec.kind !== "additive")) pr.object("Opacity", rec.texRef);
+        else if (needsFlat) pr.object("Opacity", flatOpacity);
         // OB_Masked / OB_Translucent / OB_Brighten
         pr.byte("OutputBlending", rec.kind === "masked" ? 1 : rec.kind === "additive" ? 5 : 3);
         // A cut-out is drawn one-sided in Quake 3 too; a pane and a water surface are not.
@@ -561,6 +598,52 @@ function convert(opts) {
     return ref;
   };
 
+  // The second layer of a terrain shader, painted over the first by the vertex alpha.
+  //
+  // A static mesh cannot sample a second texture with a second set of UVs, but it can carry a colour
+  // per vertex, and `Engine.VertexColor` is a material that hands that colour to whatever asks for
+  // it. So the pass is: `FinalBlend` in FB_AlphaBlend over a `Shader` whose Diffuse is the layer's
+  // texture and whose Opacity is the vertex colour — the same shape the Lineage 2 route uses for its
+  // own terrain. ZWrite is off because the pass is exactly coplanar with the base it covers.
+  const layerMat = new Map();
+  let vertexColour = 0;
+  const overlayMaterial = (texRef) => {
+    if (layerMat.has(texRef)) return layerMat.get(texRef);
+    if (!vertexColour) {
+      vertexColour = pkg.addExport({
+        classRef: refs.VertexColor, name: "Q3VertexAlpha", flags: refs.flagsGame,
+        serialize: (p) => p.emptyBody(),
+      });
+    }
+    const shaderRef = pkg.addExport({
+      classRef: refs.Shader, name: "Q3Layer" + layerMat.size, flags: refs.flagsGame,
+      serialize: (p) => {
+        const w = new Writer(96);
+        const pr = p.props(w);
+        pr.object("Diffuse", texRef);
+        pr.object("Opacity", vertexColour);
+        pr.byte("OutputBlending", 3);              // OB_Translucent: the blend is FinalBlend's job
+        pr.end();
+        return w;
+      },
+    });
+    const ref = pkg.addExport({
+      classRef: refs.FinalBlend, name: "Q3Blend" + layerMat.size, flags: refs.flagsGame,
+      serialize: (p) => {
+        const w = new Writer(96);
+        const pr = p.props(w);
+        pr.object("Material", shaderRef);
+        pr.byte("FrameBufferBlending", 2);         // FB_AlphaBlend
+        pr.bool("ZWrite", false);
+        pr.bool("ZTest", true);
+        pr.end();
+        return w;
+      },
+    });
+    layerMat.set(texRef, ref);
+    return ref;
+  };
+
   // --- mesh actors --------------------------------------------------------------------------------
   const meshActors = [];
   let lowest = Infinity;
@@ -571,9 +654,14 @@ function convert(opts) {
     const rec = byRef.get(mesh.materials[0]);
     const lit = mesh.lightPage !== undefined && lmCoord.has(mesh.lightPage);
     let mat = mesh.materials[0];
-    if (lit) mat = litMaterial(mat, mesh.lightPage);
-    if (rec && (rec.kind === "masked" || rec.kind === "translucent" || rec.kind === "additive" || rec.liquid)) {
-      mat = blendedMaterial(rec, mat);
+    if (mesh.overlay) {
+      // The painted second layer of a terrain shader: its own texture, blended by the vertex alpha.
+      mat = overlayMaterial(mat);
+    } else {
+      if (lit) mat = litMaterial(mat, mesh.lightPage);
+      if (rec && (rec.kind === "masked" || rec.kind === "translucent" || rec.kind === "additive" || rec.liquid)) {
+        mat = blendedMaterial(rec, mat);
+      }
     }
     mesh.materials = mesh.materials.map(() => mat);
     if (!lit) mesh.lightPage = undefined;              // no second UV stream without an atlas
@@ -659,20 +747,25 @@ function convert(opts) {
         // The world's share of the level's light, per ACTOR so it reaches the walls and nobody
         // standing between them. A mesh with no atlas carries Quake 3's own per-vertex light in its
         // colour stream instead (mesh.js), and that stream ADDS - so it takes no glow on top.
-        if (lit) pr.byte("AmbientGlow", glow);
+        // ...and a see-through surface takes none of it: the glow stands in for the light on a WALL,
+        // and adding it to a pane of glass or a glow sprite is what turned mpteam2's energy crates
+        // into white blocks.
+        if (lit && !seeThrough.has(mat)) pr.byte("AmbientGlow", glow);
         // A projector - KF's bullet decal, the torch's own spot - drawn onto a see-through surface
         // repaints the whole surface instead of marking it.
         if (seeThrough.has(mat)) pr.bool("bAcceptsProjectors", false);
         pr.bool("bWorldGeometry", true);
         // Water is drawn but never blocks: in Quake 3 you swim through it, and a water mesh with
-        // collision would be an invisible wall across the pool.
-        pr.bool("bCollideActors", !mesh.liquid);
-        pr.bool("bBlockActors", !mesh.liquid);
-        pr.bool("bBlockPlayers", !mesh.liquid);
-        pr.bool("bBlockZeroExtentTraces", !mesh.liquid);
-        pr.bool("bBlockNonZeroExtentTraces", !mesh.liquid);
+        // collision would be an invisible wall across the pool. A terrain overlay is the same
+        // triangles as the surface underneath it, so it collides with nothing either.
+        const solid = !mesh.liquid && !mesh.overlay;
+        pr.bool("bCollideActors", solid);
+        pr.bool("bBlockActors", solid);
+        pr.bool("bBlockPlayers", solid);
+        pr.bool("bBlockZeroExtentTraces", solid);
+        pr.bool("bBlockNonZeroExtentTraces", solid);
         // This is the floor corpses rest on, so it is the one that has to block Karma.
-        pr.bool("bBlockKarma", !mesh.liquid && !process.env.KF_NO_KARMA);
+        pr.bool("bBlockKarma", solid && !process.env.KF_NO_KARMA);
         pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
         pr.vector("ColLocation", mesh.origin);
         pr.vector("Location", mesh.origin);
@@ -722,6 +815,193 @@ function convert(opts) {
     log("skybox mesh: cube half-size " + Math.round(skyR) + " (level radius " + Math.round(Math.hypot(half[0], half[1], half[2])) + ")");
   }
 
+  // --- water --------------------------------------------------------------------------------------
+  // Quake 3 draws the water surface and keeps the swimming in the CONTENTS of the brush behind it.
+  // The surface came across from the first build; the volume did not, so on mpteam5 the player fell
+  // straight through the picture. A liquid brush's bounds are read off its own side planes - every
+  // one in the stock maps is a box - and become the same PhysicsVolume the other two routes write.
+  //
+  // The floor of the box is lifted 46 uu for the reason the GoldSrc route lifts its own: which
+  // volume an actor is in is decided by its CENTRE, a standing KFHumanPawn's is at 50 and every
+  // zed's at 44, so that band keeps the player swimming and the zeds walking the bottom.
+  const waterVols = [];
+  if (o.water !== false) {
+    const WADE = 46, SWIM_MIN = 48;
+    const seen = new Set();
+    for (const br of bsp.brushes) {
+      const t = bsp.textures[br.texture];
+      if (!t || !(t.contents & (Q3.CONTENTS.WATER | Q3.CONTENTS.SLIME | Q3.CONTENTS.LAVA))) continue;
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let s = 0; s < br.nSides; s++) {
+        const side = bsp.brushsides[br.side + s];
+        const pl = side && bsp.planes[side.plane];
+        if (!pl) continue;
+        // A brush side's plane points OUT of the brush, so an axis-aligned one gives that axis its
+        // min or its max directly. Bevel planes (the diagonals a compiler adds for collision) name
+        // no axis and are skipped - the six that do are the box.
+        for (let a = 0; a < 3; a++) {
+          if (pl.normal[a] > 0.999) hi[a] = Math.min(hi[a] === -Infinity ? Infinity : hi[a], pl.dist);
+          else if (pl.normal[a] < -0.999) lo[a] = Math.max(lo[a] === Infinity ? -Infinity : lo[a], -pl.dist);
+        }
+      }
+      if (lo.some((v) => !Number.isFinite(v)) || hi.some((v) => !Number.isFinite(v))) continue;
+      // Quake units to Unreal, with the same Y mirror the geometry took.
+      const min = [lo[0] * scale, -hi[1] * scale, lo[2] * scale];
+      const max = [hi[0] * scale, -lo[1] * scale, hi[2] * scale];
+      const key = min.concat(max).map(Math.round).join(",");
+      if (seen.has(key)) continue;                 // the same volume built out of several brushes
+      seen.add(key);
+      const swims = (max[2] - min[2]) >= WADE + SWIM_MIN;
+      const bottom = swims ? min[2] + WADE : min[2];
+      const at = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (bottom + max[2]) / 2];
+      const half = [(max[0] - min[0]) / 2, (max[1] - min[1]) / 2, (max[2] - bottom) / 2];
+      if (half.some((h) => h <= 1)) continue;
+      const polysRef = pkg.addExport({
+        classRef: refs.Polys, name: named("Polys"), flags: RF.GAME,
+        serialize: (p) => writePolys(p, boxPolys(half.map((v) => -v), half)),
+      });
+      const modelRef = pkg.addExport({
+        classRef: refs.Model, name: named("Model"), flags: RF.GAME,
+        serialize: (p) => writeModel(p, Object.assign(boxBrushModel(half.map((v) => -v), half), { polys: polysRef })),
+      });
+      const lava = !!(t.contents & Q3.CONTENTS.LAVA);
+      waterVols.push(pkg.addExport({
+        classRef: refs.PhysicsVolume, name: named("PhysicsVolume"), flags: ACTOR,
+        serialize: (p) => {
+          const w = new Writer(320);
+          writeStateFrame(w, refs.PhysicsVolume);
+          const pr = p.props(w);
+          if (swims) {
+            pr.bool("bWaterVolume", true);
+            pr.float("FluidFriction", 2.4);
+            pr.float("TerminalVelocity", 800);
+          }
+          pr.int("Priority", 100000);                 // must win over DefaultPhysicsVolume
+          pr.bool("bDistanceFog", true);
+          pr.bool("bNewKFColorCorrection", true);
+          const tint = lava ? [150, 60, 20, 0] : [40, 90, 130, 0];
+          pr.color("KFOverlayColor", tint);
+          pr.color("DistanceFogColor", tint);
+          pr.float("DistanceFogStart", 0);
+          pr.float("DistanceFogEnd", 6000);
+          pr.actorCommon(levelInfoRef, physVolRef, "PhysicsVolume", 1, zoneInfoRef);
+          pr.vector("Location", at);
+          pr.object("Brush", modelRef);
+          pr.end();
+          return w;
+        },
+      }));
+    }
+    if (waterVols.length) log("water: " + waterVols.length + " liquid brush(es) as PhysicsVolume(s)");
+  }
+
+  // --- teleporters and jump pads ------------------------------------------------------------------
+  // Both are brush triggers that name a `target_position` (or `misc_teleporter_dest`) by targetname,
+  // and both have a Killing Floor actor waiting for them: `Teleporter`, which moves whatever touches
+  // it to the teleporter whose Tag its URL names, and `Kicker`, which throws it. What has to be
+  // computed is the throw: Quake 3 solves for a launch that peaks at the target (g_trigger.c), and
+  // the same solve has to be redone here because Killing Floor's gravity is not Quake's.
+  const jumpers = [];
+  {
+    const byName = new Map();
+    for (const e of bsp.entities) if (e.targetname) byName.set(e.targetname, e);
+    const boxOf = (e) => {
+      const m = /^\*(\d+)$/.exec(e.model || "");
+      const mdl = m && bsp.models[+m[1]];
+      if (!mdl) return null;
+      const min = [mdl.mins[0] * scale, -mdl.maxs[1] * scale, mdl.mins[2] * scale];
+      const max = [mdl.maxs[0] * scale, -mdl.mins[1] * scale, mdl.maxs[2] * scale];
+      return { at: [0, 1, 2].map((a) => (min[a] + max[a]) / 2), half: [0, 1, 2].map((a) => (max[a] - min[a]) / 2) };
+    };
+    const toKf = (org) => [org[0] * scale, -org[1] * scale, org[2] * scale];
+    let teleports = 0, pads = 0;
+    const destTag = new Map();
+    for (const e of bsp.entities) {
+      const cls = e.classname || "";
+      if (cls !== "trigger_teleport" && cls !== "trigger_push") continue;
+      const box = boxOf(e);
+      const dest = e.target && byName.get(e.target);
+      if (!box || !dest || !dest.origin) continue;
+      const to = toKf(Q3.num3(dest.origin, [0, 0, 0]));
+      // A cylinder is what both actors collide with, so it takes the box's larger half-width.
+      const radius = Math.max(16, Math.hypot(box.half[0], box.half[1]));
+      const height = Math.max(16, box.half[2]);
+      if (cls === "trigger_teleport") {
+        const tag = "q3tele" + (teleports++);
+        // The far end first: a Teleporter that only receives needs no URL of its own.
+        jumpers.push(pkg.addExport({
+          classRef: refs.Teleporter, name: named("Teleporter"), flags: ACTOR,
+          serialize: (p) => {
+            const w = new Writer(256);
+            writeStateFrame(w, refs.Teleporter);
+            const pr = p.props(w);
+            pr.bool("bEnabled", true);
+            pr.bool("bChangesVelocity", false);
+            pr.bool("bChangesYaw", true);
+            pr.float("CollisionRadius", 40);
+            pr.float("CollisionHeight", 40);
+            pr.actorCommon(levelInfoRef, physVolRef, tag, 1, zoneInfoRef);
+            pr.vector("Location", [to[0], to[1], to[2] + 40]);
+            pr.rotator("Rotation", [0, Math.round((-(parseFloat(dest.angle) || 0) / 360) * 65536) & 0xffff, 0]);
+            pr.end();
+            return w;
+          },
+        }));
+        jumpers.push(pkg.addExport({
+          classRef: refs.Teleporter, name: named("Teleporter"), flags: ACTOR,
+          serialize: (p) => {
+            const w = new Writer(256);
+            writeStateFrame(w, refs.Teleporter);
+            const pr = p.props(w);
+            pr.str("URL", tag);
+            pr.bool("bEnabled", true);
+            pr.bool("bChangesVelocity", false);
+            pr.bool("bChangesYaw", true);
+            pr.float("CollisionRadius", radius);
+            pr.float("CollisionHeight", height);
+            pr.actorCommon(levelInfoRef, physVolRef, "q3teleport", 1, zoneInfoRef);
+            pr.vector("Location", box.at);
+            pr.end();
+            return w;
+          },
+        }));
+      } else {
+        // Quake 3: rise to the target's height, and cover the horizontal distance in that time.
+        // Killing Floor's gravity is 950 uu/s^2, so the same jump needs a different launch.
+        const G = 950;
+        const dz = Math.max(32, to[2] - box.at[2]);
+        const t = Math.sqrt((2 * dz) / G);
+        const dx = to[0] - box.at[0], dy = to[1] - box.at[1];
+        const vel = [dx / t, dy / t, G * t];
+        pads++;
+        jumpers.push(pkg.addExport({
+          classRef: refs.Kicker, name: named("Kicker"), flags: ACTOR,
+          serialize: (p) => {
+            const w = new Writer(256);
+            writeStateFrame(w, refs.Kicker);
+            const pr = p.props(w);
+            pr.vector("KickVelocity", vel);
+            pr.bool("bKillVelocity", true);
+            pr.bool("bRandomize", false);
+            // KickedClasses is left at the class default (`class'Engine.Pawn'`): writing the array
+            // by hand is a tagged property this writer has no other user for, and a malformed one
+            // would stop the engine reading the rest of the actor.
+            pr.bool("bCollideActors", true);
+            pr.bool("bStatic", false);
+            pr.bool("bHidden", true);
+            pr.float("CollisionRadius", radius);
+            pr.float("CollisionHeight", height);
+            pr.actorCommon(levelInfoRef, physVolRef, "q3jumppad", 1, zoneInfoRef);
+            pr.vector("Location", box.at);
+            pr.end();
+            return w;
+          },
+        }));
+      }
+    }
+    if (teleports || pads) log("triggers: " + teleports + " teleporter(s), " + pads + " jump pad(s)");
+  }
+
   // --- player starts ------------------------------------------------------------------------------
   const starts = [];
   if (o.emitPlayerStarts !== false) {
@@ -766,7 +1046,7 @@ function convert(opts) {
 
   // Actor order is the CSG order: UnrealEd rebuilds the world by replaying the level's brushes from
   // the top, skipping the builder brush at index 1.
-  const actors = [levelInfoRef, brushRef, physVolRef, zoneInfoRef, ...csgBrushes, ...starts, ...meshActors];
+  const actors = [levelInfoRef, brushRef, physVolRef, zoneInfoRef, ...csgBrushes, ...waterVols, ...jumpers, ...starts, ...meshActors];
   pkg.addExport({
     classRef: refs.Level, name: "myLevel", flags: RF.GAME,
     serialize: (p) => {

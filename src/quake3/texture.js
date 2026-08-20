@@ -49,7 +49,7 @@ function loadTextures(pkg, refs, bsp, opts) {
   const maxSize = opts.maxSize || 512;
   const byFile = new Map();                   // resolved image path + flags -> { texRef, ... }
   const out = new Map();
-  const stats = { used: 0, images: 0, missing: 0, tool: 0, sky: 0, resampled: 0, cutout: 0, graded: 0 };
+  const stats = { used: 0, images: 0, missing: 0, tool: 0, sky: 0, resampled: 0, cutout: 0, graded: 0, animated: 0, layered: 0 };
   const missingNames = [];
 
   const used = new Set();
@@ -91,17 +91,68 @@ function loadTextures(pkg, refs, bsp, opts) {
     if (!rec) {
       let w = Math.min(maxSize, nextPow2(img.width)), h = Math.min(maxSize, nextPow2(img.height));
       if (w !== img.width || h !== img.height) { img = resample(img, w, h); stats.resampled++; }
+      const base = "q3_" + t.name.replace(/^textures\//, "").replace(/[^A-Za-z0-9_]/g, "_");
       // Block-compressed by default. `raw` is the diagnostic: it tells a fault in the pixels apart
       // from a fault in the compression, at four times the bytes.
-      const tex = addRgbTexture(pkg, refs, "q3_" + t.name.replace(/^textures\//, "").replace(/[^A-Za-z0-9_]/g, "_"),
-        img, 1, { wrap: true, dxt3: !opts.rawTextures, raw: !!opts.rawTextures });
-      rec = { texRef: tex.texRef, width: w, height: h };
+      const wopts = { wrap: true, dxt3: !opts.rawTextures, raw: !!opts.rawTextures };
+      // A flipbook: `animMap` names the frames and Killing Floor plays them through AnimNext, one
+      // texture per frame with the last pointing back at the first. Without it a torch is a
+      // photograph of a flame.
+      const frames = r.frames && r.frames.length > 1 ? r.frames : null;
+      if (frames) {
+        const imgs = [img];
+        for (const f of frames.slice(1)) {
+          try {
+            let im = decode(f, gamefs.read(f));
+            if (im.width !== w || im.height !== h) im = resample(im, w, h);
+            imgs.push(im);
+          } catch (e) { /* a frame the client does not ship just shortens the loop */ }
+        }
+        const links = imgs.map(() => ({ next: 0 }));
+        const fps = r.fps > 0 ? r.fps : 10;
+        const refsOut = imgs.map((im, i) => addRgbTexture(pkg, refs, base + "_f" + i, im, 1,
+          Object.assign({ anim: { next: () => links[i].next, minFrameRate: fps, maxFrameRate: fps } }, wopts)).texRef);
+        refsOut.forEach((_, i) => { links[i].next = refsOut[(i + 1) % refsOut.length]; });
+        rec = { texRef: refsOut[0], width: w, height: h };
+        stats.images += imgs.length;
+        stats.animated++;
+      } else {
+        const tex = addRgbTexture(pkg, refs, base, img, 1, wopts);
+        rec = { texRef: tex.texRef, width: w, height: h };
+        stats.images++;
+      }
       byFile.set(key, rec);
-      stats.images++;
     }
+    // The second layer of a terrain shader, painted over the first by the vertex alpha. It is an
+    // ordinary texture here; what makes it a blend is the material and the extra pass the mesh
+    // builder emits for it.
+    let overlay = null;
+    if (r.overlay && opts.terrainLayers !== false) {
+      const okey = r.overlay.file + "|overlay";
+      overlay = byFile.get(okey);
+      if (!overlay) {
+        try {
+          let oi = decode(r.overlay.file, gamefs.read(r.overlay.file));
+          const ow = Math.min(maxSize, nextPow2(oi.width)), oh = Math.min(maxSize, nextPow2(oi.height));
+          if (ow !== oi.width || oh !== oi.height) { oi = resample(oi, ow, oh); stats.resampled++; }
+          const otex = addRgbTexture(pkg, refs, "q3_" + r.overlay.file.replace(/^textures\//, "").replace(/[^A-Za-z0-9_]/g, "_"),
+            oi, 1, { wrap: true, dxt3: !opts.rawTextures, raw: !!opts.rawTextures });
+          overlay = { texRef: otex.texRef, width: ow, height: oh, tcScale: r.overlay.tcScale || null };
+          byFile.set(okey, overlay);
+          stats.images++;
+          stats.layered++;
+        } catch (e) { overlay = null; }
+      }
+    }
+
     out.set(idx, {
       ref: rec.texRef, texRef: rec.texRef, kind, liquid, name: t.name,
-      width: rec.width, height: rec.height,
+      width: rec.width, height: rec.height, overlay,
+      // Whether the image itself carries the opacity: a .tga with a graded alpha channel is its own
+      // Opacity map, a .jpg has to make do with a flat one.
+      graded: ak === "graded",
+      // `tcMod scale`, baked into the UVs by the mesh builder.
+      tcScale: r.tcScale || null,
       twoSided: r.twoSided || liquid || kind === "masked",
     });
   }
@@ -110,6 +161,8 @@ function loadTextures(pkg, refs, bsp, opts) {
     log("textures: " + stats.images + " image(s) for " + stats.used + " surface shader(s) (" +
       stats.tool + " tool, " + stats.sky + " sky, " + stats.cutout + " cut-out, " +
       stats.resampled + " resampled to power-of-two" +
+      (stats.animated ? ", " + stats.animated + " flipbook" : "") +
+      (stats.layered ? ", " + stats.layered + " painted second layer" : "") +
       (stats.missing ? ", " + stats.missing + " MISSING -> placeholder: " + missingNames.join(" ") : "") + ")");
   }
   return { textures: out, stats };

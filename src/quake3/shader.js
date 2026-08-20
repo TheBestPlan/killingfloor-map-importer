@@ -51,18 +51,41 @@ function parseShaders(text, into) {
           const kl = k.toLowerCase();
           if (IMAGE_STAGE.test(kl)) { const v = arg(); if (!st.map) st.map = v; }
           else if (kl === "animmap") {
-            arg();                                                // frequency
+            // `animMap <fps> <frame> <frame> ...` - a flipbook. The frames are kept, not just the
+            // first: Killing Floor animates a texture through AnimNext, so a Quake 3 flame can go on
+            // flickering here.
+            st.fps = parseFloat(arg()) || 0;
             let frame = arg();
+            st.frames = frame ? [frame] : [];
             if (!st.map) st.map = frame;
-            while (frame && /\.(tga|jpg|jpeg|png)$/i.test(t[i] || "")) frame = arg();
+            while (frame && /\.(tga|jpg|jpeg|png)$/i.test(t[i] || "")) { frame = arg(); if (frame) st.frames.push(frame); }
           } else if (kl === "videomap") arg();
           else if (kl === "blendfunc") {
             const a = (arg() || "").toLowerCase();
-            // A blend factor is always GL_*; anything else is the next keyword.
-            const b = /^gl_/.test(t[i] || "") ? (arg() || "").toLowerCase() : null;
+            // A blend factor is always GL_*; anything else is the next keyword. The test has to be
+            // case-insensitive, because id writes them in capitals: matching only lowercase read
+            // every `blendFunc GL_ONE GL_ONE` as the one-word form, classified it as opaque, and
+            // turned every additive sprite in the game - the torch flames, the portal effects, the
+            // lamp glows - into a rectangle of solid black.
+            const b = /^gl_/i.test(t[i] || "") ? (arg() || "").toLowerCase() : null;
             st.blend = classifyBlend(a, b);
           } else if (kl === "alphafunc") { st.alphaFunc = (arg() || "").toUpperCase(); }
-          else if (kl === "depthwrite") st.depthWrite = true;
+          else if (kl === "alphagen") {
+            // `alphaGen vertex` is what a terrain shader blends its second rock by: the weight is
+            // painted into the vertex alpha, not into a texture.
+            st.alphaGen = (arg() || "").toLowerCase();
+          } else if (kl === "rgbgen") { st.rgbGen = (arg() || "").toLowerCase(); }
+          else if (kl === "tcmod") {
+            // `tcMod scale <u> <v>` is a UV multiplier baked into the surface here - the terrain
+            // shaders draw their rock at `scale 0.125`, and ignoring it puts the texture on the
+            // ground eight times too large, which is what makes a Team Arena hillside read as flat
+            // patches of colour. The animated tcMods (scroll, turb, rotate) have no equivalent.
+            const kind = (arg() || "").toLowerCase();
+            if (kind === "scale") {
+              const u = parseFloat(arg()), v = parseFloat(arg());
+              if (Number.isFinite(u) && Number.isFinite(v)) st.scale = [u, v];
+            } else { while (/^-?[\d.]+$/.test(t[i] || "")) arg(); }
+          } else if (kl === "depthwrite") st.depthWrite = true;
         }
         sh.stages.push(st);
         continue;
@@ -146,8 +169,27 @@ class ShaderSet {
       // A shader whose FIRST stage is additive over a solid one is a glow on top, not glass.
       if (kind === "additive" && sh.stages.some((s) => s.map && !/^\$/.test(s.map) && s.blend === "opaque")) kind = "normal";
     }
+    // The frames of the flipbook this surface draws, in order, as files that exist.
+    const frames = stage && stage.frames && stage.frames.length > 1
+      ? stage.frames.map(tryFile).filter(Boolean) : null;
+
+    // A terrain shader paints a SECOND texture over the first and blends the two by the vertex
+    // alpha: `blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA` with `alphaGen vertex`. Team Arena's
+    // mpterra1_0to1 is exactly that - two rocks, one weight per vertex - and carrying only the first
+    // layer is why a hillside comes across as one flat rock with hard edges where the blend was.
+    let overlay = null;
+    if (sh && kind === "normal" && stage) {
+      const later = sh.stages.filter((s) => s.map && !/^\$/.test(s.map) && s !== stage);
+      const painted = later.find((s) => s.blend === "blend" && s.alphaGen === "vertex");
+      const file2 = painted && tryFile(painted.map);
+      if (file2 && file2 !== file) overlay = { file: file2, tcScale: painted.scale || null };
+    }
     return {
       file, kind, shader: sh,
+      frames: frames && frames.length > 1 ? frames : null,
+      fps: (stage && stage.fps) || 0,
+      tcScale: (stage && stage.scale) || null,
+      overlay,
       twoSided: !!(sh && /^(none|disable|twosided)$/.test(sh.cull || "")),
       sky: sh && sh.sky,
     };

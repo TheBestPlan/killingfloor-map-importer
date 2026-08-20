@@ -892,6 +892,21 @@ The mask lives in the raw texture's alpha, so `Opacity` keeps pointing at the te
 `Diffuse` is now the Combiner. This is the order the Quake 3 route already used; the Tactical Ops
 route built it upside down and nothing in the file said so.
 
+### 5.42 `Engine.Kicker` does not exist here — it is `XGame.xKicker`
+Killing Floor keeps UT2004's jump pad in `XGame`, not `Engine`. Importing `Engine.Kicker` writes a
+package that verifies clean and never finishes loading: the client sits on the loading screen with
+nothing in the log. `Engine.Teleporter` IS in Engine, so a map with both fails in a way that looks
+like the teleporter's fault.
+
+An `xKicker` also throws nothing until its `KickedClasses` array names a class — the class defaults
+leave it empty — so the actor has to be written with `KickedClasses[0] = class'Engine.Pawn'`.
+
+### 5.43 A see-through mesh must not take the actor's AmbientGlow
+`AmbientGlow` stands in for the light on a WALL. Adding it to a pane of glass or a glow sprite is
+what turned mpteam2's energy crates into white blocks: the material is already blending its own
+brightness, and the glow lands on top of it. Skip the glow on any actor whose material is one of the
+see-through ones.
+
 ## 6. LevelInfo / gameplay
 
 ### 6.0a "Navigation point imbedded in level geometry" means the BSP, not the spawn height

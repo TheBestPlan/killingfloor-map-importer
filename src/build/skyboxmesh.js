@@ -42,6 +42,10 @@ const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a
 // showing through as white wedges. Cut the face up and only the cells that are really too far go.
 function buildSkyboxMesh(center, R, skySides, opts) {
   const grid = Math.max(1, Math.round((opts && opts.grid) || 1));
+  // GoldSrc and Quake 3 are mirrored into Unreal space; Unreal Engine 1 is not, so the Tactical Ops
+  // route asks for the cube without the mirror - and without it the winding has to flip too, or
+  // every face faces the wrong way (docs/games/tacticalops.md TO.4).
+  const mirrorY = !(opts && opts.mirrorY === false);
   const vertices = [], uvs = [], colors = [], indices = [], sections = [], materials = [];
 
   for (const f of FACES) {
@@ -58,8 +62,8 @@ function buildSkyboxMesh(center, R, skySides, opts) {
       const hl = [0, 1, 2].map((a) => f.d[a] * R + right[a] * su * R + f.up[a] * sv * R);
       // GoldSrc -> UE mirrors Y, exactly as the world geometry does.
       vertices.push({
-        pos: [center[0] + hl[0], center[1] - hl[1], center[2] + hl[2]],
-        normal: [-f.d[0], f.d[1], -f.d[2]],     // inward, through the same mirror
+        pos: [center[0] + hl[0], center[1] + (mirrorY ? -hl[1] : hl[1]), center[2] + hl[2]],
+        normal: mirrorY ? [-f.d[0], f.d[1], -f.d[2]] : [-f.d[0], -f.d[1], -f.d[2]],   // inward
       });
       uvs.push([u * (1 - 2 * inset) + inset, v * (1 - 2 * inset) + inset]);
       colors.push([255, 255, 255, 255]);
@@ -75,7 +79,8 @@ function buildSkyboxMesh(center, R, skySides, opts) {
       for (let i = 0; i < grid; i++) {
         const u0 = i / grid, u1 = (i + 1) / grid, v0 = j / grid, v1 = (j + 1) / grid;
         const a = at(u0, v0), b = at(u1, v0), c = at(u1, v1), d = at(u0, v1);
-        indices.push(c, b, a, d, c, a);
+        if (mirrorY) indices.push(c, b, a, d, c, a);
+        else indices.push(a, b, c, a, c, d);
       }
     }
     sections.push({

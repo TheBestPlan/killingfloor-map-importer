@@ -115,6 +115,8 @@
         <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
         <input type="number" id="q3Glow" step="1" min="0" max="254">
         <div class="hint" data-i18n="hint.l2Light">The two add up to what a surface is lit by. Splitting them keeps the world right without the player glowing.</div>
+        <div class="check"><input type="checkbox" id="q3TerrainLayers"><span data-i18n="label.q3Layers">Blend the terrain's second layer</span></div>
+        <div class="hint" data-i18n="hint.q3Layers">Team Arena paints a second rock over the first and blends the two by the vertex alpha; without it a hillside is one flat texture. Costs a second pass over those surfaces only — measured on mpterra1 +3.6% triangles (+0.55 MB) and mpterra2 +6.5% (+0.57 MB); every other map is untouched.</div>
       </fieldset>
     </div>
 
@@ -355,6 +357,7 @@ function save() {
   settings.q3LightGain = parseFloat($("q3LightGain").value) || 4;
   settings.q3Ambient = parseInt($("q3Ambient").value, 10);
   settings.q3Glow = parseInt($("q3Glow").value, 10);
+  settings.q3TerrainLayers = $("q3TerrainLayers").checked;
   settings.toDir = $("toDir").value.trim();
   settings.toScale = parseFloat($("toScale").value) || 1.3397;
   settings.toLightGain = parseFloat($("toLightGain").value) || 3;
@@ -413,6 +416,7 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("q3LightGain").value = settings.q3LightGain === undefined ? 4 : settings.q3LightGain;
   $("q3Ambient").value = settings.q3Ambient === undefined ? 40 : settings.q3Ambient;
   $("q3Glow").value = settings.q3Glow === undefined ? 96 : settings.q3Glow;
+  $("q3TerrainLayers").checked = settings.q3TerrainLayers !== false;
   $("toDir").value = settings.toDir || "";
   $("toScale").value = settings.toScale === undefined ? 1.3397 : settings.toScale;
   $("toLightGain").value = settings.toLightGain === undefined ? 3 : settings.toLightGain;
@@ -426,6 +430,7 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
     "terrainStep", "l2Scale", "l2Ambient", "l2Glow",
     "q3Scale", "q3Patch", "q3LightGain", "q3Ambient", "q3Glow",
     "toScale", "toLightGain", "toAmbient", "toGlow"]) $(el).addEventListener("change", save);
+  $("q3TerrainLayers").addEventListener("change", save);
   $("l2Grass").addEventListener("change", save);
   $("l2Blend").addEventListener("change", save);
   $("l2Carve").addEventListener("change", save);
@@ -496,6 +501,7 @@ $("go").onclick = async () => {
         outDir: settings.outDir || null,
         q3Scale: settings.q3Scale, patchLevel: settings.q3Patch, lightGain: settings.q3LightGain,
         ambient: settings.q3Ambient, glow: settings.q3Glow,
+        terrainLayers: settings.q3TerrainLayers !== false,
         emitPlayerStarts: settings.emitPlayerStarts,
       }
       : isL2()

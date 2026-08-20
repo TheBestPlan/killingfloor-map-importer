@@ -93,6 +93,20 @@ The rule that fixes it is worth more than the special case: **a brace is never a
 blend factor is always `GL_*`, so look at the next token before consuming it. There is one runnable
 check for exactly this in `test/selfcheck.js`.
 
+...and the same line had a second bug in it, which cost more: the `GL_` test was **case-sensitive**,
+and id writes its factors in capitals. Every `blendFunc GL_ONE GL_ONE` was therefore read as the
+one-word form and classified opaque, so the 227 additive shaders in baseq3 - every flame, every
+lamp glow, every portal effect - came across as opaque rectangles with a black background painted
+on them. One `/i` turned all of them back into the sprites they are.
+
+## Q3.5a A flipbook is `animMap`, and Killing Floor can play it
+
+An animated Quake 3 surface is a stage with `animMap <fps> <frame> <frame> ...`, and the frames are
+ordinary images. Killing Floor animates a texture through `AnimNext` - one texture per frame, the
+last pointing back at the first, `MinFrameRate`/`MaxFrameRate` for the speed - which the Lineage 2
+route already used for its own flipbooks. So every frame is written and chained, and a torch on
+q3ctf1 burns rather than standing still: 16 textures in two chains on that map alone.
+
 ## Q3.6 The lightmap is already the shape UE2.5 wants
 
 GoldSrc hands the converter a luxel block per face and it has to pack them into atlas pages itself.
@@ -146,9 +160,16 @@ already draws on a cube (GOTCHAS/goldsrc 5.16).
 
 But **30 of `baseq3`'s 34 sky surfaces and 47 of Team Arena's 61 set the farbox to `-`** and paint
 the sky with two scrolling cloud LAYERS instead. Nothing in UE2.5 reproduces a scrolling dome, so
-those get the cloud image itself on all six faces: a still sky of the map's own colour and clouds,
-seams and all, which is a great deal closer than a flat blue. q3dm1's hell sky and q3dm17's black
-void both come out right this way.
+those get a still picture on all six faces — but which picture matters twice over:
+
+* **All the layers, composited, not just the first.** Team Arena's `xproto_sky2` draws a nearly
+  black sheet ADDITIVELY over a lit one; taking the diffuse stage alone gets the black sheet and
+  nothing else, which is how mpteam2 ended up with a black sky. The layers are now stacked the way
+  the engine stacks them: the first as the base, the rest added, blended or multiplied over it.
+* **Tiled, not stretched.** id's cloud stages carry `tcMod scale 3 4`, so one copy stretched over a
+  whole cube face is four times too coarse. The composite is repeated 4x a side (a power of two,
+  because a cube face has to stay one) before it is resampled up, which is where the "the sky looks
+  low-resolution" complaint came from.
 
 ## Q3.10 Scale is 1.8634, and both bounds are the engines' own constants
 
@@ -220,19 +241,80 @@ Collision comes from the meshes' own kDOP trees, so the clip brushes are not mis
 is the places a mapper used a clip brush to smooth a staircase or block a gap; those play as the raw
 geometry.
 
+## Q3.11a `tcMod scale` is part of the surface, not an effect
+
+A Quake 3 stage may carry `tcMod scale <u> <v>`, and Team Arena's terrain shaders all do:
+`tcmod scale 0.125 0.125` on both rock layers. It is not an animation - it is a fixed multiplier on
+the UVs - so ignoring it draws the ground with a texture **eight times too large**, which is what
+made mpterra1's hillsides read as flat patches of colour with hard edges between them. The scale is
+baked into the vertex UVs at build time. The animated tcMods (`scroll`, `turb`, `rotate`, `stretch`)
+have no equivalent here and are skipped, arguments and all.
+
+### Both layers, blended by the vertex alpha
+
+A terrain shader is two rocks and a weight: `mpterra1_0to1` draws `pjrock9c` and then `pjrock12c`
+over it with `blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA` and `alphaGen vertex` — the weight is
+painted per vertex, not into a texture. Carrying only the first stage is one flat rock with a hard
+edge wherever the blend was.
+
+A static mesh cannot sample a second texture with a second set of UVs, but it can carry a colour per
+vertex, and `Engine.VertexColor` hands that colour to whatever asks for it. So the surface is drawn
+**twice**: the base as usual, then the same triangles again with the second texture, its own
+`tcMod scale`, and the material
+
+```
+FinalBlend{ FrameBufferBlending = FB_AlphaBlend, ZWrite = false,
+            Material = Shader{ Diffuse = layer2, Opacity = VertexColor, OB_Translucent } }
+```
+
+which is the shape the Lineage 2 route already uses for its own terrain layers. The overlay pass
+carries the blend weight in the vertex ALPHA, collides with nothing (it is coplanar with the surface
+underneath), and is grouped into meshes of its own. Nine shaders in Team Arena paint a second layer
+this way; mpterra1 uses two of them.
+
+What it costs, measured on the finished `.rom`:
+
+| map | triangles | vertices | size |
+| --- | --- | --- | --- |
+| mpterra1 | 33236 → 34422 (**+3.6%**) | 46842 → 48143 | 16.83 → 17.38 MB |
+| mpterra2 | 42641 → 45429 (**+6.5%**) | 65313 → 68345 | 20.60 → 21.17 MB |
+
+Only the painted surfaces are drawn twice, so every other stock map is byte-identical: `baseq3` has
+**0** shaders of this shape out of 1510, and of Team Arena's maps only the two terrain ones use any.
+That is an order of magnitude cheaper than the Lineage 2 route's layer blend (3x the ground's
+triangles), so it is on by default — `--no-terrain-layers`, or the checkbox in the desktop app,
+turns it off.
+
+## Q3.12a Water, jump pads and teleporters are brushes, not surfaces
+
+Three things a Quake 3 map keeps in its BRUSHES rather than in anything that draws:
+
+* **Water.** The surface you see is an ordinary face; the swimming is `CONTENTS_WATER` on the brush
+  behind it. Carrying only the face gives a picture you fall straight through, which is what
+  mpteam5 did. Every liquid brush's bounds are read off its own side planes - the axis-aligned ones
+  are the box, the bevels a compiler adds are skipped - and become a `PhysicsVolume`, the same actor
+  the GoldSrc and Tactical Ops routes write. 94 of them on mpteam5, 16 deep enough to swim in.
+* **Jump pads.** `trigger_push` is a brush entity that names a `target_position`. Killing Floor has
+  `XGame.xKicker`, which throws whatever touches it - and it throws nothing at all unless its
+  `KickedClasses` array names a class, which the class defaults leave empty. The launch is re-solved
+  for Killing Floor's gravity (950 uu/s²), not carried: rise to the target's height, cover the
+  horizontal distance in that time.
+* **Teleporters.** `trigger_teleport` names a destination the same way, and becomes a pair of
+  `Engine.Teleporter`s - one at the trigger with its `URL` naming the other's `Tag`.
+
+The brush-bounds routine is shared by all three, and `Engine.Kicker` does not exist in Killing
+Floor: importing it by that name is a map that never finishes loading.
+
 ## Q3.13 What a Quake 3 map carries that this does not
 
 * **Movers.** `func_door` becomes a `KFDoorMover` with its `KFUseTrigger` — opened with the use key
   and weldable, like a native KF door — because a Quake 3 door left closed seals a corridor for
   good. `func_plat`, `func_bobbing`, `func_rotating`, `func_train` and `func_button` stay static
   geometry where they stand.
-* **Jump pads, teleporters, launchers.** `trigger_push`, `trigger_teleport` and their targets are
-  gameplay this engine has no equivalent for. A map that needs a jump pad to reach a ledge has that
-  ledge out of reach.
+* **Everything animated.** Scrolling clouds, `tcMod` warps, `deformVertexes` and rgbGen waves come
+  across as their first frame; `animMap` flipbooks do animate (Q3.5a).
 * **Fog volumes.** `surfaceparm fog` is a volume, not a surface; carried as geometry it is a grey
   slab across the level, so it is skipped. The nine `sfx/*fog*` shaders in `baseq3` are all of these.
-* **Everything animated.** Scrolling clouds, `tcMod` warps, `deformVertexes`, animMap flames and
-  rgbGen waves come across as their first frame.
 * **Items, weapons, bots.** No `item_*` pickups, no bot routing (`.aas` is a separate file this does
   not read), no `ZombieVolume`s — a converted map has nothing to fight until somebody places them.
 

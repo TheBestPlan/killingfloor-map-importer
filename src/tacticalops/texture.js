@@ -104,26 +104,43 @@ function readTexture(pkg, exp) {
   };
 }
 
-// The top mip as tight RGB, plus an alpha channel when the texture is a cut-out. Unreal masks on
-// palette index 0.
-function topAsRgba(tex, masked) {
+// How bright a texel is, on the scale UE1 blends by. Rec. 601 luma, which is what the engine's own
+// fixed-point translucency table is built from.
+const luma = (r, g, b) => (r * 77 + g * 151 + b * 28) >> 8;
+
+// The top mip as tight RGB, plus an alpha channel when the surface needs one.
+//
+//   "mask"  - Unreal masks on palette index 0, so index 0 becomes alpha 0.
+//   "luma"  - UE1's translucency IS the texel's brightness: a black pane is invisible and a white
+//             highlight is solid. Baking that into the alpha channel is what lets a Killing Floor
+//             Shader reproduce it (see convert.js), and it is the difference between a museum case
+//             you can see the exhibit through and a slab of black.
+function topAsRgba(tex, alphaMode) {
   const m = tex.mips[0];
   if (!m || !tex.width || !tex.height) return null;
+  const masked = alphaMode === true || alphaMode === "mask";
+  const byLuma = alphaMode === "luma";
   const n = tex.width * tex.height;
   if (tex.format === TEXF.P8) {
     if (!tex.palette || m.data.length < n) return null;
     const rgb = Buffer.alloc(n * 3);
-    const alpha = masked ? Buffer.alloc(n, 255) : null;
+    const alpha = masked || byLuma ? Buffer.alloc(n, 255) : null;
     for (let i = 0; i < n; i++) {
       const c = m.data[i];
-      rgb[i * 3] = tex.palette[c * 3]; rgb[i * 3 + 1] = tex.palette[c * 3 + 1]; rgb[i * 3 + 2] = tex.palette[c * 3 + 2];
-      if (alpha && c === 0) alpha[i] = 0;
+      const r = tex.palette[c * 3], g = tex.palette[c * 3 + 1], b = tex.palette[c * 3 + 2];
+      rgb[i * 3] = r; rgb[i * 3 + 1] = g; rgb[i * 3 + 2] = b;
+      if (masked && c === 0) alpha[i] = 0;
+      else if (byLuma) alpha[i] = luma(r, g, b);
     }
     return { rgb, alpha };
   }
   const { topAsRgb } = require("../unreal/texture");
   const rgb = topAsRgb(tex);
-  return rgb ? { rgb, alpha: null } : null;
+  if (!rgb) return null;
+  if (!byLuma) return { rgb, alpha: null };
+  const alpha = Buffer.alloc(tex.width * tex.height, 255);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = luma(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+  return { rgb, alpha };
 }
 
 // A UE1 texture written into the Killing Floor package.
@@ -139,6 +156,7 @@ function topAsRgba(tex, masked) {
 // (GOTCHAS 5.16).
 function addUE1Texture(pkg, refs, tex, opts) {
   const masked = !!(opts && opts.masked);
+  const byLuma = !!(opts && opts.lumaAlpha);
   const name = (opts && opts.name) || tex.name;
   const gain = (opts && opts.gain) || 1;
   // Under 4 in either dimension the indexed writer's DXT3 output is a texture D3D will not create,
@@ -158,7 +176,7 @@ function addUE1Texture(pkg, refs, tex, opts) {
       name: sanitizeName(name), width: tex.width, height: tex.height, mips, palette,
     }, { masked, dxt: true });
   }
-  const img = topAsRgba(tex, masked);
+  const img = topAsRgba(tex, byLuma ? "luma" : masked ? "mask" : null);
   if (!img) return null;
   const rec = addRgbTexture(pkg, refs, name, {
     width: tex.width, height: tex.height, rgb: img.rgb, alpha: img.alpha,

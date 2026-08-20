@@ -201,28 +201,41 @@ single thing in the finished file.
 Sorting the blocks by height before packing and cropping each page to the power of two that covers
 what was used puts the same map in **one 1024×512 page**, and the `.rom` from 20.9 MB to 12.9 MB.
 
-## TO.7 The sky is a room somewhere off the map
+## TO.7 The sky is a room somewhere off the map — so it gets rendered, not carried
 
 UT99 draws its sky by rendering a small room — the one holding the `SkyZoneInfo` — through every
 surface flagged `PF_FakeBackdrop`. Killing Floor has the same machinery, but only for BSP surfaces,
 and here the world is static meshes.
 
-So the room is lifted out of the level: its nodes are the ones whose zone is the sky zone, and they
-are scaled about their own centre until they enclose the level and re-centred on it. The result is
-the same picture with parallax, which is what the Quake 3 route's cube gives too — TO-Avalanche's
-moon comes across, and so does its snow.
+The first approach was to lift the room out and scale it up around the level. It works until you
+look at what a sky room actually contains. **TO-RapidWaters' sky room has a sea plane in it**, and
+enlarged around the map that plane cut through the playable space as a flat teal sheet hanging in a
+dry room, which you could walk through — the bug report called it "a long blue texture stretched
+across the map". The seams of the room show for the same reason: it is real geometry at a real
+distance, and UT99's sky is neither.
 
-Three rules that had to be added to make it work:
+So the room is **rendered** instead — once, at conversion time, from the `SkyZoneInfo`'s own
+position, into the six faces of a cube (`skyroom.js`). What goes into the level is the cube the
+GoldSrc and Quake 3 routes already draw, at half-size 30000, unlit, with no collision. Nothing of
+the room's geometry reaches the map, there is no parallax, and there are no edges to see.
+
+The renderer is a small rasteriser of its own: near-plane clipping (the camera stands INSIDE the
+room, so most of its surfaces cross the view plane), a depth buffer for the opaque layers, then the
+`PF_Translucent` and `PF_Modulated` sheets composited over them back-to-front — which is how UT99's
+layered skies (an opaque picture with one or two panning cloud sheets, three of the four in
+TO-Crossfire's room) end up in one still image instead of being dropped. Sampling is bilinear: the
+room's textures are magnified several times over by the time they fill a face, and point sampling
+them is what makes a sky read as a mosaic of squares.
+
+Two rules carried over from the first approach:
 
 * the room's own textures are **dimmed by 1/2.4** like any sky (GOTCHAS 5.15), since they are drawn
   unlit;
-* the room is drawn one-sided, like the rest of the world. Blowing it up puts the player inside it,
-  which is exactly the side its walls were wound for once TO.4 is applied — doubling the triangles
-  to be safe was tried, and it is not needed;
-* UT99 layers its sky — an opaque picture with one or two `PF_Translucent` cloud sheets panning
-  over it, three of the four in TO-Crossfire's room. Nothing here reproduces a panning sheet, and an
-  additive one over the hole a backdrop surface leaves is white glare, so **the overlays are dropped
-  wherever the room has an opaque layer to keep**.
+* a `PF_FakeBackdrop` surface is a window onto the room, not a wall, so it is cut out of the world
+  mesh and the cube shows through the hole.
+
+`KF_SKY_SIZE` overrides the 512-pixel face; 1024 was measured and changes nothing the eye can see,
+because the limit is the source texture, not the face.
 
 ## TO.8 Movers are the only geometry that is not in the BSP
 
@@ -273,6 +286,23 @@ Surface coverage over all 33 maps: **198818 of 198896 surfaces resolve their tex
 What does not is 19 surfaces wearing the editor's own `Editor.Bad` placeholder and a handful of
 procedural steam textures; they get a flat grey stand-in.
 
+### Translucency is the texel's own brightness
+
+UE1 has no alpha channel to blend by: a `PF_Translucent` surface is drawn by its BRIGHTNESS, so a
+black pane is invisible and a white highlight is solid. A flat opacity through `OB_Translucent` was
+the first approximation, and it is what made TO-Resurrection's museum cases a slab of black and
+TO-Scope's windows a mirror — every texel of a dark pane came out 60% opaque, which is exactly what
+dark glass must not be.
+
+What reproduces the engine is the per-texel figure, so a translucent surface gets **its own copy of
+the texture with alpha = luma**, and the Shader's `Opacity` is that texture — the same shape the
+cut-out path already had. The glass in a display case shows the exhibit again, and a window is a
+window from both sides.
+
+Where the glass lives is worth knowing too: it is on the MOVERS, not in the BSP. TO-Resurrection has
+one translucent surface in its whole world model and 264 translucent polygons on its movers; the
+map's flags say nothing about the cases at all until the movers are read.
+
 ### Water is a program, not a texture
 
 A UE1 water surface wears a `WetTexture` (`Texture` → `FractalTexture` → `WaterTexture` → this):
@@ -282,7 +312,16 @@ canal came out as a slab of one khaki colour.
 
 The still image is named by the texture's own `SourceTexture` property (`bwateranimold` →
 `bwatercliff`), so that is what gets carried and the water reads as water. What is lost is the
-ripple, which is generated code with no equivalent here.
+ripple, which is generated code with no equivalent here. The surface is also forced translucent
+whatever its flags say — a water surface DISTORTS what is behind it, so the one thing it never is,
+is opaque, and TO-RapidWaters' pools say nothing about it in their own flags (`NotSolid|TwoSided|
+AutoUPan|Portal`).
+
+A procedural texture with no `SourceTexture` at all — a `FireTexture`, a plain `WaterTexture` —
+ships the UNINITIALISED buffer its generator writes into: whatever was in that memory when the
+package was saved. That is the white, yellow and cyan noise that covered TO-Oilrig's lower deck.
+Its palette is real, though, so the stand-in is a ramp through the palette: fire colours for a fire,
+water colours for water.
 
 ## TO.10 Player starts: all of them, and on the floor
 
