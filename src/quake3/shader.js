@@ -84,6 +84,17 @@ function parseShaders(text, into) {
             if (kind === "scale") {
               const u = parseFloat(arg()), v = parseFloat(arg());
               if (Number.isFinite(u) && Number.isFinite(v)) st.scale = [u, v];
+            } else if (kind === "scroll") {
+              // Texture widths per second. Killing Floor has the same thing in Engine.TexPanner,
+              // which is what makes a teleporter's energy sheet move instead of standing still.
+              const u = parseFloat(arg()), v = parseFloat(arg());
+              if (Number.isFinite(u) && Number.isFinite(v)) st.scroll = [u, v];
+            } else if (kind === "rotate") {
+              // Degrees per second about the middle of the texture; Engine.TexRotator's
+              // TR_ConstantlyRotating is the same.
+              const d = parseFloat(arg());
+              if (Number.isFinite(d)) st.rotate = d;
+              while (/^-?[\d.]+$/.test(t[i] || "")) arg();
             } else { while (/^-?[\d.]+$/.test(t[i] || "")) arg(); }
           } else if (kl === "depthwrite") st.depthWrite = true;
         }
@@ -91,7 +102,14 @@ function parseShaders(text, into) {
         continue;
       }
       const wl = w.toLowerCase();
-      if (wl === "surfaceparm") sh.params.add((t[i++] || "").toLowerCase());
+      // `autoSprite` turns the quad into a billboard that always faces the camera; `autoSprite2`
+      // keeps its long axis and spins about it. Every lamp corona and glow bulb in Quake 3 is one of
+      // these, and drawn as the fixed quad the file holds it becomes a flat plate hanging in the air
+      // beside the lamp. The rest of what deformVertexes does is animation this engine has no
+      // equivalent for; the arguments are left to fall through as unknown keywords, the way every
+      // other unread directive here does.
+      if (wl === "deformvertexes" && /^autosprite2?$/i.test(t[i] || "")) sh.autoSprite = true;
+      else if (wl === "surfaceparm") sh.params.add((t[i++] || "").toLowerCase());
       else if (wl === "qer_editorimage") sh.editorImage = t[i++];
       else if (wl === "cull") sh.cull = (t[i++] || "").toLowerCase();
       else if (wl === "skyparms") {
@@ -113,20 +131,52 @@ function classifyBlend(a, b) {
     if (one === "blend") return "blend";
     return "opaque";
   }
+  // Read the factors, do not pattern-match the pairs. `result = src*SRC + dst*DST`, and what a
+  // converter needs from it is only "does this pass let the background through".
+  //
+  // Getting that wrong on ONE pair was 42 of q3dm7's wall faces: `blendFunc GL_DST_COLOR
+  // GL_SRC_ALPHA` (208 stages in baseq3 + Team Arena) is the specular-lit wall - the texture
+  // MULTIPLIES the lightmap already on the screen and adds a little shine - and falling through to
+  // "blend" made gothic_wall/iron01_m a pane of glass you could see the next room through. Four more
+  // pairs fell through the same way: GL_DST_COLOR with GL_ONE_MINUS_DST_ALPHA (122) and with
+  // GL_SRC_COLOR (28), GL_ONE with GL_SRC_COLOR (38) and with GL_SRC_ALPHA (28).
   const src = a, dst = b;
   if (src === "gl_one" && dst === "gl_zero") return "opaque";
-  if (dst === "gl_one" && (src === "gl_one" || src === "gl_src_alpha" || src === "gl_dst_color")) return "additive";
-  if (src === "gl_src_alpha" && dst === "gl_one_minus_src_alpha") return "blend";
-  if ((src === "gl_dst_color" && dst === "gl_zero") || (src === "gl_zero" && dst === "gl_src_color")) return "filter";
+  // A source factor taken from the DESTINATION cannot reveal anything: the pass can only scale
+  // what is already in the buffer. That is a filter, however the destination factor is written.
+  if (src === "gl_dst_color" || src === "gl_one_minus_dst_color" || src === "gl_zero") {
+    return dst === "gl_one" ? "additive" : "filter";
+  }
+  // A real alpha blend - the only shape where the texture's own alpha decides what shows through.
+  if ((src === "gl_src_alpha" && dst === "gl_one_minus_src_alpha") ||
+      (src === "gl_one_minus_src_alpha" && dst === "gl_src_alpha") ||
+      (src === "gl_one" && dst === "gl_one_minus_src_alpha")) return "blend";
+  // Everything left adds the source on top of a destination it never hides.
+  if (src === "gl_one" || src === "gl_src_alpha") return "additive";
   return "blend";
 }
+
+const imageBase = (p) => String(p).replace(/\\/g, "/").replace(/\.[a-z]+$/i, "").toLowerCase();
 
 // The stage that carries the surface's own picture. A two-pass shader puts `$lightmap` in one stage
 // and the texture in the other with `blendFunc filter`, so "the first stage" is the wrong answer as
 // often as the right one.
-function diffuseStage(sh) {
+//
+// Neither is "the first OPAQUE stage", which is what this used to be. id's shiny trims and its
+// broken floors put a backdrop underneath - an environment map, a scrolling electric plate - and
+// blend the surface's real texture over it by that texture's alpha. Taking the backdrop drew
+// `effects/tinfx` on every pewter rail in the game and a black hole where pro-q3tourney4's floor is
+// broken: 5455 of baseq3's 147056 faces and 20357 of Team Arena's 317596. A shader is named after
+// the picture it draws, so when one of the stages IS that picture, that is the stage.
+function diffuseStage(sh, name) {
   const real = sh.stages.filter((s) => s.map && !/^\$/.test(s.map));
   if (!real.length) return null;
+  if (name) {
+    // Not a flipbook: `sfx/flame2` names one FRAME of a flipbook that starts at flame1, and the
+    // flipbook should start where the shader starts it.
+    const own = real.find((s) => !s.frames && imageBase(s.map) === imageBase(name));
+    if (own) return own;
+  }
   return real.find((s) => s.blend === "opaque" || s.blend === "filter") || real[0];
 }
 
@@ -155,19 +205,48 @@ class ShaderSet {
       for (const ext of [".tga", ".jpg", ".jpeg", ".png"]) if (gamefs.has(base + ext)) return base + ext;
       return null;
     };
-    const stage = sh && diffuseStage(sh);
+    const stage = sh && diffuseStage(sh, name);
     const file = tryFile(name) || tryFile(stage && stage.map) || tryFile(sh && sh.editorImage);
+    // The first stage that draws an image is what decides whether the BACKGROUND shows through.
+    // A later stage's blendFunc says how it combines with the stages under it, not with the room
+    // behind the wall - and reading it as the surface's own opacity is what turned every shiny
+    // pewter rail in Quake 3 into a pane of glass.
+    const firstReal = sh && sh.stages.find((s) => s.map && !/^\$/.test(s.map));
     let kind = "normal";
+    let under = null;
     if (sh) {
       if (sh.sky || sh.params.has("sky")) kind = "sky";
       else if (sh.params.has("nodraw") || sh.params.has("trans") && !file) kind = "normal";
       if (stage) {
+        const blend = (firstReal || stage).blend;
         if (stage.alphaFunc) kind = kind === "sky" ? kind : "masked";
-        else if (stage.blend === "additive") kind = kind === "sky" ? kind : "additive";
-        else if (stage.blend === "blend") kind = kind === "sky" ? kind : "translucent";
+        else if (blend === "additive") kind = kind === "sky" ? kind : "additive";
+        else if (blend === "blend") kind = kind === "sky" ? kind : "translucent";
       }
       // A shader whose FIRST stage is additive over a solid one is a glow on top, not glass.
       if (kind === "additive" && sh.stages.some((s) => s.map && !/^\$/.test(s.map) && s.blend === "opaque")) kind = "normal";
+      // ...and what IS under it gets carried, so the alpha that the drawn stage blends by still
+      // shows something. `base_trim/pewter_shiney` blends its metal over an environment map;
+      // `base_floor/metalbridge04dbroke` blends a broken plate over a scrolling electric one, and
+      // that is what you see through the hole. Composited into one image at load, since a UE2.5
+      // surface draws one material - without it the hole came out flat black (Q3 bug 5).
+      if (stage && firstReal && stage !== firstReal && stage.blend === "blend" && !stage.alphaFunc &&
+        (firstReal.blend === "opaque" || firstReal.blend === "filter")) {
+        const u = tryFile(firstReal.map);
+        if (u && u !== file) under = u;
+      }
+    }
+    // ...and what is added ON TOP of it. A Quake 3 surface is as often base + glow as it is
+    // backdrop + surface: `liquids/slime1_2000` draws a flat green and adds the bright slime over
+    // it, `base_light/trianglelight` adds its own `.blend` lamp, `base_wall/dooreye` its lit eye.
+    // Taking the base alone is why q3ctf2's slime came out a pale grey-green slab and every light
+    // panel came out unlit. Only when the surface is not itself the glow.
+    let over = null;
+    if (sh && stage && kind !== "additive" && kind !== "sky") {
+      const after = sh.stages.slice(sh.stages.indexOf(stage) + 1)
+        .find((s) => s.map && !/^\$/.test(s.map) && s.blend === "additive");
+      const o = after && tryFile(after.map);
+      if (o && o !== file && o !== under) over = o;
     }
     // The frames of the flipbook this surface draws, in order, as files that exist.
     const frames = stage && stage.frames && stage.frames.length > 1
@@ -189,7 +268,14 @@ class ShaderSet {
       frames: frames && frames.length > 1 ? frames : null,
       fps: (stage && stage.fps) || 0,
       tcScale: (stage && stage.scale) || null,
+      // The UV animation this engine can reproduce: a constant scroll and a constant spin.
+      scroll: (stage && stage.scroll) || null,
+      rotate: (stage && stage.rotate) || 0,
       overlay,
+      // What `file` is blended over, and what is added on top of it, to be composited at load.
+      under, over,
+      // A billboard, not a wall: see the deformVertexes note above.
+      sprite: !!(sh && sh.autoSprite),
       twoSided: !!(sh && /^(none|disable|twosided)$/.test(sh.cull || "")),
       sky: sh && sh.sky,
     };

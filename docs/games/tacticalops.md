@@ -383,3 +383,18 @@ first-person view in the client with no `Critical:` line in `KillingFloor.log`.
 The 3.5 install ships 20 more — the community `TO-2-*`, `TO-2W-*`, `TO-AoT-*` maps and a few
 one-offs — and all 20 convert and verify as well, which is what says the reader is reading the
 format rather than the habits of one mapping team.
+
+### TO.12 The rendered sky room is the one place a block codec cannot go
+A sky room rendered into a cube is the worst case DXT1 can be handed: a smooth, low-contrast
+gradient, often a night one, where two 5:6:5 endpoints per 4x4 block quantise the whole face into
+flat squares. Magnified over a 90-degree field of view those squares are what TO-TerrorMansion's sky
+reads as - visibly blockier than the same sky in Tactical Ops itself. The six faces go out
+uncompressed; at 512 that is about 8 MB, which is the largest single thing on the screen paid for at
+the going rate, and `KF_SKY_SIZE` trades resolution back.
+
+### TO.13 A map's sea can be a backdrop rather than a place
+TO-Oilrig carries no `WaterZone` and no zone with `bWaterZone` - 10 plain `ZoneInfo`, one
+`SkyZoneInfo`, one `CloudZone` - against TO-RapidWaters' four `WaterZone`s. Its sea is a plane in the
+sky room, so there is nothing to swim in there in Tactical Ops either, and the converter is right to
+emit no volume. What the sea IS, is the picture on the cube's side faces, which is where to look when
+someone reports "the water is missing at the bottom of the map".

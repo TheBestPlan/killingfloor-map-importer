@@ -62,8 +62,11 @@ function planLightmaps(map, opts) {
   for (let v = 0; v < 256; v++) lut[v] = Math.max(floor, Math.min(255, Math.round(v * gain)));
   let flatFaces = 0, litFaces = 0;
 
+  // Which texels of a page hold a block. The rest is the gap the shelf packer leaves, and it is
+  // black - so the mip chain has to know not to average it in (unreal/texture.js mipChain).
+  const covers = [];
   const pageOf = (i) => {
-    while (pages.length <= i) pages.push(Buffer.alloc(ATLAS * ATLAS * 3, 0));
+    while (pages.length <= i) { pages.push(Buffer.alloc(ATLAS * ATLAS * 3, 0)); covers.push(new Uint8Array(ATLAS * ATLAS)); }
     return pages[i];
   };
 
@@ -82,10 +85,12 @@ function planLightmaps(map, opts) {
       for (let x = -BORDER; x < w + BORDER; x++) {
         const sx = Math.max(0, Math.min(w - 1, x));
         const s = (sy * w + sx) * 3;
-        const d = ((at.y + BORDER + y) * ATLAS + (at.x + BORDER + x)) * 3;
+        const t = (at.y + BORDER + y) * ATLAS + (at.x + BORDER + x);
+        const d = t * 3;
         page[d] = lut[hl.rgb[s]];
         page[d + 1] = lut[hl.rgb[s + 1]];
         page[d + 2] = lut[hl.rgb[s + 2]];
+        covers[at.page][t] = 1;
       }
     }
     byFace.set(fi, { page: at.page, x: at.x + BORDER, y: at.y + BORDER, hl });
@@ -105,7 +110,7 @@ function planLightmaps(map, opts) {
     return [(plan.x + lx + 0.5) / ATLAS, (plan.y + ly + 0.5) / ATLAS];
   };
 
-  return { pages, byFace, uvOf, size: ATLAS, stats: { pages: pages.length, litFaces, flatFaces } };
+  return { pages, covers, byFace, uvOf, size: ATLAS, stats: { pages: pages.length, litFaces, flatFaces } };
 }
 
 module.exports = { planLightmaps, ATLAS };

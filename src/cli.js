@@ -72,6 +72,9 @@ function parseArgs(argv) {
     // Tactical Ops: the movers (doors, gates, glass) and the water volumes, for bisecting a build.
     else if (t === "--no-movers") a.movers = false;
     else if (t === "--no-water") a.water = false;
+    // 3D model route (glTF/GLB/OBJ): crop one square of a big scene; pre-divide world textures.
+    else if (t === "--crop") a.crop = argv[++i];
+    else if (t === "--tex-gain") a.texGain = parseFloat(argv[++i]);
     else if (t.startsWith("--")) throw new Error("unknown option " + t);
     else a._.push(t);
   }
@@ -165,6 +168,75 @@ function main() {
       ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightFloor: a.lightFloor,
       lightScale: a.lightScale, noLight: a.noLight, noSky: a.noSky, movers: a.movers, water: a.water,
       emitPlayerStarts: !a.noSpawns, spawnLimit: a.spawnLimit,
+      log: (m) => console.log("  " + m),
+    });
+    if (a.verify) {
+      const v = verify(res.out);
+      console.log(v.report);
+      process.exit(v.ok ? 0 : 2);
+    }
+    return;
+  }
+
+  // Source engine BSP: Counter-Strike: Source / CS:GO, Half-Life 2, Garry's Mod, Left 4 Dead. One
+  // VBSP reader for all of them; the input is a loose .bsp file.
+  if (/^(source|vbsp|css|cs:?source|csgo|cs:?go|gmod|garrys ?mod|l4d2?|left ?4 ?dead ?2?|hl2|half-?life ?2)$/i.test(a.game || "")) {
+    const src = require("./source/convert");
+    const bspFile = a._.find((t) => /\.bsp$/i.test(t)) || a._[0];
+    if (!bspFile) {
+      console.log("usage: node src/cli.js --game source <map.bsp> [--out <dir|file>] [--name KF-Name]");
+      console.log("       [--scale 1.9165] [--crop cx,cy,half] [--ambient 64] [--glow 48] [--no-sky] [--no-spawns] [--verify]");
+      process.exit(1);
+    }
+    if (a.out && !/\.rom$/i.test(a.out)) fs.mkdirSync(a.out, { recursive: true });
+    const res = src.convert({
+      file: bspFile, mapName: a.name,
+      outFile: a.out && /\.rom$/i.test(a.out) ? a.out : null,
+      outDir: a.out && !/\.rom$/i.test(a.out) ? a.out : null,
+      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,
+      crop: a.crop, ambient: a.ambient, glow: a.glow, lightScale: a.lightScale,
+      texGain: a.texGain, maxTexture: a.maxTexture, lights: !a.noLight, noSky: a.noSky, emitPlayerStarts: !a.noSpawns,
+      log: (m) => console.log("  " + m),
+    });
+    if (a.verify) {
+      const v = verify(res.out);
+      console.log(v.report);
+      process.exit(v.ok ? 0 : 2);
+    }
+    return;
+  }
+
+  // CS2 / Source 2: the compiled world lives in a `.vpk` (v2) as `.vwrld_c` / `.vmesh_c` (KV3 +
+  // meshopt-compressed buffers) - a different, much larger format than Source 1 BSP, and not parsed
+  // natively here. The working path is Source2Viewer / ValveResourceFormat -> export glTF -> the model
+  // route below, which this alias falls through to when handed a .glb/.gltf/.obj.
+  if (/^(cs2|source ?2|cs:?2|vpk2)$/i.test(a.game || "") && a._.some((t) => /\.vpk$/i.test(t))) {
+    console.log("CS2 maps are Source 2 (.vpk). Native .vpk parsing is not implemented.");
+    console.log("Decompile the map with Source2Viewer (or ValveResourceFormat) and export it to glTF,");
+    console.log("then convert that:  node src/cli.js --game model <map>.glb --out <dir> --verify");
+    process.exit(1);
+  }
+
+  // 3D model route: a scene exported to glTF/GLB/OBJ (Sketchfab, CGTrader, a Blender .blend, an
+  // Open3DLab rip, or a decompiled Source / Source 2 (CS2) map). The input is the .glb/.gltf/.obj file.
+  if (/^(gltf|glb|obj|model|mesh|cs2|source ?2|cs:?2)$/i.test(a.game || "")) {
+    const g = require("./gltf/convert");
+    const file = a._.find((t) => /\.(glb|gltf|obj)$/i.test(t)) || a._[0];
+    if (!file) {
+      console.log("usage: node src/cli.js --game model <scene.glb|.gltf|.obj> [--out <dir|file>] [--name KF-Name]");
+      console.log("       [--scale 1.0] [--crop cx,cy,half] [--ambient 64] [--glow 48] [--tex-gain 0.7]");
+      console.log("       [--light-gain 0.6] [--max-texture 512] [--no-light] [--no-sky] [--no-spawns] [--verify]");
+      console.log("  axis/scale knobs: KF_GLTF_AXES=\"0,2,1\" KF_GLTF_FLIP=\"0,0,0\" KF_CELL=2048 KF_SPAWN_AT=\"x,y,z,yaw\"");
+      process.exit(1);
+    }
+    if (a.out && !/\.rom$/i.test(a.out)) fs.mkdirSync(a.out, { recursive: true });
+    const res = g.convert({
+      file, mapName: a.name,
+      outFile: a.out && /\.rom$/i.test(a.out) ? a.out : null,
+      outDir: a.out && !/\.rom$/i.test(a.out) ? a.out : null,
+      scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the model one
+      crop: a.crop, ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightScale: a.lightScale,
+      texGain: a.texGain, maxTexture: a.maxTexture, lights: !a.noLight, noSky: a.noSky, emitPlayerStarts: !a.noSpawns,
       log: (m) => console.log("  " + m),
     });
     if (a.verify) {

@@ -386,3 +386,62 @@ empty set is a missing sky.
 * `env_sprite` / `env_glow` / `cycler_sprite` - billboards (`model` names a `.spr`, plus `scale`,
   `rendermode`, `renderamt`). Converted as `Engine.Effects` actors; see 5.24.
 * `infodecal` - wall decals; not converted.
+
+### 5.30d `Health = 1` on a KFGlassMover repaints the brush as cracked glass
+`KFGlassMover.PostBeginPlay` reads `Health == 1` as "this pane starts out broken" and calls
+`CrackWindow`, which sets `Skins[0] = ShatteredTexture` -
+`Shader'KillingFloorLabTextures.Statics.ShaderCrackedGlass'`. Every `func_breakable` a mapper gave
+`health 1` therefore arrived in the level as a translucent, cracked pane whatever it was made of:
+de_2minaret's minaret and its crate pile both did, which is the "the crates went glassy" report.
+
+GoldSrc's `health 1` only means "one shot takes it", and 2 means the same here, so the converter
+writes `max(2, health x --health-scale)`.
+
+### 5.30e SF_BREAK_TRIGGER_ONLY is a brush nothing in Killing Floor can fire
+`func_break.cpp`: spawnflag 1 is `SF_BREAK_TRIGGER_ONLY`, and a brush carrying it cannot be shot at
+all - only its trigger takes it out. de_2minaret's two breakables are the bomb targets' scenery and
+both carry it. Converted to a shootable `KFGlassMover` they became a piece of the map the player can
+delete by looking at it; nothing here fires their trigger, so they stay world geometry.
+
+### 5.30f The brush entities GoldSrc never DRAWS
+`trigger_*`, `func_buyzone`, `func_ladder`, `func_bomb_target`, `func_hostage_rescue`,
+`func_escapezone`, `func_vip_safetyzone`, `func_friction`, `func_vehiclecontrols`: the engine treats
+the model as a volume to test against and renders nothing, whatever texture is on the brush. Carried
+across as geometry they are the white slabs across bside_paintball's walkways (49 trigger_hurt faces,
+20 trigger_teleport, 12 trigger_push) and the buy-zone boxes in the middle of fy_dinoiceworld (67
+faces) - which cannot be deleted in the editor without tearing the map around them.
+
+`func_illusionary` is NOT one of these: it draws, it just does not block.
+
+### 4.11c The lightmap atlas is the one texture that must not be block-compressed
+Two artefacts on the same surface, both reported as "coloured squares":
+
+* A DXT1 block on a lightmap atlas is four luxels square - 64 GoldSrc units, about four feet of wall
+  - and its two 5:6:5 endpoint colours turn a soft gradient into a patch of its own tint. The Quake 3
+  route had already reached this conclusion about its own pages.
+* The shelf packer leaves gaps, and they are black. A plain box filter mixes that black into every
+  block below it: measured on gg_33_shudder, a face's own colour drifts by 13 of 255 at mip 3 and 22
+  at mip 4, which on a wall is one rectangle per face at a visibly different tint. Averaging only the
+  texels that hold data brings the same numbers to 4 and 9 (`mipChain`'s `coverage` argument).
+
+### 5.22b Water takes the world's share of the light, and GoldSrc's own alpha is not 150
+A water surface is drawn at less than full opacity over the floor underneath it, so holding it back
+from `AmbientGlow` - which is where the lit route keeps the world's light - left it contributing
+almost nothing: fy_evilpyramid's canal read as dry stone against Counter-Strike's blue. It takes the
+glow like any other surface now.
+
+The opacity was a guess at "typically ~100/255". `r_wateralpha` ships at 1 and every `func_water`
+measured says `renderamt 255`; the surface is opaque enough in Counter-Strike that the bottom of the
+canal does not show through. 230 keeps a little of it so a surface seen edge-on still reads as
+liquid; `KF_WATER_ALPHA` overrides.
+
+### 6.5 The underwater tint never comes off again
+`HUDKillingFloor.Timer` re-reads the overlay colour only when `PRI.PlayerZone.bDistanceFog` is set,
+or when the pawn is in a PhysicsVolume that is not the default one. Leaving the pool satisfies
+neither: `CurrentVolume` stays pointed at the water, `LastR/G/B` stay at the water's colour, and the
+blue tile is drawn over the rest of the round. A converted level has no fogged `ZoneInfo` to fall
+back to - `KF_FOG` is off by default because it washes the map.
+
+So the water volumes carry no `bDistanceFog` at all. Swimming is `bWaterVolume`'s job, not the fog's,
+and without `bDistanceFog` the HUD never picks the volume up. `KF_WATER_TINT=1` puts the blue back,
+stuck-on and all, for checking from outside whether a volume took.

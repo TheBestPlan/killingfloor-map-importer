@@ -8,7 +8,7 @@
 const { decode } = require("./image");
 const { resample } = require("../build/upscale");
 const { addRgbTexture } = require("../unreal/texture");
-const { CONTENTS } = require("./bsp");
+const { CONTENTS, SURF } = require("./bsp");
 
 const nextPow2 = (n) => { let p = 1; while (p < n) p <<= 1; return p; };
 
@@ -49,7 +49,7 @@ function loadTextures(pkg, refs, bsp, opts) {
   const maxSize = opts.maxSize || 512;
   const byFile = new Map();                   // resolved image path + flags -> { texRef, ... }
   const out = new Map();
-  const stats = { used: 0, images: 0, missing: 0, tool: 0, sky: 0, resampled: 0, cutout: 0, graded: 0, animated: 0, layered: 0 };
+  const stats = { used: 0, images: 0, missing: 0, tool: 0, sky: 0, resampled: 0, cutout: 0, graded: 0, animated: 0, layered: 0, composited: 0, glowed: 0 };
   const missingNames = [];
 
   const used = new Set();
@@ -74,6 +74,42 @@ function loadTextures(pkg, refs, bsp, opts) {
     }
     if (!img) { stats.missing++; if (missingNames.length < 12) missingNames.push(t.name); img = placeholder(); }
 
+    // What this image is painted OVER (shader.js `under`): an environment map under a shiny rail, a
+    // scrolling electric plate under a broken floor. A UE2.5 surface draws one material, so the two
+    // are composited here by the top image's own alpha. Without it the alpha was simply dropped and
+    // the see-through part of the surface came out as the top texture's black - which is the hole in
+    // pro-q3tourney4's floor reading as a black blob.
+    if (r.under && img.alpha) {
+      try {
+        let u = decode(r.under, gamefs.read(r.under));
+        if (u.width !== img.width || u.height !== img.height) u = resample(u, img.width, img.height);
+        const rgb = Buffer.alloc(img.width * img.height * 3);
+        for (let i = 0, n = img.width * img.height; i < n; i++) {
+          const a = img.alpha[i] / 255;
+          for (let k = 0; k < 3; k++) rgb[i * 3 + k] = Math.round(img.rgb[i * 3 + k] * a + u.rgb[i * 3 + k] * (1 - a));
+        }
+        img = { width: img.width, height: img.height, rgb, alpha: null };
+        stats.composited++;
+      } catch (e) { /* the backdrop is not on disk; the surface keeps its own image alone */ }
+    }
+
+    // ...and the glow stage added over it (shader.js `over`): the bright slime over the flat one,
+    // a lamp's `.blend` over its housing, a console's lit screen. Additive, because that is the
+    // blendFunc the stage carries, and the picture is a still of what Quake 3 pulses.
+    if (r.over) {
+      try {
+        let g = decode(r.over, gamefs.read(r.over));
+        if (g.width !== img.width || g.height !== img.height) g = resample(g, img.width, img.height);
+        const rgb = Buffer.alloc(img.width * img.height * 3);
+        for (let i = 0; i < img.width * img.height * 3; i++) {
+          const v = img.rgb[i] + g.rgb[i];
+          rgb[i] = v > 255 ? 255 : v;
+        }
+        img = { width: img.width, height: img.height, rgb, alpha: img.alpha };
+        stats.glowed++;
+      } catch (e) { /* the glow is not on disk; the surface keeps its base alone */ }
+    }
+
     let kind = r.kind === "masked" ? "masked" : r.kind === "additive" ? "additive"
       : r.kind === "translucent" ? "translucent" : "normal";
     const ak = alphaKind(img.alpha);
@@ -86,7 +122,7 @@ function loadTextures(pkg, refs, bsp, opts) {
     if (kind === "masked") stats.cutout++;
     if (ak === "graded" && kind === "normal") stats.graded++;
 
-    const key = (r.file || "?" + t.name) + "|" + kind;
+    const key = (r.file || "?" + t.name) + "|" + kind + (r.under ? "|" + r.under : "") + (r.over ? "|+" + r.over : "");
     let rec = byFile.get(key);
     if (!rec) {
       let w = Math.min(maxSize, nextPow2(img.width)), h = Math.min(maxSize, nextPow2(img.height));
@@ -154,6 +190,24 @@ function loadTextures(pkg, refs, bsp, opts) {
       // `tcMod scale`, baked into the UVs by the mesh builder.
       tcScale: r.tcScale || null,
       twoSided: r.twoSided || liquid || kind === "masked",
+      // Whether the player can walk into it. In Quake 3 collision is a property of the BRUSH, not of
+      // the picture on it: `CM_LoadMap` gives a brush the contents of its shader, and a trace only
+      // hits what carries CONTENTS_SOLID. A lamp's light beam, a flame sheet and a `nonsolid` grate
+      // have none, and the player walks through them there - while Killing Floor takes its collision
+      // from the mesh triangles, which is why every beam on mpteam2 was a wall to bump into.
+      //
+      // Deliberately narrower than "no CONTENTS_SOLID": Quake 3 maps also block with invisible
+      // `common/clip` brushes, which q3map emits no drawsurface for and this converter therefore
+      // cannot carry, so a fence whose own brush is not solid would become a hole in the level.
+      // Only the two cases that are unambiguously an effect are opened up - an explicit `nonsolid`,
+      // and a see-through surface whose brush is not solid either.
+      nonsolid: !!(t.flags & SURF.NONSOLID) ||
+        (!(t.contents & CONTENTS.SOLID) && (kind === "additive" || kind === "translucent")),
+      // `deformVertexes autoSprite`: the surface is a camera-facing billboard, not a wall.
+      sprite: !!r.sprite,
+      // `tcMod scroll` / `tcMod rotate`: the UV animation, carried as a TexPanner / TexRotator.
+      scroll: r.scroll || null,
+      rotate: r.rotate || 0,
     });
   }
 
@@ -163,6 +217,8 @@ function loadTextures(pkg, refs, bsp, opts) {
       stats.resampled + " resampled to power-of-two" +
       (stats.animated ? ", " + stats.animated + " flipbook" : "") +
       (stats.layered ? ", " + stats.layered + " painted second layer" : "") +
+      (stats.composited ? ", " + stats.composited + " composited over a backdrop" : "") +
+      (stats.glowed ? ", " + stats.glowed + " with a glow stage added in" : "") +
       (stats.missing ? ", " + stats.missing + " MISSING -> placeholder: " + missingNames.join(" ") : "") + ")");
   }
   return { textures: out, stats };

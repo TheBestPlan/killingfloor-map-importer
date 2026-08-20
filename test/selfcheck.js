@@ -936,5 +936,111 @@ console.log("\nTactical Ops: UE1 packages, the model, the shadow bits");
   }
 }
 
+// --- what a play-test found: brush entities, shader stages, the lightmap atlas -------------------
+console.log("\nBrush entities that draw nothing, and breakables nothing can shoot");
+{
+  const be = require("../src/build/brushents");
+  ok("a trigger draws nothing", be.invisible({ classname: "trigger_hurt" }) &&
+    be.invisible({ classname: "trigger_teleport" }) && be.invisible({ classname: "func_buyzone" }) &&
+    be.invisible({ classname: "func_ladder" }));
+  ok("...but a wall and an illusionary wall do",
+    !be.invisible({ classname: "func_wall" }) && !be.invisible({ classname: "func_illusionary" }));
+
+  const model = { mins: [0, 0, 0], maxs: [64, 64, 64], numfaces: 6 };
+  const map = {
+    models: [model, model, model],
+    entities: [
+      { classname: "func_breakable", model: "*1", health: "10", material: "4" },
+      { classname: "func_breakable", model: "*2", health: "1", material: "1", spawnflags: "1" },
+    ],
+  };
+  const got = be.collect(map);
+  ok("a func_breakable the player can shoot becomes an actor", got.length === 1 && got[0].mi === 1,
+    got.length + " of 2");
+  ok("...and one flagged SF_BREAK_TRIGGER_ONLY stays world geometry",
+    !got.some((s) => s.mi === 2));
+}
+
+console.log("\nQuake 3 shader stages");
+{
+  const { parseShaders, diffuseStage } = require("../src/quake3/shader");
+  const text = [
+    "textures/a/shiny {",
+    "  { map textures/effects/tinfx.tga  tcGen environment  rgbGen identity }",
+    "  { map textures/a/shiny.tga  blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA }",
+    "  { map $lightmap  blendFunc GL_DST_COLOR GL_ONE_MINUS_DST_ALPHA }",
+    "}",
+    "textures/a/lit {",
+    "  { map $lightmap  rgbgen identity }",
+    "  { map textures/a/lit.tga  blendFunc GL_DST_COLOR GL_SRC_ALPHA  alphaGen lightingSpecular }",
+    "}",
+    "textures/a/bulb {",
+    "  cull disable",
+    "  deformVertexes autoSprite2",
+    "  { map textures/a/bulb.tga  blendFunc Add }",
+    "}",
+    "models/x/energy {",
+    "  { map models/x/energy.tga  blendfunc GL_ONE GL_ONE  tcMod scroll 2.2 1.3 }",
+    "}",
+  ].join("\n");
+  const sh = parseShaders(text);
+  const gamefs = { has: (p) => /\.tga$/.test(p), read: () => Buffer.alloc(0) };
+  const set = { get: (n) => sh.get(String(n).toLowerCase()) || null };
+  Object.setPrototypeOf(set, require("../src/quake3/shader").ShaderSet.prototype);
+  set.shaders = sh;
+
+  const shiny = set.resolve("textures/a/shiny", gamefs);
+  ok("a wall painted over an environment map draws the WALL", shiny.file === "textures/a/shiny.tga",
+    String(shiny.file));
+  ok("...stays opaque, because its first stage is", shiny.kind === "normal", shiny.kind);
+  ok("...and carries what it is painted over, to composite in",
+    shiny.under === "textures/effects/tinfx.tga", String(shiny.under));
+
+  const lit = set.resolve("textures/a/lit", gamefs);
+  ok("GL_DST_COLOR GL_SRC_ALPHA is a filter, not a pane of glass", lit.kind === "normal", lit.kind);
+
+  const bulb = set.resolve("textures/a/bulb", gamefs);
+  ok("deformVertexes autoSprite marks a billboard", bulb.sprite === true && bulb.kind === "additive");
+
+  const energy = set.resolve("models/x/energy", gamefs);
+  ok("tcMod scroll is read, for the TexPanner", !!energy.scroll &&
+    energy.scroll[0] === 2.2 && energy.scroll[1] === 1.3, JSON.stringify(energy.scroll));
+  ok("diffuseStage without a name still takes the first drawing stage",
+    diffuseStage(sh.get("models/x/energy")).map === "models/x/energy.tga");
+}
+
+console.log("\nThe lightmap atlas' mip chain");
+{
+  const { mipChain } = require("../src/unreal/texture");
+  // One 4x4 block of a known colour in the corner of an 8x8 page; the rest is the packer's gap.
+  const w = 8, h = 8;
+  const px = Buffer.alloc(w * h * 4);
+  const cov = new Uint8Array(w * h);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+    const i = y * w + x;
+    px[i * 4] = 200; px[i * 4 + 1] = 200; px[i * 4 + 2] = 200; px[i * 4 + 3] = 255;
+    cov[i] = 1;
+  }
+  const plain = mipChain(px, w, h);
+  const aware = mipChain(px, w, h, cov);
+  // The last level is 1x1: it covers the block AND the three quarters of the page that are gap.
+  const last = (c) => c[c.length - 1].data[0];
+  ok("a black gap drags a block's colour down without the coverage mask",
+    last(plain) < 120, "1x1 level = " + last(plain));
+  ok("...and does not with it", last(aware) === 200, "1x1 level = " + last(aware));
+  ok("the chain still reaches 1x1 either way",
+    plain[plain.length - 1].width === 1 && aware[aware.length - 1].width === 1,
+    plain.length + " levels");
+}
+
+console.log("\nDefaults");
+{
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "convert.js"), "utf8");
+  ok("the GoldSrc route lights a map from its own lightmap unless told otherwise",
+    /includes\(o\.lighting\) \? o\.lighting : "lightmap"/.test(src));
+  const html = fs.readFileSync(path.join(__dirname, "..", "electron", "renderer", "index.html"), "utf8");
+  ok("...and so does the desktop app", /settings\.lighting \|\| "lightmap"/.test(html));
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

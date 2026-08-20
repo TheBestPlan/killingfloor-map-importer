@@ -795,8 +795,15 @@ function convert(opts) {
     const sides = {};
     for (const side of Object.keys(skyCube.faces)) {
       const img = skyCube.faces[side];
+      // UNCOMPRESSED. A rendered sky room is the worst case a block codec can be handed: a smooth
+      // low-contrast gradient, often a night one, where DXT1's two 5:6:5 endpoints per 4x4 block
+      // quantise the whole face into flat squares. Magnified over a 90-degree field of view those
+      // squares are what TO-TerrorMansion's sky reads as (the user's Screenshot_146) - visibly
+      // blockier than the same sky in Tactical Ops. Six 512x512 faces cost ~8 MB uncompressed,
+      // which is the largest single thing on the screen paid for at the going rate;
+      // KF_SKY_SIZE trades resolution back if that matters more.
       sides[side] = addRgbTexture(out, refs, mapName.replace(/[^A-Za-z0-9_]/g, "") + "_sky_" + side,
-        { width: img.width, height: img.height, rgb: img.rgb }, SKY_GAIN);
+        { width: img.width, height: img.height, rgb: img.rgb }, SKY_GAIN, { raw: true });
     }
     const mesh = buildSkyboxMesh(centre, skyR, sides, { grid: 4, mirrorY: false });
     const meshRef = out.addExport({
@@ -993,12 +1000,17 @@ function convert(opts) {
             pr.float("TerminalVelocity", 800);
           }
           pr.int("Priority", 100000);                 // must win over DefaultPhysicsVolume
-          pr.bool("bDistanceFog", true);
-          pr.bool("bNewKFColorCorrection", true);
-          pr.color("KFOverlayColor", [40, 90, 130, 0]);
-          pr.color("DistanceFogColor", [40, 90, 130, 0]);
-          pr.float("DistanceFogStart", 0);
-          pr.float("DistanceFogEnd", 6000);
+          // No screen tint: KF never takes it off again once the pawn leaves the volume. Same
+          // reasoning and the same KF_WATER_TINT escape hatch as the GoldSrc route - see
+          // src/convert.js where the water volumes are written.
+          if (process.env.KF_WATER_TINT) {
+            pr.bool("bDistanceFog", true);
+            pr.bool("bNewKFColorCorrection", true);
+            pr.color("KFOverlayColor", [40, 90, 130, 0]);
+            pr.color("DistanceFogColor", [40, 90, 130, 0]);
+            pr.float("DistanceFogStart", 0);
+            pr.float("DistanceFogEnd", 6000);
+          }
           pr.actorCommon(levelInfoRef, physVolRef, "PhysicsVolume", 1, zoneInfoRef);
           pr.vector("Location", at);
           pr.object("Brush", modelRef);

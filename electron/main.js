@@ -89,7 +89,13 @@ ipcMain.handle("settings:set", (e, s) => { saveSettings(s); return s; });
 ipcMain.handle("pick:bsp", async (e, title) => {
   const r = await dialog.showOpenDialog(win, {
     title: title || "Pick Counter-Strike 1.6 maps",
-    filters: [{ name: "GoldSrc BSP", extensions: ["bsp"] }],
+    // The renderer's addFiles() filters by the chosen game; a broad dialog just lets a Source .bsp or
+    // a glTF/OBJ model be picked here too.
+    filters: [
+      { name: "Maps & models", extensions: ["bsp", "glb", "gltf", "obj"] },
+      { name: "GoldSrc / Source BSP", extensions: ["bsp"] },
+      { name: "3D model", extensions: ["glb", "gltf", "obj"] },
+    ],
     properties: ["openFile", "multiSelections"],
   });
   return r.canceled ? [] : r.filePaths;

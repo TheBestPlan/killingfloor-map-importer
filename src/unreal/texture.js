@@ -218,10 +218,13 @@ function addTexture(pkg, refs, miptex, opts) {
     }
     const blocks = levels.map((m) => {
       const { rgb, alpha } = m;
-      // GoldSrc water is a solid texture that the engine draws with a per-entity alpha
-      // (func_water's renderamt, typically ~100/255). Bake that into the DXT3 alpha block so the
-      // surface reads as water rather than as an opaque blue floor.
-      if (liquid) alpha.fill(150);
+      // GoldSrc water is a solid texture the engine draws through `r_wateralpha`, which ships at 1
+      // - a func_water's own `renderamt` is 255 on every map measured, and the surface is opaque
+      // enough in Counter-Strike that the bottom of the canal does not show through it. 150 was a
+      // guess at "typically ~100/255" and made a pool read as a faint smear over dry stone, which
+      // is the user's "Сравнение воды" pair. Keep a little of it, so a surface seen edge-on still
+      // reads as liquid rather than as a lid; KF_WATER_ALPHA overrides.
+      if (liquid) alpha.fill(Math.max(0, Math.min(255, +process.env.KF_WATER_ALPHA || 230)));
       return { width: m.width, height: m.height, data: dxt.encodeDXT3(rgb, m.width, m.height, alpha) };
     });
     const texRefD = pkg.addExport({
@@ -298,23 +301,39 @@ function addTexture(pkg, refs, miptex, opts) {
 // chain is not optional: every RGBA8 texture in the shipped packages carries one (KF-Crash's are
 // 1024x1024 with 11 levels), and a texture the engine can only sample at level 0 is a texture the
 // render device has to keep whole.
-function mipChain(px, w, h) {
+// `coverage`, when given, is one byte per texel of the base level saying whether that texel carries
+// real data. An ATLAS has gaps - the shelf packer leaves them, and they are black - and a plain box
+// filter mixes that black into every block below it. Measured on gg_33_shudder's lightmap atlas, a
+// face's own colour drifts by 13 of 255 at mip 3 and 22 at mip 4, which on a wall is a rectangle of
+// a visibly different tint per face: the "coloured squares" of the bug report. Averaging only the
+// texels that hold data brings the same numbers to 4 and 9.
+function mipChain(px, w, h, coverage) {
   const out = [{ width: w, height: h, data: px }];
   let cur = out[0];
+  let mask = coverage || null;
   while (cur.width > 1 || cur.height > 1) {
     const nw = Math.max(1, cur.width >> 1), nh = Math.max(1, cur.height >> 1);
     const d = Buffer.alloc(nw * nh * 4);
+    const nm = mask ? new Uint8Array(nw * nh) : null;
     for (let y = 0; y < nh; y++) {
       for (let x = 0; x < nw; x++) {
         const x0 = Math.min(cur.width - 1, x * 2), x1 = Math.min(cur.width - 1, x * 2 + 1);
         const y0 = Math.min(cur.height - 1, y * 2), y1 = Math.min(cur.height - 1, y * 2 + 1);
+        const at = [y0 * cur.width + x0, y0 * cur.width + x1, y1 * cur.width + x0, y1 * cur.width + x1];
+        // Only the covered texels, unless none of the four is - then fall back to all of them so a
+        // gap keeps averaging like any other pixel.
+        const take = mask ? at.filter((i) => mask[i]) : at;
+        const src = take.length ? take : at;
+        if (nm && take.length) nm[y * nw + x] = 1;
         for (let c = 0; c < 4; c++) {
-          d[(y * nw + x) * 4 + c] = (cur.data[(y0 * cur.width + x0) * 4 + c] + cur.data[(y0 * cur.width + x1) * 4 + c] +
-            cur.data[(y1 * cur.width + x0) * 4 + c] + cur.data[(y1 * cur.width + x1) * 4 + c] + 2) >> 2;
+          let s = 0;
+          for (const i of src) s += cur.data[i * 4 + c];
+          d[(y * nw + x) * 4 + c] = Math.round(s / src.length);
         }
       }
     }
     cur = { width: nw, height: nh, data: d };
+    mask = nm;
     out.push(cur);
   }
   return out;
@@ -375,7 +394,7 @@ function addRgbTexture(pkg, refs, name, img, gain, opts) {
         if (opts.anim.maxFrameRate) pr.float("MaxFrameRate", opts.anim.maxFrameRate);
       }
       pr.end();
-      const chain = mipChain(px, img.width, img.height);
+      const chain = mipChain(px, img.width, img.height, opts && opts.coverage);
       w.cidx(chain.length);
       for (const m of chain) {
         // The pixels are BGRA in memory; the block encoder wants tight RGB.
@@ -532,4 +551,4 @@ function addRawTexture(pkg, refs, name, tex, opts) {
   return { texRef, name, width: tex.width, height: tex.height };
 }
 
-module.exports = { addTexture, addRgbTexture, addRawTexture, topAsRgb, sanitizeName, TEXF_P8 };
+module.exports = { addTexture, addRgbTexture, addRawTexture, topAsRgb, sanitizeName, mipChain, TEXF_P8 };

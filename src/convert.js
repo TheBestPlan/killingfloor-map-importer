@@ -212,9 +212,16 @@ function convert(opts) {
   // then add back. A converted map is not playable in this mode.
   if (o.bare) { o.noExtras = true; o.noLight = true; o.noSky = true; o.brushEntities = false; }
 
-  // "ambient": the level lights itself, because nothing else will until somebody builds lighting.
-  // "sunlight": written for that build - a real sun, real lamps, and an ambient that only fills.
-  const lightingMode = ["sunlight", "dynamic", "lightmap"].includes(o.lighting) ? o.lighting : "ambient";
+  // "lightmap" is the DEFAULT, and the only route that reproduces the map: hlrad's own luxels ride
+  // across in the material, so a converted level lands where Counter-Strike had it. Measured on
+  // de_2minaret in the client, same spawn and same view sweep: lightmap 96 mean screen luminance
+  // against 162 for "ambient", and the user's own side-by-side puts Counter-Strike at 130.
+  //
+  // "ambient" - the old default - adds a zone ambient on TOP of the light already baked into the
+  // meshes' vertex colours, so every map came out washed white; it is kept for a map whose lightmap
+  // is missing or unusable. "sunlight" is written for KFEd's Build Lighting; "dynamic" lights the
+  // meshes from the map's own lights at run time.
+  const lightingMode = ["sunlight", "dynamic", "ambient"].includes(o.lighting) ? o.lighting : "lightmap";
   // "dynamic": the meshes are lit at run time by the map's own lights, no editor build involved.
   const dynamicLight = lightingMode === "dynamic";
   // One knob over every light the map places, for tuning a build without reconverting by hand.
@@ -1054,15 +1061,24 @@ function convert(opts) {
           pr.float("TerminalVelocity", 800);        // sinking at 2500 uu/s reads as falling, not swimming
         }
         pr.int("Priority", 100000);                 // must win over DefaultPhysicsVolume
-        // KF tints the screen from the volume the player is standing in, but only when the volume
-        // says it has fog (HUDKillingFloor.Timer). It is what makes water look like water from the
-        // inside - and it doubles as the only way to see from outside whether the volume took.
-        pr.bool("bDistanceFog", true);
-        pr.bool("bNewKFColorCorrection", true);
-        pr.color("KFOverlayColor", [40, 90, 130, 0]);
-        pr.color("DistanceFogColor", [40, 90, 130, 0]);
-        pr.float("DistanceFogStart", 0);
-        pr.float("DistanceFogEnd", 6000);           // ~3000 GoldSrc units: murky, not opaque
+        // NO SCREEN TINT. KF tints the screen from the volume the player stands in, and the tint
+        // never comes off again: HUDKillingFloor.Timer only re-reads the colour when
+        // `PlayerZone.bDistanceFog` is set or when the pawn is in a volume that is not the default
+        // one, and on the way OUT of the pool neither holds - so CurrentVolume stays pointed at the
+        // water, LastRGB stays at the water's colour, and the blue tile is drawn over the rest of
+        // the round. A converted level has no fogged ZoneInfo to fall back to (KF_FOG, off by
+        // default, is what would give it one). Without bDistanceFog here the HUD never picks the
+        // volume up at all, and swimming still works - that is bWaterVolume's job, not the fog's.
+        // KF_WATER_TINT=1 puts the underwater blue back, stuck-on and all, for diagnosing whether a
+        // volume took.
+        if (process.env.KF_WATER_TINT) {
+          pr.bool("bDistanceFog", true);
+          pr.bool("bNewKFColorCorrection", true);
+          pr.color("KFOverlayColor", [40, 90, 130, 0]);
+          pr.color("DistanceFogColor", [40, 90, 130, 0]);
+          pr.float("DistanceFogStart", 0);
+          pr.float("DistanceFogEnd", 6000);         // ~3000 GoldSrc units: murky, not opaque
+        }
         pr.actorCommon(levelInfoRef, physVolRef, "PhysicsVolume", 1, zoneInfoRef);
         pr.vector("Location", centre);
         pr.object("Brush", modelRef);
@@ -1478,7 +1494,15 @@ function convert(opts) {
     if (lightmap) {
       lightmap.pages.forEach((rgb, i) => {
         const t = addRgbTexture(pkg, refs, mapName.replace(/[^A-Za-z0-9_]/g, "") + "_lm" + i,
-          { width: lightmap.size, height: lightmap.size, rgb }, 1);
+          { width: lightmap.size, height: lightmap.size, rgb }, 1,
+          // UNCOMPRESSED, and the packer's gaps kept out of the mip chain. Both are the same
+          // artefact from two directions: a DXT1 block on this atlas is 4 luxels square - 64
+          // GoldSrc units, about four feet of wall - and its two endpoint colours turn a soft
+          // gradient into a patch of its own tint, while the black gaps drag every block toward
+          // black as the mip level rises. Together they are the "coloured squares" the bug report
+          // shows on gg_33_shudder and supercrazycars. The Quake 3 route reached the same
+          // conclusion about its own pages.
+          { raw: true, coverage: lightmap.covers[i] });
         lmPageTex.push(t.texRef);
         lmCoord.push(pkg.addExport({
           classRef: refs.TexCoordSource, name: "LightCoords" + i, flags: refs.flagsGame,
@@ -1569,6 +1593,24 @@ function convert(opts) {
         (litBlend.size ? ", " + litBlend.size + " of them behind a Shader that keeps the blending" : ""));
     }
 
+    // ONE trigger per door, not one per mesh. The mesh builder splits a brush entity by material, so
+    // a door with a frame and a panel arrives as two meshes; both have to move, and both do, because
+    // they share the mover's Tag. The KFUseTrigger must not be split with them: KFDoorMover keeps the
+    // FIRST trigger whose Event matches its Tag and logs "Multiple triggers found!" for the rest,
+    // leaving the player in front of as many use prompts as the door had materials.
+    const doorBox = new Map();
+    for (const m of meshBuild.meshes) {
+      if (m.ent === undefined) continue;
+      const b = doorBox.get(m.ent) ||
+        { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+      for (let k = 0; k < 3; k++) {
+        b.min[k] = Math.min(b.min[k], m.origin[k] + m.bbox.min[k]);
+        b.max[k] = Math.max(b.max[k], m.origin[k] + m.bbox.max[k]);
+      }
+      doorBox.set(m.ent, b);
+    }
+    const doorTriggered = new Set();
+
     meshBuild.meshes.forEach((mesh, i) => {
       const meshRef = pkg.addExport({
         classRef: refs.StaticMesh, name: mapName.replace(/[^A-Za-z0-9_]/g, "") + "_geo" + i,
@@ -1592,8 +1634,11 @@ function convert(opts) {
         // KF doors are opened with the use key and can be welded shut; that behaviour lives in
         // KFDoorMover, and it only wakes up when a KFUseTrigger whose Event matches the mover's Tag
         // is standing next to it (KFDoorMover.PostBeginPlay looks for exactly that).
-        if (isDoor) {
-          const half = [0, 1, 2].map((k) => (mesh.bbox.max[k] - mesh.bbox.min[k]) / 2);
+        if (isDoor && !doorTriggered.has(mesh.ent)) {
+          doorTriggered.add(mesh.ent);
+          const db = doorBox.get(mesh.ent);
+          const half = [0, 1, 2].map((k) => (db.max[k] - db.min[k]) / 2);
+          const centre = [0, 1, 2].map((k) => (db.max[k] + db.min[k]) / 2);
           const reach = Math.max(96, Math.hypot(half[0], half[1]) + 48);
           meshActors.push(pkg.addExport({
             classRef: refs.UseTrigger, name: named("KFUseTrigger"), flags: ACTOR,
@@ -1607,8 +1652,8 @@ function convert(opts) {
               pr.float("MaxWeldStrength", 400);
               pr.bool("bCollideActors", true);
               pr.actorCommon(levelInfoRef, physVolRef, "DoorTrigger" + mesh.ent, 1, zoneInfoRef);
-              pr.vector("ColLocation", mesh.origin);
-              pr.vector("Location", mesh.origin);
+              pr.vector("ColLocation", centre);
+              pr.vector("Location", centre);
               pr.end();
               return w;
             },
@@ -1638,8 +1683,12 @@ function convert(opts) {
               // CS walls carry the health the mapper gave them - gg_33_shudder's are 10, one shot.
               // --health-scale multiplies every one of them, for a map that should not fall apart
               // under Killing Floor's rate of fire.
+              // Never 1. KFGlassMover.PostBeginPlay reads Health == 1 as "starts out broken" and
+              // calls CrackWindow, which paints Skins[0] with ShatteredTexture - a cracked-glass
+              // Shader - over whatever the brush actually was. A GoldSrc `health 1` only means "one
+              // shot takes it", which 2 does here as well.
               const raw = Math.max(1, parseInt(item.e.health, 10) || 50);
-              pr.int("Health", Math.max(1, Math.round(raw * (o.healthScale || 1))));
+              pr.int("Health", Math.max(2, Math.round(raw * (o.healthScale || 1))));
               if (item.kind === "glass") {
                 // CS glass is drawn with renderamt; without this it converts to an opaque slab.
                 pr.byte("Style", 3);                    // STY_Translucent
@@ -1719,7 +1768,12 @@ function convert(opts) {
             // level entirely. What static lighting adds on top is a bake nobody performed - black -
             // and dynamic light lands on the Diffuse.
             if (unlitWorld && !mesh.water) pr.bool("bUnlit", true);
-            if (lmGlow && !unlitWorld && !mesh.water) pr.byte("AmbientGlow", lmGlow);
+            // Water takes the world's share of the light like any other surface. Holding it back was
+            // what made a pool nearly invisible: the surface is drawn at 59% opacity to begin with,
+            // and lit by the zone ambient alone (8 against the world's 8+32) it contributed almost
+            // nothing over the floor underneath - fy_evilpyramid's canal read as dry stone against
+            // Counter-Strike's blue (the user's "Сравнение воды" pair).
+            if (lmGlow && !unlitWorld) pr.byte("AmbientGlow", lmGlow);
             pr.bool("bWorldGeometry", true);
             // Spelled out rather than inherited: the level is nothing but these actors, so if the
             // class defaults ever disagree the whole map becomes a hole the player falls through.

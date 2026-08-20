@@ -10,6 +10,8 @@
 // on 2673 shipped Unreal polygons and 8589 GoldSrc faces — see test/selfcheck.js).
 "use strict";
 
+const brushEnts = require("./brushents");
+
 const PF = {
   Invisible: 0x00000001, Masked: 0x00000002, Translucent: 0x00000004, NotSolid: 0x00000008,
   Semisolid: 0x00000020, Modulated: 0x00000040, FakeBackdrop: 0x00000080, TwoSided: 0x00000100,
@@ -635,12 +637,14 @@ function buildModel(map, opts) {
       for (const ent of map.entities) {
         const mm = /^\*(\d+)$/.exec(ent.model || "");
         if (!mm) continue;
+        // A trigger or a zone is a shape the engine tests against, never a surface it draws.
+        if (brushEnts.invisible(ent)) continue;
         const sm = map.models[+mm[1]];
         if (!sm || sm.numfaces <= 0) continue;
         const org = ent.origin ? ent.origin.trim().split(/\s+/).map(Number) : [0, 0, 0];
         jobs.push({
           model: sm, offset: [org[0] || 0, org[1] || 0, org[2] || 0],
-          nonSolid: /illusionary|trigger|ladder|buyzone|bomb_target|hostage_rescue/.test(ent.classname || ""),
+          nonSolid: /illusionary/.test(ent.classname || ""),
           world: false, mat: opts.materialOf ? opts.materialOf(ent) : null,
         });
       }

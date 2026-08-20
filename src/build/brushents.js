@@ -17,6 +17,25 @@ function isGlass(e) {
   return /glass|window/i.test(e.texture || "") && m === -1;
 }
 
+// Brush entities GoldSrc never DRAWS. Their model is a volume - a shape the engine tests against -
+// and it renders nothing at all, whatever texture the mapper happened to leave on the brush. Carried
+// across as geometry they are the white slabs standing across bside_paintball's walkways
+// (trigger_hurt, trigger_teleport, trigger_push) and the buy-zone boxes in the middle of
+// fy_dinoiceworld, which cannot be deleted in the editor without tearing the map around them.
+//
+// func_illusionary is NOT one of these: it draws, it just does not block.
+function invisible(e) {
+  const c = (e.classname || "").toLowerCase();
+  return /^trigger_/.test(c) ||
+    /^func_(buyzone|ladder|bomb_target|hostage_rescue|escapezone|vip_safetyzone|friction|vehiclecontrols)$/.test(c);
+}
+
+// SF_BREAK_TRIGGER_ONLY (func_break.cpp): the brush cannot be shot at all, only a trigger takes it
+// out. de_2minaret's minaret and its crate pile are both of these - they go with the bomb - and
+// converting them to a shootable actor is a piece of the map the player can delete by looking at it.
+// Nothing in Killing Floor fires their trigger, so they stay world geometry.
+const triggerOnly = (e) => ((parseInt(e.spawnflags, 10) || 0) & 1) !== 0;
+
 // func_door's `angle` is the direction it slides: -1 up, -2 down, anything else a yaw in degrees.
 function slideDir(e) {
   const a = parseFloat(e.angle === undefined ? "0" : e.angle);
@@ -45,7 +64,7 @@ function collect(map) {
     const model = map.models[+mm[1]];
     if (!model || model.numfaces <= 0) return;
     if (e.classname === "func_door" || e.classname === "func_door_rotating") out.push({ kind: "door", e, model, mi: +mm[1] });
-    else if (e.classname === "func_breakable") out.push({ kind: isGlass(e) ? "glass" : "breakable", e, model, mi: +mm[1] });
+    else if (e.classname === "func_breakable" && !triggerOnly(e)) out.push({ kind: isGlass(e) ? "glass" : "breakable", e, model, mi: +mm[1] });
   });
   return out;
 }
@@ -77,4 +96,4 @@ function doorMotion(item, scale) {
   };
 }
 
-module.exports = { collect, doorMotion, isGlass, slideDir, slideDistance };
+module.exports = { collect, doorMotion, isGlass, slideDir, slideDistance, triggerOnly, invisible };

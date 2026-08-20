@@ -79,11 +79,13 @@
         <option value="q3" data-i18n="opt.gameQ3">Quake III Arena / Team Arena — client maps</option>
         <option value="l2" data-i18n="opt.gameL2">Lineage 2 — client world squares</option>
         <option value="to" data-i18n="opt.gameTO">Tactical Ops: Assault on Terror — client maps</option>
+        <option value="source" data-i18n="opt.gameSource">Source engine — CS:Source / CS:GO / Garry's Mod / L4D2 .bsp</option>
+        <option value="model" data-i18n="opt.gameModel">3D model — glTF / GLB / OBJ file</option>
       </select>
     </fieldset>
 
     <!-- Counter-Strike: a queue of files dropped or browsed for. -->
-    <div data-game="cs">
+    <div data-game="cs source model">
       <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
       <ul class="files" id="files"></ul>
     </div>
@@ -208,10 +210,10 @@
       <div class="hint" data-i18n="hint.lms">32 lines the luxels up 1:1 with GoldSrc at scale 2.</div>
       <label data-i18n="label.lighting">Lighting</label>
       <select id="lighting">
+        <option value="lightmap" data-i18n="opt.lightLm">Lightmap — the original baked light, as it was</option>
         <option value="ambient" data-i18n="opt.lightAmbient">Zone ambient — plays as converted</option>
         <option value="sunlight" data-i18n="opt.lightSun">Sunlight — needs Build Lighting in KFEd</option>
         <option value="dynamic" data-i18n="opt.lightDyn">Dynamic — the map's own lights, live</option>
-        <option value="lightmap" data-i18n="opt.lightLm">Lightmap — the original baked light, as it was</option>
       </select>
       <div class="hint" data-i18n="hint.lighting">Sunlight puts a real sun in the level and leaves the light to the editor: closer to the original, but dark until the map is built.</div>
       <label data-i18n="label.lightScale">Light brightness multiplier</label>
@@ -285,14 +287,14 @@ const renderTOMaps = () => renderPicks("tomaps", tomaps, "to");
 // Only the blocks belonging to the chosen game stay in the window.
 function applyGame() {
   const g = game();
-  document.querySelectorAll("[data-game]").forEach((n) => { n.style.display = n.dataset.game === g ? "" : "none"; });
+  document.querySelectorAll("[data-game]").forEach((n) => { n.style.display = n.dataset.game.split(" ").includes(g) ? "" : "none"; });
   // The header and the greeting name the game as well - a window that says "GoldSrc BSP" while it
   // is reading a Lineage 2 client is a window telling the user something false.
-  I18N.setText("sub", g === "l2" ? "head.subL2" : g === "q3" ? "head.subQ3" : g === "to" ? "head.subTO" : "head.subCs");
+  I18N.setText("sub", g === "l2" ? "head.subL2" : g === "q3" ? "head.subQ3" : g === "to" ? "head.subTO" : g === "source" ? "head.subSource" : g === "model" ? "head.subModel" : "head.subCs");
   // The greeting carries markup, so it goes through data-i18n-html rather than setText.
   const intro = $("intro");
   if (intro) {
-    intro.dataset.i18nHtml = g === "l2" ? "log.introL2" : g === "q3" ? "log.introQ3" : g === "to" ? "log.introTO" : "log.intro";
+    intro.dataset.i18nHtml = g === "l2" ? "log.introL2" : g === "q3" ? "log.introQ3" : g === "to" ? "log.introTO" : g === "source" ? "log.introSource" : g === "model" ? "log.introModel" : "log.intro";
     intro.innerHTML = t(intro.dataset.i18nHtml);
   }
   renderFiles();
@@ -397,7 +399,7 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("scale").value = settings.scale;
   $("lms").value = settings.lightMapScale;
   $("health").value = settings.healthScale === undefined ? 1 : settings.healthScale;
-  $("lighting").value = settings.lighting || "ambient";
+  $("lighting").value = settings.lighting || "lightmap";
   $("lightScale").value = settings.lightScale === undefined ? 1 : settings.lightScale;
   $("ase").checked = !!settings.emitAse;
   $("spawns").checked = settings.emitPlayerStarts !== false;
@@ -442,8 +444,10 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
 })();
 
 function addFiles(paths) {
+  // The model route takes glTF/GLB/OBJ; every other file-based game takes a .bsp.
+  const accept = game() === "model" ? /\.(glb|gltf|obj)$/i : /\.bsp$/i;
   for (const p of paths) {
-    if (!/\.bsp$/i.test(p)) continue;
+    if (!accept.test(p)) continue;
     if (files.some((f) => f.path === p)) continue;
     files.push({ path: p, name: p.split(/[\\/]/).pop(), stateKey: "state.queued" });
   }
@@ -512,6 +516,10 @@ $("go").onclick = async () => {
         l2Scale: settings.l2Scale, grass: settings.l2Grass !== false, blend: settings.l2Blend !== false,
         carve: settings.l2Carve === true,
       }
+      : game() === "source"
+      ? { game: "source", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      : game() === "model"
+      ? { game: "model", file: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
       : {
         bspFile: f.path,
         outDir: settings.outDir || null, csDir: settings.csDir || null,
@@ -540,6 +548,11 @@ $("go").onclick = async () => {
         ? t("log.q3Done", {
           name: res.mapName, size: (res.size / 1048576).toFixed(2),
           triangles: res.quake3.triangles, meshes: res.quake3.meshes, pages: res.quake3.pages,
+        })
+        : res.mesh
+        ? t("log.meshDone", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          triangles: res.mesh.triangles || 0, meshes: res.mesh.meshes || 0, lights: res.mesh.lights || 0,
         })
         : t("log.mapDone", {
           name: res.mapName, size: (res.size / 1048576).toFixed(2), surfs: res.surfs,

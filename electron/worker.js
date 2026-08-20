@@ -83,7 +83,39 @@ function convertTO(job, log) {
   });
 }
 
-const GAME_CONVERTERS = { l2: convertL2, q3: convertQ3, to: convertTO };
+// Source engine BSP (CS:Source / CS:GO, Half-Life 2, Garry's Mod, Left 4 Dead 1 & 2): a loose .bsp.
+function convertSource(job, log) {
+  const src = require("../src/source/convert");
+  const res = src.convert({
+    file: job.bspFile, mapName: job.name || null, outDir: job.outDir || null,
+    scale: job.sourceScale, emitPlayerStarts: job.emitPlayerStarts !== false, log,
+  });
+  const v = verify(res.out);
+  for (const line of v.report.split("\n")) log(line);
+  process.send({
+    kind: "done", ok: v.ok, out: res.out, mapName: res.mapName, size: fs.statSync(res.out).size,
+    nodes: 0, surfs: 0, lightMaps: 0, atlases: 0, textures: 0, missingTextures: 0,
+    mesh: { triangles: res.stats ? res.stats.tris || res.stats.triangles : 0, meshes: res.meshes },
+  });
+}
+
+// 3D model: a scene exported to glTF/GLB/OBJ (Sketchfab, CGTrader, a Blender .blend, a decompiled map).
+function convertModel(job, log) {
+  const g = require("../src/gltf/convert");
+  const res = g.convert({
+    file: job.file, mapName: job.name || null, outDir: job.outDir || null,
+    scale: job.modelScale, emitPlayerStarts: job.emitPlayerStarts !== false, log,
+  });
+  const v = verify(res.out);
+  for (const line of v.report.split("\n")) log(line);
+  process.send({
+    kind: "done", ok: v.ok, out: res.out, mapName: res.mapName, size: fs.statSync(res.out).size,
+    nodes: 0, surfs: 0, lightMaps: 0, atlases: 0, textures: 0, missingTextures: 0,
+    mesh: { triangles: res.stats ? res.stats.triangles : 0, meshes: res.meshes, lights: res.lights },
+  });
+}
+
+const GAME_CONVERTERS = { l2: convertL2, q3: convertQ3, to: convertTO, source: convertSource, model: convertModel };
 
 process.on("message", (job) => {
   const log = (t) => process.send({ kind: "log", text: t });

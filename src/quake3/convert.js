@@ -179,6 +179,13 @@ function convert(opts) {
     ZoneInfo: pkg.importClass("Engine", "ZoneInfo"),
     DoorMover: pkg.importClass("KFMod", "KFDoorMover"),
     UseTrigger: pkg.importClass("KFMod", "KFUseTrigger"),
+    // The plain sprite billboard - DT_Sprite, unlit, no collision - which is what a
+    // `deformVertexes autoSprite` quad is in Quake 3.
+    Effects: pkg.importClass("Engine", "Effects"),
+    // UV animation. `tcMod scroll` is a TexPanner and `tcMod rotate` a TexRotator; both are
+    // Modifiers, so they wrap the texture and everything above them is unchanged.
+    TexPanner: pkg.importClass("Engine", "TexPanner"),
+    TexRotator: pkg.importClass("Engine", "TexRotator"),
     flagsGame: RF.Public | RF.Standalone | RF.LoadForClient | RF.LoadForServer | RF.LoadForEdit,
   };
   const ACTOR = RF.GAME | RF.HasStack;
@@ -528,6 +535,62 @@ function convert(opts) {
       " x" + gain.toFixed(2) + " + " + floor);
   }
 
+  // --- UV animation ------------------------------------------------------------------------------
+  // A Quake 3 shader animates its surface by moving the texture coordinates, and two of the ways it
+  // does that have an exact equivalent here: `tcMod scroll u v` is Engine.TexPanner and
+  // `tcMod rotate deg` is Engine.TexRotator set to TR_ConstantlyRotating. The flipbooks (animMap)
+  // already come across as an AnimNext chain; this is what was left standing still - the
+  // teleporters' energy sheets, the portal rings, the scrolling light beams.
+  //
+  // A Modifier wraps the TEXTURE, under the Combiner and under the Shader, so the lightmap the
+  // Combiner reads through UV channel 1 is not dragged along with it.
+  const panners = new Map();
+  const pannedMaterial = (rec, texRef) => {
+    const key = texRef + "|" + (rec.scroll ? rec.scroll.join(",") : "") + "|" + rec.rotate;
+    if (panners.has(key)) return panners.get(key);
+    let ref = texRef;
+    if (rec.scroll && (rec.scroll[0] || rec.scroll[1])) {
+      const [u, v] = rec.scroll;
+      const inner = ref;
+      ref = pkg.addExport({
+        classRef: refs.TexPanner, name: "Pan" + panners.size, flags: refs.flagsGame,
+        serialize: (p) => {
+          const w = new Writer(96);
+          const pr = p.props(w);
+          pr.object("Material", inner);
+          // Yaw 0 pans along +U; the rate is the length of the Quake 3 vector, in texture widths
+          // per second, which is the unit TexPanner uses too.
+          pr.rotator("PanDirection", [0, Math.round((Math.atan2(v, u) / (2 * Math.PI)) * 65536) & 0xffff, 0]);
+          pr.float("PanRate", Math.hypot(u, v));
+          pr.end();
+          return w;
+        },
+      });
+    }
+    if (rec.rotate) {
+      const inner = ref;
+      const deg = rec.rotate;
+      ref = pkg.addExport({
+        classRef: refs.TexRotator, name: "Spin" + panners.size, flags: refs.flagsGame,
+        serialize: (p) => {
+          const w = new Writer(96);
+          const pr = p.props(w);
+          pr.object("Material", inner);
+          pr.byte("TexRotationType", 1);              // TR_ConstantlyRotating
+          // Yaw: FRotationMatrix turns about Z, and the UVs arrive as (U, V, 0).
+          pr.rotator("Rotation", [0, Math.round((deg / 360) * 65536) | 0, 0]);
+          // About the middle of the texture, not its corner.
+          pr.float("UOffset", (rec.width || 0) / 2);
+          pr.float("VOffset", (rec.height || 0) / 2);
+          pr.end();
+          return w;
+        },
+      });
+    }
+    panners.set(key, ref);
+    return ref;
+  };
+
   const combiners = new Map();
   const litMaterial = (texRef, page) => {
     const key = texRef + "@" + page;
@@ -650,6 +713,25 @@ function convert(opts) {
   const byRef = new Map();
   for (const [, rec] of textures) if (rec && rec.ref) byRef.set(rec.ref, rec);
 
+  // ONE trigger per door, not one per mesh. The mesh builder splits a brush entity by material and
+  // by lightmap page, so a Team Arena door arrives as three meshes - each of which has to move, and
+  // does, because they share the mover's Tag. The KFUseTrigger must not be split with them:
+  // KFDoorMover.PostBeginPlay takes the FIRST trigger whose Event matches its Tag and logs
+  // "Multiple triggers found!" for the rest, and the player is left standing in front of six use
+  // prompts. Size and place the single trigger from the whole entity's box.
+  const doorBox = new Map();
+  for (const m of meshBuild.meshes) {
+    if (m.ent === undefined) continue;
+    const b = doorBox.get(m.ent) ||
+      { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+    for (let k = 0; k < 3; k++) {
+      b.min[k] = Math.min(b.min[k], m.origin[k] + m.bbox.min[k]);
+      b.max[k] = Math.max(b.max[k], m.origin[k] + m.bbox.max[k]);
+    }
+    doorBox.set(m.ent, b);
+  }
+  const doorTriggered = new Set();
+
   meshBuild.meshes.forEach((mesh, i) => {
     const rec = byRef.get(mesh.materials[0]);
     const lit = mesh.lightPage !== undefined && lmCoord.has(mesh.lightPage);
@@ -658,6 +740,8 @@ function convert(opts) {
       // The painted second layer of a terrain shader: its own texture, blended by the vertex alpha.
       mat = overlayMaterial(mat);
     } else {
+      // The UV animation goes on the texture itself, under everything else.
+      if (rec && (rec.scroll || rec.rotate)) mat = pannedMaterial(rec, mat);
       if (lit) mat = litMaterial(mat, mesh.lightPage);
       if (rec && (rec.kind === "masked" || rec.kind === "translucent" || rec.kind === "additive" || rec.liquid)) {
         mat = blendedMaterial(rec, mat);
@@ -681,27 +765,32 @@ function convert(opts) {
       const item = doors[mesh.ent];
       const motion = brushEnts.doorMotion(item, scale);
       const doorTag = "Q3Door" + mesh.ent;
-      const hb = [0, 1, 2].map((k) => (mesh.bbox.max[k] - mesh.bbox.min[k]) / 2);
       // A KFDoorMover only wakes up when a KFUseTrigger whose Event matches its Tag stands next to
-      // it (KFDoorMover.PostBeginPlay looks for exactly that).
-      meshActors.push(pkg.addExport({
-        classRef: refs.UseTrigger, name: named("KFUseTrigger"), flags: ACTOR,
-        serialize: (p) => {
-          const w = new Writer(256);
-          writeStateFrame(w, refs.UseTrigger);
-          const pr = p.props(w);
-          pr.nameProp("Event", doorTag);
-          pr.float("CollisionRadius", Math.max(96, Math.hypot(hb[0], hb[1]) + 48));
-          pr.float("CollisionHeight", Math.max(64, hb[2] + 24));
-          pr.float("MaxWeldStrength", 400);
-          pr.bool("bCollideActors", true);
-          pr.actorCommon(levelInfoRef, physVolRef, "DoorTrigger" + mesh.ent, 1, zoneInfoRef);
-          pr.vector("ColLocation", mesh.origin);
-          pr.vector("Location", mesh.origin);
-          pr.end();
-          return w;
-        },
-      }));
+      // it (KFDoorMover.PostBeginPlay looks for exactly that) - and one is all it may find.
+      if (!doorTriggered.has(mesh.ent)) {
+        doorTriggered.add(mesh.ent);
+        const db = doorBox.get(mesh.ent);
+        const hb = [0, 1, 2].map((k) => (db.max[k] - db.min[k]) / 2);
+        const at = [0, 1, 2].map((k) => (db.max[k] + db.min[k]) / 2);
+        meshActors.push(pkg.addExport({
+          classRef: refs.UseTrigger, name: named("KFUseTrigger"), flags: ACTOR,
+          serialize: (p) => {
+            const w = new Writer(256);
+            writeStateFrame(w, refs.UseTrigger);
+            const pr = p.props(w);
+            pr.nameProp("Event", doorTag);
+            pr.float("CollisionRadius", Math.max(96, Math.hypot(hb[0], hb[1]) + 48));
+            pr.float("CollisionHeight", Math.max(64, hb[2] + 24));
+            pr.float("MaxWeldStrength", 400);
+            pr.bool("bCollideActors", true);
+            pr.actorCommon(levelInfoRef, physVolRef, "DoorTrigger" + mesh.ent, 1, zoneInfoRef);
+            pr.vector("ColLocation", at);
+            pr.vector("Location", at);
+            pr.end();
+            return w;
+          },
+        }));
+      }
       meshActors.push(pkg.addExport({
         classRef: refs.DoorMover, name: named("KFDoorMover"), flags: ACTOR,
         serialize: (p) => {
@@ -757,8 +846,10 @@ function convert(opts) {
         pr.bool("bWorldGeometry", true);
         // Water is drawn but never blocks: in Quake 3 you swim through it, and a water mesh with
         // collision would be an invisible wall across the pool. A terrain overlay is the same
-        // triangles as the surface underneath it, so it collides with nothing either.
-        const solid = !mesh.liquid && !mesh.overlay;
+        // triangles as the surface underneath it, so it collides with nothing either. And a surface
+        // whose brush has no CONTENTS_SOLID - a lamp's light beam, a flame sheet, a `nonsolid` grate
+        // - is walked through in Quake 3 and must be here too (texture.js).
+        const solid = !mesh.liquid && !mesh.overlay && !mesh.nonsolid;
         pr.bool("bCollideActors", solid);
         pr.bool("bBlockActors", solid);
         pr.bool("bBlockPlayers", solid);
@@ -776,6 +867,39 @@ function convert(opts) {
   });
   if (Number.isFinite(lowest)) holder.killZ = lowest - 2000;
   if (doors.length) log("doors: " + doors.length + " func_door as KFDoorMover + KFUseTrigger (use key, weldable)");
+
+  // --- billboards ---------------------------------------------------------------------------------
+  // The quads a shader declares `deformVertexes autoSprite` face the camera in Quake 3; as fixed
+  // geometry they are the flat plates that hang beside every lamp. Engine.Effects is the same thing
+  // here - DT_Sprite, unlit, no collision, no script - so each becomes one, at the quad's centre and
+  // at the size the quad had. The texture goes on raw: Style is a property of the ACTOR, and a
+  // Combiner or a Shader around it would be a material the sprite draw path never reads.
+  for (const sp of meshBuild.sprites || []) {
+    const w = sp.width || 64;
+    meshActors.push(pkg.addExport({
+      classRef: refs.Effects, name: named("Effects"), flags: ACTOR,
+      serialize: (p) => {
+        const wr = new Writer(256);
+        writeStateFrame(wr, refs.Effects);
+        const pr = p.props(wr);
+        pr.object("Texture", sp.texRef);
+        pr.byte("Style", sp.kind === "additive" ? 6 : 5);   // STY_Additive / STY_Alpha
+        pr.float("DrawScale", sp.size / w);
+        pr.bool("bUnlit", true);
+        pr.bool("bStatic", true);
+        pr.bool("bCollideActors", false);
+        pr.bool("bBlockActors", false);
+        pr.bool("bBlockKarma", false);
+        pr.actorCommon(levelInfoRef, physVolRef, "Effects", 1, zoneInfoRef);
+        pr.vector("Location", sp.at);
+        pr.end();
+        return wr;
+      },
+    }));
+  }
+  if (meshBuild.stats.sprites) {
+    log("billboards: " + meshBuild.stats.sprites + " autoSprite quad(s) as Engine.Effects sprites");
+  }
 
   // --- the skybox cube ----------------------------------------------------------------------------
   if (hasSkybox) {
@@ -877,13 +1001,18 @@ function convert(opts) {
             pr.float("TerminalVelocity", 800);
           }
           pr.int("Priority", 100000);                 // must win over DefaultPhysicsVolume
-          pr.bool("bDistanceFog", true);
-          pr.bool("bNewKFColorCorrection", true);
-          const tint = lava ? [150, 60, 20, 0] : [40, 90, 130, 0];
-          pr.color("KFOverlayColor", tint);
-          pr.color("DistanceFogColor", tint);
-          pr.float("DistanceFogStart", 0);
-          pr.float("DistanceFogEnd", 6000);
+          // No screen tint: KF never takes it off again once the pawn leaves the volume. Same
+          // reasoning and the same KF_WATER_TINT escape hatch as the GoldSrc route - see
+          // src/convert.js where the water volumes are written.
+          if (process.env.KF_WATER_TINT) {
+            pr.bool("bDistanceFog", true);
+            pr.bool("bNewKFColorCorrection", true);
+            const tint = lava ? [150, 60, 20, 0] : [40, 90, 130, 0];
+            pr.color("KFOverlayColor", tint);
+            pr.color("DistanceFogColor", tint);
+            pr.float("DistanceFogStart", 0);
+            pr.float("DistanceFogEnd", 6000);
+          }
           pr.actorCommon(levelInfoRef, physVolRef, "PhysicsVolume", 1, zoneInfoRef);
           pr.vector("Location", at);
           pr.object("Brush", modelRef);

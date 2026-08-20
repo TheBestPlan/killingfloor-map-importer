@@ -73,8 +73,12 @@ function buildMeshes(bsp, opts) {
     });
   }
 
-  const stats = { faces: 0, skipped: 0, billboards: 0, patches: 0, triangles: 0, flat3: 0, sky: 0, liquid: 0, reoriented: 0, layers: 0 };
+  const stats = { faces: 0, skipped: 0, billboards: 0, patches: 0, triangles: 0, flat3: 0, sky: 0, liquid: 0, reoriented: 0, layers: 0, sprites: 0 };
   const surfaces = [];
+  // Quads the shader declares `deformVertexes autoSprite`: the lamp coronas and the glow bulbs. The
+  // caller turns each into a billboard actor; left in the mesh they are the flat white plates that
+  // hang beside every lamp in a converted Team Arena map.
+  const sprites = [];
   for (const job of jobs) {
     for (let fi = job.model.face; fi < job.model.face + job.model.nFaces; fi++) {
       const face = bsp.faces[fi];
@@ -90,6 +94,24 @@ function buildMeshes(bsp, opts) {
       if (!s || s.verts.length < 3 || s.indices.length < 3) { stats.skipped++; continue; }
       if (face.type === FACE.PATCH) stats.patches++;
       if (tex.liquid) stats.liquid++;
+
+      // A billboard's quad is only a placeholder for where the sprite hangs and how big it is.
+      // Only a roughly square one: `autoSprite2` also carries the long thin quads of a wire or a
+      // hanging chain, which spin about their own axis and are not billboards in any useful sense.
+      if (tex.sprite) {
+        const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+        for (const v of s.verts) for (let k = 0; k < 3; k++) { if (v.pos[k] < lo[k]) lo[k] = v.pos[k]; if (v.pos[k] > hi[k]) hi[k] = v.pos[k]; }
+        const ext = [0, 1, 2].map((k) => hi[k] - lo[k]).sort((a, b) => b - a);
+        if (ext[0] > 0 && ext[1] > 0 && ext[0] / ext[1] <= 2.5) {
+          sprites.push({
+            at: [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2),
+            size: ext[0], matRef: tex.ref, texRef: tex.texRef || tex.ref,
+            width: tex.width || 0, kind: tex.kind,
+          });
+          stats.sprites++;
+          continue;
+        }
+      }
 
       // Reversed winding: Quake -> Unreal mirrors Y, and a mirror flips triangle orientation as the
       // rasteriser sees it, so the original order presents every face back-first and back-face
@@ -131,7 +153,7 @@ function buildMeshes(bsp, opts) {
       const mid = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2);
       surfaces.push({
         verts: s.verts, tris, matRef: tex.ref, page: face.lmIndex >= 0 ? face.lmIndex : -1,
-        liquid: !!tex.liquid, ent: job.ent, kind: tex.kind, mid,
+        liquid: !!tex.liquid, ent: job.ent, kind: tex.kind, mid, nonsolid: !!tex.nonsolid,
       });
 
       // A terrain surface is drawn TWICE: the base rock, then the second rock over it, blended by
@@ -162,7 +184,9 @@ function buildMeshes(bsp, opts) {
   for (const s of surfaces) {
     // A door has to stay one mesh: chunking it by the grid would give it halves that open apart.
     const cell = s.ent !== undefined ? "E" + s.ent : (s.liquid ? "W|" : s.overlay ? "L|" : "") + cellOf(s);
-    const key = cell + "|" + s.matRef + "@" + s.page;
+    // Collision is an actor flag, so a mesh has to be all-solid or all-passable: two shaders that
+    // resolved to the same image share a material reference and would otherwise land in one mesh.
+    const key = cell + "|" + s.matRef + "@" + s.page + (s.nonsolid ? "|p" : "");
     let list = byCell.get(key);
     if (!list) { list = []; byCell.set(key, list); }
     list.push(s);
@@ -178,6 +202,7 @@ function buildMeshes(bsp, opts) {
       cur = {
         materials: [list[0].matRef], vertices: [], uvs: [], uvs2: [], colors: [], indices: [], sections: [],
         liquid: list[0].liquid, kind: list[0].kind, overlay: !!list[0].overlay,
+        nonsolid: !!list[0].nonsolid,
       };
       if (list[0].page >= 0) cur.lightPage = list[0].page;
       if (list[0].ent !== undefined) cur.ent = list[0].ent;
@@ -240,7 +265,7 @@ function buildMeshes(bsp, opts) {
     m.radius = Math.hypot(m.bbox.max[0], m.bbox.max[1], m.bbox.max[2]);
   }
 
-  return { meshes: meshes.filter((m) => m.vertices.length >= 3 && m.indices.length >= 3), stats };
+  return { meshes: meshes.filter((m) => m.vertices.length >= 3 && m.indices.length >= 3), sprites, stats };
 }
 
 module.exports = { buildMeshes, MAX_TRIS };

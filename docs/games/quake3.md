@@ -332,3 +332,66 @@ mpterra2 9079 faces ->  42449 tris in 1415 meshes  71 lm pages  17.6 MB
 
 59 maps of both games convert, pass all 28 invariants of the finished `.rom`, and reach a live
 first-person view in the client with no `Critical:` line in `KillingFloor.log`.
+
+## What a second play-test turned up
+
+### Q3.10 A blendFunc is two FACTORS, not a pair to pattern-match
+`result = src*SRC + dst*DST`, and the only thing a converter needs from it is "does this pass let
+the background through". Matching the pairs id happens to write missed five of them, and one of the
+five was 42 of q3dm7's wall faces: `blendFunc GL_DST_COLOR GL_SRC_ALPHA` (208 stages across baseq3
+and Team Arena) is a specular-lit wall - the texture MULTIPLIES the lightmap already on the screen
+and adds a little shine - and falling through to "blend" made `gothic_wall/iron01_m` a pane of glass
+you could see the next room through.
+
+The rule that holds: a source factor taken from the DESTINATION (`GL_DST_COLOR`,
+`GL_ONE_MINUS_DST_COLOR`, `GL_ZERO`) can only scale what is already in the buffer, so it is a filter
+- opaque - unless the destination factor is `GL_ONE`, which brightens. `GL_SRC_ALPHA` with
+`GL_ONE_MINUS_SRC_ALPHA` (and its two mirrors) is the only real alpha blend. Everything left over
+adds.
+
+### Q3.11 A shader is named after the picture it draws, and the stages before it are the BACKDROP
+"The first opaque stage" is the wrong answer whenever a shader paints its own texture over
+something: `base_trim/pewter_shiney` blends its metal over an environment map, and
+`base_floor/metalbridge04dbroke` blends a broken plate over a scrolling electric one - that plate's
+alpha IS the hole in the floor. Taking the first stage drew `effects/tinfx` on every pewter rail in
+the game and left the hole flat black; 5455 of baseq3's 147056 faces and 20357 of Team Arena's
+317596 (15.5% of q3tourney4 alone) were on the wrong stage.
+
+So: the stage whose image basename matches the shader name wins, the FIRST drawing stage decides
+whether the surface is see-through, and what the drawn stage blends over is composited underneath it
+at load. One material per surface is all UE2.5 draws, and the composite is what makes the hole a
+hole again.
+
+### Q3.12 `deformVertexes autoSprite` is a billboard, not a wall
+25 shaders in baseq3 and 66 in Team Arena, and every lamp corona and glow bulb in the game is one:
+`proto2/lightbulb`, `mapobjects/gratelamp/gratelamp_flare`, `mapobjects/slamp/slamp3`. Left as the
+quad the file holds, each is a flat plate hanging in the air beside its lamp - 220 of them on
+mpteam2. They become `Engine.Effects` sprites instead, at the quad's centre and size.
+
+Only the roughly square ones: `autoSprite2` also carries the long thin quads of a wire or a hanging
+chain, which spin about their own axis and are not billboards in any useful sense.
+
+### Q3.13 Collision is a property of the BRUSH, and clip brushes do not survive
+`CM_LoadMap` gives a brush the contents of its shader and a trace only hits what carries
+`CONTENTS_SOLID`, so a light beam, a flame sheet and a `nonsolid` grate are walked through in Quake 3
+- while this converter takes its collision from the mesh triangles. Every lamp's beam on mpteam2 was
+a wall to bump into.
+
+Deliberately narrower than "no CONTENTS_SOLID": Quake 3 also blocks with invisible `common/clip`
+brushes, which q3map emits no drawsurface for and this converter therefore cannot carry, so a fence
+whose own brush is not solid would become a hole in the level. Only `SURF_NONSOLID`, and a
+see-through surface whose brush is not solid either, are opened up.
+
+### Q3.14 `tcMod scroll` and `tcMod rotate` have exact equivalents here
+`Engine.TexPanner` (PanDirection + PanRate, in texture widths per second) and `Engine.TexRotator`
+(`TR_ConstantlyRotating`, Rotation.Yaw). 4066 faces in baseq3 and 9001 in Team Arena are animated
+this way - the slime, the water, the light beams, the portal rings and the teleporters' energy
+sheets, which stood still while the animMap flipbooks moved. The Modifier wraps the TEXTURE, under
+the Combiner, so the lightmap the Combiner reads through UV channel 1 is not dragged along with it.
+
+### Q3.15 One trigger per door, not one per mesh
+The mesh builder splits a brush entity by material and by lightmap page, so a door arrives as several
+meshes. Each has to move, and each does - they share the mover's Tag. The `KFUseTrigger` must not be
+split with them: `KFDoorMover.PostBeginPlay` keeps the FIRST trigger whose `Event` matches its Tag,
+warns "Multiple triggers found!" for the rest, and the player is left in front of as many use prompts
+as the door had materials. q3dm12: 88 movers, 34 triggers.

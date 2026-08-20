@@ -11,6 +11,8 @@
 // KFEd CRASHES on importing a static mesh with more than 20000 polygons (reported by a mapper who
 // hit it, and the reason big maps have to be emitted in pieces). 19000 leaves headroom; the 16-bit
 // IndexStream would allow 21845, so this limit - not the format - is what governs.
+const brushEnts = require("./brushents");
+
 const MAX_TRIS = 19000;
 const MAX_VERTS = MAX_TRIS * 3;
 const MAX_EDGE = 96;              // Unreal units; ~3 luxels at scale 2
@@ -111,9 +113,13 @@ function buildMeshes(map, opts) {
   // break, so their faces must not be merged into the world's chunks. opts.separate maps a model
   // index to a tag; every triangle from that model carries the tag and ends up in its own mesh.
   const separate = opts.separate || new Map();
+  let invisibleEnts = 0;
   for (const ent of map.entities) {
     const mm = /^\*(\d+)$/.exec(ent.model || "");
     if (!mm) continue;
+    // A trigger or a zone draws nothing in GoldSrc; here it would be a slab of geometry standing in
+    // the middle of the level (build/brushents.js).
+    if (brushEnts.invisible(ent)) { invisibleEnts++; continue; }
     const sm = map.models[+mm[1]];
     if (!sm || sm.numfaces <= 0) continue;
     const org = ent.origin ? ent.origin.trim().split(/\s+/).map(Number) : [0, 0, 0];
@@ -132,7 +138,7 @@ function buildMeshes(map, opts) {
 
   // 256-bin histogram of luxel brightness, so a percentile can be taken later without keeping
   // every sample.
-  const stats = { faces: 0, skipped: 0, triangles: 0, subdivided: 0, sky: 0, skyLid: 0, flat3: 0, lumHist: new Int32Array(256), lumN: 0, lumR: 0, lumG: 0, lumB: 0 };
+  const stats = { faces: 0, skipped: 0, triangles: 0, subdivided: 0, sky: 0, skyLid: 0, flat3: 0, invisibleEnts, lumHist: new Int32Array(256), lumN: 0, lumR: 0, lumG: 0, lumB: 0 };
   const byMaterial = new Map();                        // group key -> triangles
   const groupInfo = new Map();                         // group key -> { matRef, page }
 
