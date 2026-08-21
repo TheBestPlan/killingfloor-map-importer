@@ -26,6 +26,10 @@ const SURF_SKIP_MASK = 0x4 /*sky*/ | 0x40 /*trigger*/ | 0x80 /*nodraw*/ | 0x100 
 // pulls in trigger and clip brushes whose texinfo does not always carry the matching SURF flag, so the
 // visible "TRIGGER" texture leaked onto the map - drop them by name as a backstop to the flag test.
 const TOOL_TEX = /^tools[\\/]/i;
+// Ground vegetation (grass, ferns, small foliage) - the density the "convert vegetation" toggle drops.
+// Trees stay: their trunks are solid geometry, only the low scatter is optional. Matched on the model
+// path so a whole grass clump model is dropped, not just its leaf material.
+const VEG_MODEL = /grass|fern|\bbush|weed|nettle|shrub|hedge|foliage|\bplant|\bivy\b|clover|flower|thistle|dandelion|reed/i;
 
 function readLumps(buf) {
   const magic = buf.toString("latin1", 0, 4);
@@ -350,12 +354,15 @@ function loadSourceScene(file, log, opts) {
         propModelIndex.set(name, idx); stats.propModels++;
         return idx;
       };
+      const wantVeg = opts.grass !== false;
       for (const pr of props) {
+        if (!wantVeg && VEG_MODEL.test(pr.model)) { stats.vegSkipped = (stats.vegSkipped || 0) + 1; continue; }
         const mIdx = registerModel(pr.model);
         if (mIdx < 0) { stats.propsSkipped++; continue; }
         propInstances.push({ model: mIdx, origin: pr.origin, angles: pr.angles, solid: pr.solid });
         stats.props++;
       }
+      if (!wantVeg && log) log("vegetation off: skipped " + (stats.vegSkipped || 0) + " grass/foliage prop(s)");
     } catch (e) { if (log) log("props: " + e.message); }
   }
 

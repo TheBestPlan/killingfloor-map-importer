@@ -187,10 +187,25 @@ function convert(opts) {
 
   const ambient = Math.max(0, Math.min(255, Math.round(o.ambient * (o.lightScale || 1))));
   const glow = Math.max(0, Math.min(254, Math.round(o.glow * (o.lightScale || 1))));
+  // Distance fog, tied to the prop CullDistance so one knob drives both: the fog reaches full opacity a
+  // little before the cull distance, so a culled prop is already lost in the fog instead of popping out.
+  // bClearToFogColor paints everything past the fog that same colour, which also hides the skybox seam
+  // and the white far-plane. Off when nothing is being culled; fog colour tracks the flat sky so the
+  // horizon blends. `o.fog === false` disables it; fogColor/fogStart/fogEnd override the derivation.
+  const fogEnd = o.fogEnd || (o.fog !== false && o.cullDistance > 0 ? Math.round(o.cullDistance * 0.92) : 0);
+  const fogStart = o.fogStart !== undefined ? o.fogStart : Math.round(fogEnd * 0.45);
+  const fogColor = o.fogColor || [110, 130, 170];
+  const fogOn = o.fog !== false && fogEnd > 0;
   const zoneInfoRef = holder.zoneInfoRef = pkg.addExport({
     classRef: refs.ZoneInfo, name: "ZoneInfo0", flags: ACTOR,
-    serialize: (p) => { const w = new Writer(160); writeStateFrame(w, refs.ZoneInfo); const pr = p.props(w); pr.byte("AmbientBrightness", ambient); pr.actorCommon(levelInfoRef, physVolRef, "ZoneInfo", 1, zoneInfoRef); pr.vector("Location", [0, 0, 0]); pr.end(); return w; },
+    serialize: (p) => {
+      const w = new Writer(192); writeStateFrame(w, refs.ZoneInfo); const pr = p.props(w);
+      pr.byte("AmbientBrightness", ambient);
+      if (fogOn) { pr.bool("bDistanceFog", true); pr.bool("bClearToFogColor", true); pr.color("DistanceFogColor", fogColor); pr.float("DistanceFogStart", fogStart); pr.float("DistanceFogEnd", fogEnd); }
+      pr.actorCommon(levelInfoRef, physVolRef, "ZoneInfo", 1, zoneInfoRef); pr.vector("Location", [0, 0, 0]); pr.end(); return w;
+    },
   });
+  if (fogOn && o.log) o.log("distance fog: " + fogStart + "-" + fogEnd + " uu, colour " + fogColor.join(","));
 
   const csgBrushes = [];
   {
@@ -274,6 +289,7 @@ function convert(opts) {
             pr.actorCommon(levelInfoRef, physVolRef, "StaticMeshActor", 1, zoneInfoRef);
             pr.vector("ColLocation", inst.location); pr.vector("Location", inst.location);
             pr.rotator("Rotation", inst.rotation);
+            if (o.cullDistance > 0) pr.float("CullDistance", o.cullDistance);   // drop far props (perf)
             pr.end();
             return w;
           },

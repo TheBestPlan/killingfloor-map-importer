@@ -58,6 +58,11 @@ function parseArgs(argv) {
     else if (t === "--ambient") a.ambient = parseInt(argv[++i], 10);
     else if (t === "--glow") a.glow = parseInt(argv[++i], 10);
     else if (t === "--no-grass") a.grass = false;
+    else if (t === "--cull-dist") a.cullDist = parseInt(argv[++i], 10);
+    else if (t === "--no-fog") a.fog = false;
+    else if (t === "--fog-color") a.fogColor = argv[++i].split(",").map(Number);
+    else if (t === "--fog-start") a.fogStart = parseInt(argv[++i], 10);
+    else if (t === "--fog-end") a.fogEnd = parseInt(argv[++i], 10);
     else if (t === "--no-blend") a.blend = false;
     else if (t === "--carve") a.carve = true;
     else if (t === "--hull-max") a.hullMax = parseInt(argv[++i], 10);
@@ -199,6 +204,8 @@ function main() {
       scale: a.scale === DEFAULTS.scale ? undefined : a.scale,
       crop: a.crop, ambient: a.ambient, glow: a.glow, lightScale: a.lightScale,
       texGain: a.texGain, maxTexture: a.maxTexture, lights: !a.noLight, noSky: a.noSky, emitPlayerStarts: !a.noSpawns,
+      grass: a.grass, cullDistance: a.cullDist,
+      fog: a.fog, fogColor: a.fogColor, fogStart: a.fogStart, fogEnd: a.fogEnd,
       log: (m) => console.log("  " + m),
     });
     if (a.verify) {

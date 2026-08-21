@@ -96,7 +96,7 @@ function convert(opts) {
   const o = Object.assign({}, opts);
   const gameVpks = o.noTextures ? null : openGameVpks(findVpkDirs(o.file), o.log);
   if (o.log && gameVpks) o.log("textures: searching " + gameVpks.count + " game VPK archive(s) + the map's pakfile");
-  const scene = loadSourceScene(o.file, o.log, { gameVpks });
+  const scene = loadSourceScene(o.file, o.log, { gameVpks, grass: o.grass });
   const baseName = path.basename(o.file).replace(/\.bsp$/i, "");
   const S = o.scale || SCALE;
   // Source spawns -> KF space (axes [0,1,2] flip Y); +44 lifts the pawn's centre off the floor, and
@@ -114,14 +114,19 @@ function convert(opts) {
   }));
   // Source maps carry no KF lights, so they lean on the zone ambient + per-actor glow; with the
   // ~2.5x unlit overbright that reads as a white-out (the "пересвечено" reports). Dial texture gain
-  // and the ambient/glow floors down for this route unless the caller/env overrides them.
+  // and the ambient/glow floors down for this route - midway between the raw values and the first
+  // (too-dark) pass - unless the caller/env overrides them.
   const bright = {
-    texGain: o.texGain !== undefined ? o.texGain : +(process.env.KF_TEX_GAIN || 0.45),
-    ambient: o.ambient !== undefined ? o.ambient : +(process.env.KF_AMBIENT || 40),
-    glow: o.glow !== undefined ? o.glow : +(process.env.KF_GLOW || 20),
+    texGain: o.texGain !== undefined ? o.texGain : +(process.env.KF_TEX_GAIN || 0.57),
+    ambient: o.ambient !== undefined ? o.ambient : +(process.env.KF_AMBIENT || 52),
+    glow: o.glow !== undefined ? o.glow : +(process.env.KF_GLOW || 34),
   };
+  // A DBD realm is a few hundred thousand prop triangles; KF has no automatic distance culling, so far
+  // props tank the framerate when looking down a long sightline. Cull each prop actor past a distance
+  // (0 = never); the world brushes always draw so the level shell never pops.
+  const cullDistance = o.cullDistance !== undefined ? o.cullDistance : +(process.env.KF_CULL_DIST || 8000);
   return gltf.convert(Object.assign({}, o, bright, {
-    scene, file: null, baseName,
+    scene, file: null, baseName, cullDistance,
     axes: [0, 1, 2], flip: [0, 1, 0],
     scale: S, spawns, propMeshes, propInstances,
     title: baseName + " (Source)",
