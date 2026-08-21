@@ -91,6 +91,45 @@
     <div data-game="cs source model">
       <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
       <ul class="files" id="files"></ul>
+      <div class="check"><input type="checkbox" id="veg" checked><span data-i18n="label.veg">Convert vegetation (grass, foliage)</span></div>
+    </div>
+
+    <!-- Source engine brightness / scale / prop culling. Empty field = the route default (placeholder). -->
+    <div data-game="source">
+      <fieldset>
+        <legend data-i18n="legend.srcConv">Conversion</legend>
+        <label data-i18n="label.srcScale">Scale (Source units → KF)</label>
+        <input type="number" id="srcScale" step="0.0001" min="0.1" max="5" placeholder="1.9165">
+        <label data-i18n="label.srcTexGain">Texture gain (lower = darker)</label>
+        <input type="number" id="srcTexGain" step="0.01" min="0.1" max="2" placeholder="0.57">
+        <label data-i18n="label.srcAmbient">Ambient light</label>
+        <input type="number" id="srcAmbient" step="1" min="0" max="255" placeholder="52">
+        <label data-i18n="label.srcGlow">Actor glow</label>
+        <input type="number" id="srcGlow" step="1" min="0" max="254" placeholder="34">
+        <label data-i18n="label.srcCull">Prop cull distance (0 = never)</label>
+        <input type="number" id="srcCull" step="500" min="0" max="60000" placeholder="8000">
+        <div class="hint" data-i18n="hint.srcCull">Far props stop drawing past this distance — raises FPS on dense maps. 0 draws every prop always.</div>
+        <div class="check"><input type="checkbox" id="srcFog" checked><span data-i18n="label.srcFog">Distance fog (hide culled props)</span></div>
+        <div class="hint" data-i18n="hint.srcFog">Fades distant props into sky-coloured fog just before the cull distance, so nothing pops in/out. Derived from the cull distance above.</div>
+      </fieldset>
+    </div>
+
+    <!-- 3D model route: the same brightness / scale knobs. -->
+    <div data-game="model">
+      <fieldset>
+        <legend data-i18n="legend.mdlConv">Conversion</legend>
+        <label data-i18n="label.mdlScale">Scale (model units → KF)</label>
+        <input type="number" id="mdlScale" step="0.1" min="0.01" max="500" placeholder="1.0">
+        <label data-i18n="label.srcTexGain">Texture gain (lower = darker)</label>
+        <input type="number" id="mdlTexGain" step="0.01" min="0.1" max="2" placeholder="0.7">
+        <label data-i18n="label.srcAmbient">Ambient light</label>
+        <input type="number" id="mdlAmbient" step="1" min="0" max="255" placeholder="64">
+        <label data-i18n="label.srcGlow">Actor glow</label>
+        <input type="number" id="mdlGlow" step="1" min="0" max="254" placeholder="48">
+        <label data-i18n="label.mdlLightGain">Light gain (KHR lights)</label>
+        <input type="number" id="mdlLightGain" step="0.1" min="0.1" max="16" placeholder="0.6">
+        <div class="hint" data-i18n="hint.mdlScale">Sketchfab models are usually metres — try ~40 to fit the KF pawn.</div>
+      </fieldset>
     </div>
 
     <!-- Quake 3: a client folder, and the maps its .pk3 archives hold. -->
@@ -110,8 +149,8 @@
         <input type="number" id="q3Scale" step="0.0001" min="0.1" max="1.9444">
         <div class="hint" data-i18n="hint.q3Scale">The window runs 1.79 to 1.94: below 100/56 the Killing Floor pawn no longer fits a Quake 3 passage, above 35/18 a stock staircase is taller than the engine's step height. 1.8634 is the middle of it.</div>
         <label data-i18n="label.q3Patch">Curve detail (bezier patches)</label>
-        <input type="number" id="q3Patch" step="1" min="1" max="8">
-        <div class="hint" data-i18n="hint.q3Patch">Every arch, pipe and hill in the game is a patch. 4 is the default; 2 halves their triangles and shows the facets.</div>
+        <input type="number" id="q3Patch" step="1" min="0" max="16">
+        <div class="hint" data-i18n="hint.q3Patch">Every arch, pipe and hill in the game is a patch. 0 gives each one as much detail as its own curvature asks for; a fixed number spends the same on all of them, and a low one leaves a step in the leg of every archway.</div>
         <label data-i18n="label.q3LightGain">Lightmap gain</label>
         <input type="number" id="q3LightGain" step="0.5" min="0.5" max="16">
         <div class="hint" data-i18n="hint.q3LightGain">Quake 3's baked light is dark on purpose — its own renderer doubles it on load and the gamma ramp lifts it again. 4 puts it where this engine wants it.</div>
@@ -358,11 +397,13 @@ function save() {
   settings.l2Glow = parseInt($("l2Glow").value, 10);
   settings.q3Dir = $("q3Dir").value.trim();
   settings.q3Scale = parseFloat($("q3Scale").value) || 1.8634;
-  settings.q3Patch = parseInt($("q3Patch").value, 10) || 4;
+  settings.q3Patch = Math.max(0, parseInt($("q3Patch").value, 10) || 0);   // 0: per patch
   settings.q3LightGain = parseFloat($("q3LightGain").value) || 4;
   settings.q3Ambient = parseInt($("q3Ambient").value, 10);
   settings.q3Glow = parseInt($("q3Glow").value, 10);
   settings.q3TerrainLayers = $("q3TerrainLayers").checked;
+  settings.veg = $("veg").checked;
+  settings.srcFog = $("srcFog").checked;
   settings.toDir = $("toDir").value.trim();
   settings.toScale = parseFloat($("toScale").value) || 1.3397;
   settings.toLightGain = parseFloat($("toLightGain").value) || 3;
@@ -375,6 +416,9 @@ function save() {
   settings.healthScale = parseFloat($("health").value) || 1;
   settings.lighting = $("lighting").value;
   settings.lightScale = parseFloat($("lightScale").value) || 1;
+  // Source / model brightness knobs are kept as the raw field text: empty means "use the route default"
+  // (shown as the input's placeholder), so an untouched field never overrides the converter's own value.
+  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain"]) settings[id] = $(id).value;
   settings.emitAse = $("ase").checked;
   settings.emitPlayerStarts = $("spawns").checked;
   window.api.setSettings(settings);
@@ -404,12 +448,15 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("health").value = settings.healthScale === undefined ? 1 : settings.healthScale;
   $("lighting").value = settings.lighting || "lightmap";
   $("lightScale").value = settings.lightScale === undefined ? 1 : settings.lightScale;
+  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain"]) if (settings[id] != null) $(id).value = settings[id];
   $("ase").checked = !!settings.emitAse;
   $("spawns").checked = settings.emitPlayerStarts !== false;
   $("game").value = settings.game || "cs";
   $("l2Dir").value = settings.l2Dir || "";
   $("terrainStep").value = settings.terrainStep === undefined ? 1 : settings.terrainStep;
   $("l2Scale").value = settings.l2Scale === undefined ? 2 : settings.l2Scale;
+  $("veg").checked = settings.veg !== false;
+  $("srcFog").checked = settings.srcFog !== false;
   $("l2Grass").checked = settings.l2Grass !== false;
   $("l2Blend").checked = settings.l2Blend !== false;
   $("l2Carve").checked = settings.l2Carve === true;
@@ -417,7 +464,7 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("l2Glow").value = settings.l2Glow === undefined ? 40 : settings.l2Glow;
   $("q3Dir").value = settings.q3Dir || "";
   $("q3Scale").value = settings.q3Scale === undefined ? 1.8634 : settings.q3Scale;
-  $("q3Patch").value = settings.q3Patch === undefined ? 4 : settings.q3Patch;
+  $("q3Patch").value = settings.q3Patch === undefined ? 0 : settings.q3Patch;
   $("q3LightGain").value = settings.q3LightGain === undefined ? 4 : settings.q3LightGain;
   $("q3Ambient").value = settings.q3Ambient === undefined ? 40 : settings.q3Ambient;
   $("q3Glow").value = settings.q3Glow === undefined ? 96 : settings.q3Glow;
@@ -494,6 +541,8 @@ $("go").onclick = async () => {
     I18N.setText("status", "status.converting", { name: label });
     log("");
     log("== " + label, "hdr");
+    const numV = (v) => { const n = parseFloat(v); return isNaN(n) ? undefined : n; };
+    const intV = (v) => { const n = parseInt(v, 10); return isNaN(n) ? undefined : n; };
     const job = isTO()
       ? {
         game: "to", clientDir: settings.toDir, map: f.name,
@@ -520,16 +569,18 @@ $("go").onclick = async () => {
         carve: settings.l2Carve === true,
       }
       : game() === "source"
-      ? { game: "source", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      ? { game: "source", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
+        sourceScale: numV(settings.srcScale), texGain: numV(settings.srcTexGain), ambient: intV(settings.srcAmbient), glow: intV(settings.srcGlow), cullDistance: intV(settings.srcCull), fog: settings.srcFog !== false }
       : game() === "model"
-      ? { game: "model", file: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      ? { game: "model", file: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
+        modelScale: numV(settings.mdlScale), texGain: numV(settings.mdlTexGain), ambient: intV(settings.mdlAmbient), glow: intV(settings.mdlGlow), lightGain: numV(settings.mdlLightGain) }
       : {
         bspFile: f.path,
         outDir: settings.outDir || null, csDir: settings.csDir || null,
         scale: settings.scale, lightMapScale: settings.lightMapScale, healthScale: settings.healthScale,
         lighting: settings.lighting, lightScale: settings.lightScale,
         wadDirs: settings.wadDirs || [], emitAse: settings.emitAse,
-        emitPlayerStarts: settings.emitPlayerStarts,
+        emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
       };
     const res = await window.api.convert(job);
     if (res.ok) {

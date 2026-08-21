@@ -91,7 +91,8 @@ function convertSource(job, log) {
   const src = require("../src/source/convert");
   const res = src.convert({
     file: job.bspFile, mapName: job.name || null, outDir: job.outDir || null,
-    scale: job.sourceScale, emitPlayerStarts: job.emitPlayerStarts !== false, log,
+    scale: job.sourceScale, emitPlayerStarts: job.emitPlayerStarts !== false, grass: job.grass,
+    ambient: job.ambient, glow: job.glow, texGain: job.texGain, cullDistance: job.cullDistance, fog: job.fog, log,
   });
   const v = verify(res.out);
   for (const line of v.report.split("\n")) log(line);
@@ -107,7 +108,8 @@ function convertModel(job, log) {
   const g = require("../src/gltf/convert");
   const res = g.convert({
     file: job.file, mapName: job.name || null, outDir: job.outDir || null,
-    scale: job.modelScale, emitPlayerStarts: job.emitPlayerStarts !== false, log,
+    scale: job.modelScale, emitPlayerStarts: job.emitPlayerStarts !== false,
+    ambient: job.ambient, glow: job.glow, texGain: job.texGain, lightGain: job.lightGain, log,
   });
   const v = verify(res.out);
   for (const line of v.report.split("\n")) log(line);
