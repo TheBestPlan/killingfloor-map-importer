@@ -45,6 +45,25 @@ function alphaKind(alpha) {
   return mid > alpha.length / 64 ? "graded" : "cutout";
 }
 
+// How a surface uses its image's alpha, from what the SHADER asked for and what the image has.
+//
+// The shader is the authority on whether a surface has holes; the image is only the authority on
+// whether it has the alpha to make them. A .jpg has none, so a shader that alpha-tests one is
+// simply opaque - that direction was always right.
+//
+// The other direction is not, and reading it that way is what put holes in q3dm9's and q3dm15's
+// archways. `gothic_door/skull_door_a..f` are .tga files with an alpha channel and no shader of
+// their own, and Quake 3 tests an image's alpha only where a shader says to: it draws the whole
+// picture and the arch is solid. Cut out from the alpha alone, the arch trim came out with bites
+// taken out of its top edge - ten such textures on q3dm9, eight on q3dm15, none at all on q3dm7 or
+// q3tourney4, which is exactly the pair of maps the holes were reported on.
+function opacityOf(shaderKind, ak) {
+  const kind = shaderKind === "masked" ? (ak === "none" ? "normal" : "masked")
+    : shaderKind === "additive" ? "additive"
+      : shaderKind === "translucent" ? "translucent" : "normal";
+  return { kind, keepAlpha: kind !== "normal" && ak !== "none" };
+}
+
 // Builds one record per BSP texture index:
 //   { ref, kind, twoSided, liquid, name, width, height }   or null for something that never draws.
 function loadTextures(pkg, refs, bsp, opts) {
@@ -136,17 +155,14 @@ function loadTextures(pkg, refs, bsp, opts) {
       stats.fog++;
     }
 
-    let kind = r.kind === "masked" ? "masked" : r.kind === "additive" ? "additive"
-      : r.kind === "translucent" ? "translucent" : "normal";
     const ak = alphaKind(img.alpha);
-    // The shader is the authority on WHETHER a surface has holes; the image is the authority on
-    // whether it has the alpha to make them. A jpg has none, so a shader that alpha-tests one is
-    // simply opaque.
-    if (kind === "masked" && ak === "none") kind = "normal";
-    if (kind === "normal" && ak === "cutout") kind = "masked";
-    if (ak === "none") img = { width: img.width, height: img.height, rgb: img.rgb, alpha: null };
+    const op = opacityOf(r.kind, ak);
+    const kind = op.kind;
+    if (!op.keepAlpha && img.alpha) {
+      img = { width: img.width, height: img.height, rgb: img.rgb, alpha: null };
+      if (ak !== "none") stats.alphaIgnored = (stats.alphaIgnored || 0) + 1;
+    }
     if (kind === "masked") stats.cutout++;
-    if (ak === "graded" && kind === "normal") stats.graded++;
 
     const key = (r.file || "?" + t.name) + "|" + kind +
       (r.layers && r.layers.length > 1 ? "|" + r.layers.map((l) => l.blend[0] + l.file).join("|") : "");
@@ -213,7 +229,7 @@ function loadTextures(pkg, refs, bsp, opts) {
       width: rec.width, height: rec.height, overlay,
       // Whether the image itself carries the opacity: a .tga with a graded alpha channel is its own
       // Opacity map, a .jpg has to make do with a flat one.
-      graded: ak === "graded",
+      graded: ak === "graded" && kind !== "normal",
       // `tcMod scale`, baked into the UVs by the mesh builder.
       tcScale: r.tcScale || null,
       twoSided: r.twoSided || liquid || kind === "masked",
@@ -246,9 +262,11 @@ function loadTextures(pkg, refs, bsp, opts) {
       (stats.layered ? ", " + stats.layered + " painted second layer" : "") +
       (stats.composited ? ", " + stats.composited + " with their shader stages flattened" : "") +
       (stats.fog ? ", " + stats.fog + " fog sheet(s)" : "") +
+      (stats.alphaIgnored ? ", " + stats.alphaIgnored +
+        " drawn solid over an alpha channel no shader asks for" : "") +
             (stats.missing ? ", " + stats.missing + " MISSING -> placeholder: " + missingNames.join(" ") : "") + ")");
   }
   return { textures: out, stats };
 }
 
-module.exports = { loadTextures };
+module.exports = { loadTextures, alphaKind, opacityOf };

@@ -110,37 +110,51 @@ function applyMat3(m, n) {
 }
 
 // --- images: PNG (8-bit RGB/RGBA via zlib), JPEG/TGA via the Quake 3 decoders --------------------
+// PNG -> { width, height, rgb, alpha }. Handles RGB(2)/RGBA(6), plus palette(3) and grey(0)/grey+alpha(4)
+// at any bit depth: PUBG rips ship a lot of indexed (colorType 3) fence/detail textures that the old
+// RGB-only reader threw on, so they came out blank.
 function decodePng(buf) {
   if (buf.readUInt32BE(0) !== 0x89504e47) return null;
   let p = 8, width = 0, height = 0, bitDepth = 0, colorType = 0;
-  const idat = [];
+  const idat = []; let plte = null, trns = null;
   while (p + 8 <= buf.length) {
     const len = buf.readUInt32BE(p), type = buf.toString("latin1", p + 4, p + 8);
     const data = buf.subarray(p + 8, p + 8 + len);
     if (type === "IHDR") { width = data.readUInt32BE(0); height = data.readUInt32BE(4); bitDepth = data[8]; colorType = data[9]; if (data[12] !== 0) throw new Error("interlaced PNG not supported"); }
+    else if (type === "PLTE") plte = data;
+    else if (type === "tRNS") trns = data;
     else if (type === "IDAT") idat.push(data);
     else if (type === "IEND") break;
     p += 12 + len;
   }
-  if (bitDepth !== 8 || (colorType !== 2 && colorType !== 6)) throw new Error("PNG must be 8-bit RGB/RGBA (depth " + bitDepth + " colorType " + colorType + ")");
-  const channels = colorType === 6 ? 4 : 3;
+  if (![0, 2, 3, 4, 6].includes(colorType)) throw new Error("unsupported PNG colorType " + colorType);
+  const chan = colorType === 6 ? 4 : colorType === 4 ? 2 : colorType === 2 ? 3 : 1;   // samples per pixel
   const raw = zlib.inflateSync(Buffer.concat(idat));
-  const stride = width * channels;
-  const rgb = Buffer.alloc(width * height * 3);
-  const alpha = channels === 4 ? Buffer.alloc(width * height) : null;
+  const bpp = Math.max(1, Math.ceil(bitDepth * chan / 8));       // bytes/pixel for the filter predictors
+  const stride = Math.ceil(width * chan * bitDepth / 8);
   const line = Buffer.alloc(stride), prev = Buffer.alloc(stride);
+  const rgb = Buffer.alloc(width * height * 3);
+  const alpha = (colorType === 6 || colorType === 4 || (colorType === 3 && trns)) ? Buffer.alloc(width * height) : null;
+  // one sample (index / grey level) for pixel x when bit depth < 8 packs several per byte
+  const mask = (1 << bitDepth) - 1, per = 8 / bitDepth;
+  const sample = (x) => bitDepth === 8 ? line[x] : (line[Math.floor(x / per)] >> (8 - bitDepth * ((x % per) + 1))) & mask;
   let rp = 0;
   for (let y = 0; y < height; y++) {
     const filter = raw[rp++];
     for (let i = 0; i < stride; i++) {
-      const x = raw[rp++], a = i >= channels ? line[i - channels] : 0, b = prev[i], c = i >= channels ? prev[i - channels] : 0;
+      const x = raw[rp++], a = i >= bpp ? line[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
       let v;
       if (filter === 0) v = x; else if (filter === 1) v = x + a; else if (filter === 2) v = x + b;
       else if (filter === 3) v = x + ((a + b) >> 1);
       else { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c); }
       line[i] = v & 0xff;
     }
-    for (let x = 0; x < width; x++) { const o = (y * width + x) * 3, s = x * channels; rgb[o] = line[s]; rgb[o + 1] = line[s + 1]; rgb[o + 2] = line[s + 2]; if (alpha) alpha[y * width + x] = line[s + 3]; }
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 3;
+      if (colorType === 2 || colorType === 6) { const s = x * chan; rgb[o] = line[s]; rgb[o + 1] = line[s + 1]; rgb[o + 2] = line[s + 2]; if (alpha) alpha[y * width + x] = line[s + 3]; }
+      else if (colorType === 3) { const idx = sample(x); rgb[o] = plte ? plte[idx * 3] : idx; rgb[o + 1] = plte ? plte[idx * 3 + 1] : idx; rgb[o + 2] = plte ? plte[idx * 3 + 2] : idx; if (alpha) alpha[y * width + x] = (trns && idx < trns.length) ? trns[idx] : 255; }
+      else { const s = colorType === 4 ? x * 2 : x; const g = colorType === 4 ? line[s] : Math.round(sample(x) * 255 / mask); rgb[o] = rgb[o + 1] = rgb[o + 2] = g; if (alpha) alpha[y * width + x] = line[s + 1]; }
+    }
     line.copy(prev);
   }
   return { width, height, rgb, alpha };

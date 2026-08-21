@@ -22,25 +22,23 @@ function isGlass(e) {
 
 // Brush entities that draw nothing.
 //
-// Two rules, because the two groups differ in how sure the engine is:
+// `trigger_*` and the Counter-Strike zone entities are volumes and only volumes: their Spawn sets
+// `EF_NODRAW`, so whatever texture is on the brush is never seen. Half the trigger faces in the 14
+// stock maps carry an ordinary wall texture and not one of them shows in game, and every buy zone,
+// bomb site and hostage zone in those maps is `aaatrigger`. Carried across as geometry they are the
+// white slabs across bside_paintball's walkways and the boxes standing in the open on
+// fy_dinoiceworld - whose three `func_buyzone` brushes are textured with `snow` and are, measured by
+// ray, free-standing 320x320x302 blocks with the map's own ground underneath and nothing of the
+// world inside them.
 //
-// `trigger_*` is a volume and only a volume. `CBaseTrigger::Spawn` sets `EF_NODRAW`, so the texture
-// on it is never seen - half the trigger faces in the stock Counter-Strike maps carry an ordinary
-// wall texture and not one of them shows in game. Carried across as geometry they are the white
-// slabs across bside_paintball's walkways (trigger_hurt, trigger_teleport, trigger_push).
-//
-// The zone entities and `func_ladder` are the same idea in the SDK, but a mapper can and does build
-// the room out of them. Every buy zone, bomb site and hostage zone in the 14 stock maps is textured
-// with `aaatrigger` - that is the mapper saying "this is a volume". fy_dinoiceworld's are textured
-// with `snow`, they sit above the last world face at the top of each ladder, and dropping them took
-// the walls of every ladder alcove with them. So these go only when the mapper drew them the way a
-// volume is drawn: entirely in tool textures. Same for `func_ladder`, which as often as not IS the
-// visible ladder.
+// `func_ladder` is the one that goes by TEXTURE, because as often as not the brush IS the visible
+// ladder: it is dropped only when every face of it is a tool texture, which is what all four of
+// fy_dinoiceworld's are.
 //
 // func_illusionary is in neither group: it draws, it just does not block.
-const NEVER_DRAWN = /^trigger_/;
-const VOLUME_IF_TOOL =
-  /^func_(buyzone|ladder|bomb_target|hostage_rescue|escapezone|vip_safetyzone|friction|vehiclecontrols)$/;
+const NEVER_DRAWN =
+  /^(trigger_|func_(buyzone|bomb_target|hostage_rescue|escapezone|vip_safetyzone|friction|vehiclecontrols)$)/;
+const VOLUME_IF_TOOL = /^func_ladder$/;
 
 // `toolOnly` answers "is every face of this brush model a tool texture" - the caller has the map.
 function invisible(e, toolOnly) {

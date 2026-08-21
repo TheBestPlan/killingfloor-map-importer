@@ -109,7 +109,8 @@ function convertModel(job, log) {
   const res = g.convert({
     file: job.file, mapName: job.name || null, outDir: job.outDir || null,
     scale: job.modelScale, emitPlayerStarts: job.emitPlayerStarts !== false,
-    ambient: job.ambient, glow: job.glow, texGain: job.texGain, lightGain: job.lightGain, log,
+    ambient: job.ambient, glow: job.glow, texGain: job.texGain, lightGain: job.lightGain,
+    autoColor: job.autoColor, autoScale: job.autoScale, twoSided: job.twoSided === true, groundUp: job.groundUp !== false, log,
   });
   const v = verify(res.out);
   for (const line of v.report.split("\n")) log(line);

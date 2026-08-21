@@ -451,22 +451,23 @@ Every buy zone, bomb site and hostage zone in the 14 stock Counter-Strike maps i
 `aaatrigger` - 208 faces of them, not one with a wall texture. That is the mapper saying "this is a
 shape, not a surface", and it is what makes dropping the class safe there.
 
-fy_dinoiceworld does not: its three `func_buyzone` brushes are textured with `snow`, they are the
-ladder alcoves, and the world's own faces under them stop at the floor (z -64) while the buy zone
-spans -74 to 48. Dropping the class took the walls of every alcove with it and left a ladder-shaped
-hole with the sky behind - which is what the user had already predicted ("deleting it breaks the
-map") before it was ever removed.
+fy_dinoiceworld does not: its three `func_buyzone` brushes are textured with `snow`. That looked like
+the mapper building the ladder alcoves out of a zone entity, and for one pass the zone classes were
+kept whenever a real texture was on them - which put three white 320x320x302 cubes in the middle of
+the map, standing in the open where a player walks into them.
 
-So the rule is split. `trigger_*` goes on the CLASS: `CBaseTrigger::Spawn` sets `EF_NODRAW` and half
-the trigger faces in the stock maps carry an ordinary wall texture without ever showing. The zone
-entities and `func_ladder` go on the TEXTURE: they are dropped only when every face of the brush
-model is a tool texture. `func_ladder` needs it for the same reason - as often as not, the brush IS
-the visible ladder.
+Traced by ray, the three are free-standing boxes: the map's own ground runs underneath each one and
+nothing of the world is inside it. They are the spawn areas, drawn in `snow` because that is what was
+on the clipboard. The ladders' "holes" were never them - the first surface facing the player behind
+ladders *6 and *9 is a `sky` face at 214 and 355 units, normal pointing at the camera, with the wall
+between them facing the other way. Counter-Strike draws the sky through those ladders too. That pair
+is the map, not the conversion.
 
-While checking this: two of fy_dinoiceworld's four ladders have a `sky` face as the first surface
-facing the player behind them (d = 116 and 256 units, normal pointing at the camera, the wall between
-them facing the other way). Counter-Strike draws the sky through those ladders as well; that pair is
-the map, not the conversion.
+So the rule is split, but not where the first pass put it. Every Counter-Strike zone class goes on
+the CLASS, texture or no texture: `CBaseTrigger::Spawn` sets `EF_NODRAW` on all of them, and half the
+trigger faces in the stock maps carry an ordinary wall texture without ever showing. `func_ladder` is
+the only one that goes on the TEXTURE - it is dropped only when every face of its brush model is a
+tool texture, because as often as not the brush IS the visible ladder.
 
 ### 5.31b A .mdl prop is lit by the surface it stands on
 GoldSrc has no per-vertex light for a model - it samples the lightmap under the entity and lights
@@ -482,6 +483,13 @@ map's mean luxel, and 24 is the floor so a prop in shadow is a shape and not a s
 The light is baked into the mesh's vertex colours, so the prop mesh cache is keyed by the light as
 well as by the file, quantised to 16 levels a channel: de_winter_austria's 61 props build 32 meshes
 from 34 files.
+
+A MASKED skin cannot take that light through a Combiner alone. The Combiner multiplies the skin by a
+ConstantColor and hands the result on as a plain diffuse - and a plain diffuse has no cut-out, so
+de_winter_austria's firs came back with their leaves on a black card. The lit texture is therefore
+wrapped in a Shader whose Diffuse is the Combiner, whose Opacity is the RAW skin, and whose
+OutputBlending is OB_Masked: the light goes through the colour path and the alpha keeps coming from
+the picture itself. de_winter_austria ships 5 of these against 52 plain lit props.
 
 ### 5.20a The sky is the one texture a block codec must not have
 A sky is a smooth, low-contrast gradient stretched over a whole field of view. DXT1's two 5:6:5

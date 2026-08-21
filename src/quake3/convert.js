@@ -61,7 +61,7 @@ const DEFAULTS = {
   // where Quake 3's JUMP_VELOCITY 270 against its own gravity of 800 clears 45.6 map units = 85 uu
   // here. Ledges a Quake player hops onto need a run-up, and the rocket-jump ones are out of reach.
   scale: 1.8634,
-  patchLevel: 4,            // bezier tessellation: (L+1)^2 vertices per 3x3 control patch
+  patchLevel: 0,            // bezier tessellation: 0 = per patch, from its curvature; N = fixed
   // The two together are what lights the world, and the zone's share alone is what lights the
   // player, his hands and the zeds (GOTCHAS 4.11a) - so the split is "what the pawn needs" against
   // "what the walls need minus that". 40 + 96 was judged on q3dm1 against 12+40 (a black corridor),

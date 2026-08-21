@@ -557,6 +557,65 @@ console.log("\nQuake 3: archives, BSP, shaders, images");
         patch.size.join("x") + " control points -> " + t.verts.length + " vertices");
     }
 
+    // Level 0 asks each patch what it needs. Two things have to hold, and the second is the one that
+    // turns a fix into a regression if it stops: the curve is close enough to be smooth, and two
+    // patches that share a border cut it identically so no hairline opens between them.
+    {
+      const levels = Q3.autoLevels(map);
+      const sagitta = (a, b, c) => {
+        const d = [0, 1, 2].map((k) => (b.pos[k] - (a.pos[k] + c.pos[k]) / 2) / 2);
+        return Math.hypot(d[0], d[1], d[2]);
+      };
+      const borderKey = (p) => p.map((v) => Math.round(v * 8)).join(":");
+      let overBudget = 0, outOfRange = 0, flat = 0, curved = 0, worstErr = 0;
+      const shared = new Map();
+      for (let fi = 0; fi < map.faces.length; fi++) {
+        const fa = map.faces[fi];
+        if (fa.type !== Q3.FACE.PATCH) continue;
+        const w = fa.size[0], h = fa.size[1];
+        const ctrl = (x, y) => map.vertex(fa.vertex + y * w + x);
+        let worst = 0;
+        for (let y = 0; y < h; y++) for (let x = 0; x + 2 < w; x += 2) worst = Math.max(worst, sagitta(ctrl(x, y), ctrl(x + 1, y), ctrl(x + 2, y)));
+        for (let x = 0; x < w; x++) for (let y = 0; y + 2 < h; y += 2) worst = Math.max(worst, sagitta(ctrl(x, y), ctrl(x, y + 1), ctrl(x, y + 2)));
+        const L = levels[fi];
+        if (L < 2 || L > 16) outOfRange++;
+        if (L === 2) flat++; else curved++;
+        const err = worst / (L * L);
+        if (L < 16) worstErr = Math.max(worstErr, err);
+        if (L < 16 && err > 1.01) overBudget++;
+        for (const b of [
+          Array.from({ length: w }, (_, x) => ctrl(x, 0)),
+          Array.from({ length: w }, (_, x) => ctrl(x, h - 1)),
+          Array.from({ length: h }, (_, y) => ctrl(0, y)),
+          Array.from({ length: h }, (_, y) => ctrl(w - 1, y)),
+        ]) {
+          const fwd = b.map((v) => borderKey(v.pos)).join("|");
+          const rev = b.slice().reverse().map((v) => borderKey(v.pos)).join("|");
+          const sig = fwd < rev ? fwd : rev;
+          let list = shared.get(sig);
+          if (!list) { list = []; shared.set(sig, list); }
+          list.push(L);
+        }
+      }
+      let borders = 0, mismatched = 0;
+      for (const list of shared.values()) {
+        if (list.length < 2) continue;
+        borders++;
+        if (list.some((L) => L !== list[0])) mismatched++;
+      }
+      ok("every patch level is inside the clamp", outOfRange === 0, outOfRange + " outside 2..16");
+      ok("a patch level keeps the curve within one unit of itself", overBudget === 0,
+        "worst " + worstErr.toFixed(2) + " units over " + (flat + curved) + " patches");
+      ok("flat patches cost less than curved ones", flat > 0 && curved > 0, flat + " flat, " + curved + " curved");
+      ok("patches that share a border cut it the same way", mismatched === 0,
+        mismatched + " of " + borders + " shared borders disagree");
+      const auto = Q3.tessellatePatch(map, map.faces.find((f) => f.type === Q3.FACE.PATCH), 0);
+      const named = Q3.tessellatePatch(map, map.faces.find((f) => f.type === Q3.FACE.PATCH),
+        Q3.autoLevel(map, map.faces.find((f) => f.type === Q3.FACE.PATCH)));
+      ok("level 0 tessellates exactly as the level it picks", auto.verts.length === named.verts.length,
+        auto.verts.length + " vs " + named.verts.length + " vertices");
+    }
+
     // Every surface a stock map draws has to end up with a picture, or the map converts to magenta.
     {
       const shaders = new ShaderSet(fsys);
@@ -963,11 +1022,16 @@ console.log("\nBrush entities that draw nothing, and breakables nothing can shoo
   ok("...and one flagged SF_BREAK_TRIGGER_ONLY stays world geometry",
     !got.some((s) => s.mi === 2));
 
-  // A zone brush is a volume when the mapper drew it like one, and the room when he did not.
+  // A Counter-Strike zone entity never draws, whatever texture is on it: its Spawn sets EF_NODRAW.
+  // fy_dinoiceworld's three func_buyzone brushes wear `snow` and are, measured by ray, free-standing
+  // blocks in the open - carried across they are white cubes standing in the middle of the map.
   ok("a buy zone in tool textures is a volume", be.invisible({ classname: "func_buyzone" }, true));
-  ok("...and one the mapper textured is the room, and stays",
-    !be.invisible({ classname: "func_buyzone" }, false) &&
-    !be.invisible({ classname: "func_ladder" }, false));
+  ok("...and a textured one is still a volume, not a wall",
+    be.invisible({ classname: "func_buyzone" }, false));
+  // func_ladder is the one that goes by texture, because as often as not the brush IS the ladder.
+  ok("a textured func_ladder is the ladder, and stays",
+    !be.invisible({ classname: "func_ladder" }, false) &&
+    be.invisible({ classname: "func_ladder" }, true));
   ok("a trigger draws nothing whatever is on it",
     be.invisible({ classname: "trigger_hurt" }, false));
 
@@ -1070,6 +1134,23 @@ console.log("\nQuake 3 shader stages");
   ok("...and $lightmap is not one of them", !pad.layers.some((l) => /\$/.test(l.file)));
 
   const fog = set.resolve("textures/a/deathfog", gamefs);
+  // A .tga's alpha channel is not a shader. q3dm9's arch trim (skull_door_a..f) has one and no
+  // shader of its own, and cutting it out from the alpha alone bit holes in the top of the arch.
+  {
+    const { opacityOf, alphaKind } = require("../src/quake3/texture");
+    const hard = Buffer.from([0, 0, 255, 255]);
+    const soft = Buffer.from([0, 90, 160, 255]);
+    ok("a hard 0/255 alpha channel reads as a cut-out", alphaKind(hard) === "cutout", alphaKind(hard));
+    ok("...a graded one does not", alphaKind(soft) === "graded", alphaKind(soft));
+    ok("...and a solid one is no alpha at all", alphaKind(Buffer.from([255, 255])) === "none");
+    ok("an ordinary surface ignores the alpha its image happens to carry",
+      opacityOf("normal", "cutout").kind === "normal" && !opacityOf("normal", "cutout").keepAlpha);
+    ok("...while a shader that asks for a cut-out gets one",
+      opacityOf("masked", "cutout").kind === "masked" && opacityOf("masked", "cutout").keepAlpha);
+    ok("...and one that asks for a cut-out of a .jpg is simply opaque",
+      opacityOf("masked", "none").kind === "normal");
+  }
+
   ok("fogparms gives a fog volume its colour and depth",
     !!fog.fog && fog.fog.rgb.join(",") === "0.55,0.11,0.1" && fog.fog.depth === 256,
     JSON.stringify(fog.fog));

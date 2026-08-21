@@ -129,6 +129,10 @@
         <label data-i18n="label.mdlLightGain">Light gain (KHR lights)</label>
         <input type="number" id="mdlLightGain" step="0.1" min="0.1" max="16" placeholder="0.6">
         <div class="hint" data-i18n="hint.mdlScale">Sketchfab models are usually metres — try ~40 to fit the KF pawn.</div>
+        <div class="check"><input type="checkbox" id="mdlAutoColor"><span data-i18n="label.mdlAutoColor">Auto-colour a textureless model</span></div>
+        <div class="hint" data-i18n="hint.mdlAutoColor">A model with no textures (grey) is painted by geometry: green foliage, terracotta roofs, beige walls, grey-tan ground.</div>
+        <div class="check"><input type="checkbox" id="mdlAutoScale" checked><span data-i18n="label.mdlAutoScale">Auto-fit the scale (pawn ≈ door height)</span></div>
+        <div class="hint" data-i18n="hint.mdlAutoScale">Sizes the model from its own buildings so the player is about a doorway tall, whatever units it was made in. Overridden by a value in Scale above.</div>
       </fieldset>
     </div>
 
@@ -404,6 +408,8 @@ function save() {
   settings.q3TerrainLayers = $("q3TerrainLayers").checked;
   settings.veg = $("veg").checked;
   settings.srcFog = $("srcFog").checked;
+  settings.mdlAutoColor = $("mdlAutoColor").checked;
+  settings.mdlAutoScale = $("mdlAutoScale").checked;
   settings.toDir = $("toDir").value.trim();
   settings.toScale = parseFloat($("toScale").value) || 1.3397;
   settings.toLightGain = parseFloat($("toLightGain").value) || 3;
@@ -457,6 +463,8 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("l2Scale").value = settings.l2Scale === undefined ? 2 : settings.l2Scale;
   $("veg").checked = settings.veg !== false;
   $("srcFog").checked = settings.srcFog !== false;
+  $("mdlAutoColor").checked = !!settings.mdlAutoColor;
+  $("mdlAutoScale").checked = settings.mdlAutoScale !== false;
   $("l2Grass").checked = settings.l2Grass !== false;
   $("l2Blend").checked = settings.l2Blend !== false;
   $("l2Carve").checked = settings.l2Carve === true;
@@ -573,7 +581,7 @@ $("go").onclick = async () => {
         sourceScale: numV(settings.srcScale), texGain: numV(settings.srcTexGain), ambient: intV(settings.srcAmbient), glow: intV(settings.srcGlow), cullDistance: intV(settings.srcCull), fog: settings.srcFog !== false }
       : game() === "model"
       ? { game: "model", file: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
-        modelScale: numV(settings.mdlScale), texGain: numV(settings.mdlTexGain), ambient: intV(settings.mdlAmbient), glow: intV(settings.mdlGlow), lightGain: numV(settings.mdlLightGain) }
+        modelScale: numV(settings.mdlScale), texGain: numV(settings.mdlTexGain), ambient: intV(settings.mdlAmbient), glow: intV(settings.mdlGlow), lightGain: numV(settings.mdlLightGain), autoColor: settings.mdlAutoColor === true, autoScale: settings.mdlAutoScale !== false && numV(settings.mdlScale) === undefined }
       : {
         bspFile: f.path,
         outDir: settings.outDir || null, csDir: settings.csDir || null,

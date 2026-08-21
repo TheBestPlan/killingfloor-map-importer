@@ -222,11 +222,87 @@ function bezier(c0, c1, c2, t) {
   };
 }
 
+// How far a control triple's curve bulges away from its own chord: for a quadratic that is the
+// deepest the straight line between the ends can be from the curve, and it is what a player sees as
+// the corner cut off an arch.
+function sagitta(a, b, c) {
+  const d = [0, 1, 2].map((k) => (b.pos[k] - (a.pos[k] + c.pos[k]) / 2) / 2);
+  return Math.hypot(d[0], d[1], d[2]);
+}
+
+// How far off the true curve a straight segment may sit, in Quake units - the same budget the
+// engine's own `r_subdivisions` spends, at a quarter of its default. A Killing Floor unit is 1/1.86
+// of a Quake one and the engine subdivides each row of a patch separately where this takes one
+// level for the whole face, so the number has to be tighter here to look the same. At the fixed
+// level 4 this used to run at, q3dm9's worst patch missed its own curve by 4 units - 7 in Killing
+// Floor - and that is the step a player sees bitten out of the leg of an archway.
+const MAX_CHORD_ERROR = +(process.env.KF_PATCH_ERROR || 1);
+const MIN_LEVEL = 2, MAX_LEVEL = 16;
+
+// The level a patch needs, from its own curvature and size. Cutting an arc into n pieces divides
+// its bulge by about n*n, so n is the square root of how much the worst bend overshoots the budget.
+// A flat patch - and a lot of them are flat - gets the floor and costs a quarter of what the fixed
+// level 4 charged for it; a wide arch pays for 12 and stops looking chopped.
+function autoLevel(bsp, face) {
+  const w = face.size[0], h = face.size[1];
+  const ctrl = (x, y) => bsp.vertex(face.vertex + y * w + x);
+  let worst = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x + 2 < w; x += 2) worst = Math.max(worst, sagitta(ctrl(x, y), ctrl(x + 1, y), ctrl(x + 2, y)));
+  for (let x = 0; x < w; x++) for (let y = 0; y + 2 < h; y += 2) worst = Math.max(worst, sagitta(ctrl(x, y), ctrl(x, y + 1), ctrl(x, y + 2)));
+  return Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, Math.ceil(Math.sqrt(worst / MAX_CHORD_ERROR))));
+}
+
+// The level for every patch face in a map, agreed along shared borders.
+//
+// Two patches that meet cut the border they share out of the same curve. Sampled at two different
+// levels the two polylines are both close to it and neither is on the other, so a hairline opens
+// between the surfaces - a new crack in the act of closing the old one. So a face takes the largest
+// level anything it shares a border with asks for, and the agreement travels until it settles.
+function autoLevels(bsp) {
+  const out = new Array(bsp.faces.length).fill(0);
+  const borderKey = (p) => p.map((v) => Math.round(v * 8)).join(":");
+  const shared = new Map();
+  for (let fi = 0; fi < bsp.faces.length; fi++) {
+    const fa = bsp.faces[fi];
+    if (fa.type !== 2) continue;
+    const w = fa.size[0], h = fa.size[1];
+    if (w < 3 || h < 3 || !(w % 2) || !(h % 2)) continue;
+    out[fi] = autoLevel(bsp, fa);
+    const ctrl = (x, y) => bsp.vertex(fa.vertex + y * w + x);
+    const borders = [
+      Array.from({ length: w }, (_, x) => ctrl(x, 0)),
+      Array.from({ length: w }, (_, x) => ctrl(x, h - 1)),
+      Array.from({ length: h }, (_, y) => ctrl(0, y)),
+      Array.from({ length: h }, (_, y) => ctrl(w - 1, y)),
+    ];
+    for (const b of borders) {
+      const fwd = b.map((v) => borderKey(v.pos)).join("|");
+      const rev = b.slice().reverse().map((v) => borderKey(v.pos)).join("|");
+      const sig = fwd < rev ? fwd : rev;
+      let list = shared.get(sig);
+      if (!list) { list = []; shared.set(sig, list); }
+      list.push(fi);
+    }
+  }
+  for (let pass = 0; pass < 16; pass++) {
+    let changed = false;
+    for (const list of shared.values()) {
+      if (list.length < 2) continue;
+      let m = 0;
+      for (const fi of list) if (out[fi] > m) m = out[fi];
+      for (const fi of list) if (out[fi] < m) { out[fi] = m; changed = true; }
+    }
+    if (!changed) break;
+  }
+  return out;
+}
+
 // Returns { verts: [vertex], indices: [int] } for one patch face, in Quake space.
+// `level` 0 or less means "as much as this patch's own curvature asks for".
 function tessellatePatch(bsp, face, level) {
-  const L = Math.max(1, level | 0);
   const w = face.size[0], h = face.size[1];
   if (w < 3 || h < 3 || !(w % 2) || !(h % 2)) return { verts: [], indices: [] };
+  const L = level > 0 ? Math.max(1, level | 0) : autoLevel(bsp, face);
   const ctrl = (x, y) => bsp.vertex(face.vertex + y * w + x);
   const verts = [], indices = [];
   const nx = (w - 1) / 2, ny = (h - 1) / 2;
@@ -261,5 +337,5 @@ const GAME = "Quake III Arena";
 
 module.exports = {
   Bsp, load, GAME, LUMP, FACE, SURF, CONTENTS, LIGHTMAP_SIZE,
-  parseEntities, num3, tessellatePatch, isToolSurface,
+  parseEntities, num3, tessellatePatch, autoLevel, autoLevels, isToolSurface,
 };

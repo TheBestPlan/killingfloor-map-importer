@@ -12,7 +12,7 @@
 //   [{ materials, vertices, uvs, uvs2, colors, indices, sections, bbox, center, radius, origin }]
 "use strict";
 
-const { FACE, tessellatePatch } = require("./bsp");
+const { FACE, tessellatePatch, autoLevels } = require("./bsp");
 
 // KFEd crashes importing a static mesh over 20000 polygons; the GoldSrc route settled on 19000.
 const MAX_TRIS = 19000;
@@ -59,7 +59,8 @@ function surfaceOf(bsp, face, offset, S, patchLevel, tcScale) {
 // opts: { scale, texOf(index) -> {ref, kind, ...}|null, patchLevel, separate: Map(model -> tag) }
 function buildMeshes(bsp, opts) {
   const S = opts.scale;
-  const patchLevel = opts.patchLevel || 4;
+  const patchLevel = opts.patchLevel || 0;        // 0: each patch asks for its own (bsp.autoLevels)
+  const levelOf = patchLevel > 0 ? null : autoLevels(bsp);
   const separate = opts.separate || new Map();
 
   // The world, then every entity that owns a brush model of its own.
@@ -93,7 +94,7 @@ function buildMeshes(bsp, opts) {
       // cube behind it. The holes they leave are exactly the view onto the skybox.
       if (tex && tex.kind === "sky") { stats.sky++; continue; }
       if (!tex || !tex.ref) { stats.skipped++; continue; }
-      const s = surfaceOf(bsp, face, job.offset, S, patchLevel, tex.tcScale);
+      const s = surfaceOf(bsp, face, job.offset, S, levelOf ? levelOf[fi] : patchLevel, tex.tcScale);
       if (!s || s.verts.length < 3 || s.indices.length < 3) { stats.skipped++; continue; }
       if (face.type === FACE.PATCH) stats.patches++;
       if (tex.liquid) stats.liquid++;

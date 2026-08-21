@@ -18,7 +18,7 @@ function parseArgs(argv) {
     const t = argv[i];
     if (t === "--out") a.out = argv[++i];
     else if (t === "--name") a.name = argv[++i];
-    else if (t === "--scale") a.scale = parseFloat(argv[++i]);
+    else if (t === "--scale") { const v = argv[++i]; if (/^auto$/i.test(v)) a.autoScale = true; else a.scale = parseFloat(v); }
     else if (t === "--lightmap-scale") a.lightMapScale = parseFloat(argv[++i]);
     else if (t === "--wad") a.wadDirs.push(argv[++i]);
     else if (t === "--cs-dir") a.csDir = argv[++i];
@@ -60,6 +60,9 @@ function parseArgs(argv) {
     else if (t === "--no-grass") a.grass = false;
     else if (t === "--cull-dist") a.cullDist = parseInt(argv[++i], 10);
     else if (t === "--no-fog") a.fog = false;
+    else if (t === "--auto-color" || t === "--auto-colour") a.autoColor = true;
+    else if (t === "--two-sided") a.twoSided = true;
+    else if (t === "--no-ground-up") a.noGroundUp = true;
     else if (t === "--fog-color") a.fogColor = argv[++i].split(",").map(Number);
     else if (t === "--fog-start") a.fogStart = parseInt(argv[++i], 10);
     else if (t === "--fog-end") a.fogEnd = parseInt(argv[++i], 10);
@@ -129,7 +132,7 @@ function main() {
     if (!bspFile && !a.map) {
       console.log("usage: node src/cli.js --game q3 --client <Quake III folder> --map q3dm6 [--mod missionpack]");
       console.log("       node src/cli.js --game q3 <map.bsp> --client <Quake III folder>");
-      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.8634] [--patch-level 4] [--verify]");
+      console.log("       [--out <dir>] [--name KF-Name] [--scale 1.8634] [--patch-level 0=auto] [--verify]");
       console.log("       [--light-gain 4] [--light-floor 20] [--ambient 40] [--glow 96] [--no-sky] [--no-doors]");
       process.exit(1);
     }
@@ -247,6 +250,7 @@ function main() {
       scale: a.scale === DEFAULTS.scale ? undefined : a.scale,   // the CS default is not the model one
       crop: a.crop, ambient: a.ambient, glow: a.glow, lightGain: a.lightGain, lightScale: a.lightScale,
       texGain: a.texGain, maxTexture: a.maxTexture, lights: !a.noLight, noSky: a.noSky, emitPlayerStarts: !a.noSpawns,
+      twoSided: a.twoSided === true, groundUp: a.noGroundUp !== true, autoColor: a.autoColor, autoScale: a.autoScale,
       log: (m) => console.log("  " + m),
     });
     if (a.verify) {

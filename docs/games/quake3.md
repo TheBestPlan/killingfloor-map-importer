@@ -56,8 +56,8 @@ terrain hill in the game is one of them.
 A patch is a `size[0] × size[1]` grid of control points, both odd, holding
 `((w-1)/2) × ((h-1)/2)` biquadratic sub-patches that share their edge rows. Tessellating each
 sub-patch into an `(L+1)²` grid and stitching by index is what the engine does; the seam between two
-sub-patches is exact because they share the control row, so no welding is needed. `L = 4` is the
-default here (`--patch-level`), which turns the game's patches into 8k–50k triangles a map.
+sub-patches is exact because they share the control row, so no welding is needed. `L` is chosen per
+patch from its own curvature (Q3.18); `--patch-level N` forces a fixed one instead.
 
 Type 4 flares are a sprite the engine draws for a light corona. There is nothing to convert — 13 of
 them on q3dm17 — so they are dropped and counted.
@@ -423,3 +423,68 @@ One material cannot be volumetric, so the sheet carries it: the shader's own clo
 the `fogparms` colour and drawn at alpha 210, since the fog closes over within 128 to 256 units and
 these sheets are the top of a pit. A fog volume with no `fogparms` and no image of its own still
 draws nothing.
+
+### Q3.18 A bezier patch needs the level ITS OWN curve asks for
+Patches were tessellated at a fixed level 4: four segments per quadratic, whatever the quadratic was.
+On a gentle ramp that is three segments too many; on the arch over a passage it is far too few. The
+worst patch in q3dm9 misses its own curve by 3.8 Quake units at level 4 - seven Killing Floor units -
+and what that looks like from underneath is a step bitten out of the leg of the archway, with the
+band's side face catching the light along the cut. It reads exactly like a hole in the mesh, which is
+what the third report called it, and no geometry is missing at all: a ray grid fired at q3dm9's own
+faces and at the meshes built from them finds 0 misses in 2560 rays, and of 5917 faces only the 54
+sky ones and 40 billboard flares never reach a mesh.
+
+The level now comes from the patch. For a quadratic the deepest the curve strays from the straight
+line between its ends is `|c1 - (c0 + c2) / 2| / 2`, and cutting the arc into n pieces divides that
+by about n squared, so `n = ceil(sqrt(bulge / budget))` with the budget at one Quake unit - a quarter
+of what the engine's own `r_subdivisions` spends, because a Killing Floor unit is 1/1.86 of a Quake
+one and the engine subdivides each row of a patch separately where this takes one level for the whole
+face. Clamped to 2..16. `--patch-level N` still forces a fixed level for comparison.
+
+The trap is the seam. Two patches that meet cut the SAME curve out of the same shared control row,
+and sampled at two different levels the two polylines are both near it and neither is on the other -
+a hairline crack, a new hole in the act of closing the old one. So a face takes the largest level
+anything it shares a control border with asks for, and that agreement travels until it settles.
+Measured over all 30 stock maps: 0 of 4563 shared borders end up at different levels, worst gap 0.00.
+Without the settling pass, 18 of them have borders at two levels and the worst gap is 0.92 units.
+
+Cost, patch triangles only: q3dm9 20416 -> 41720, q3ctf2 30336 -> 59040, and q3dm0, q3tourney4 and
+q3tourney6 get CHEAPER because their patches are mostly flat. Whole-map, q3dm9 goes 41233 -> 61380
+triangles and 18.09 -> 21.63 MB.
+
+### Q3.19 Where the "holes in the arches" were not
+The third report said the arches on q3dm9 and q3dm15 still had holes in them. Four checks, each able
+to fail on its own, say the geometry is whole and that Killing Floor draws all of it:
+
+- **Nothing is dropped.** Of q3dm9's 5917 faces only 54 sky ones and 40 billboard flares never reach
+  a mesh; no face is skipped for want of a texture, a size or a winding.
+- **The meshes match the map.** A 64x40 ray grid fired at the map's own faces and at the meshes built
+  from them, from two different viewpoints in the arch halls: 0 misses out of 2560 rays each time.
+- **The file matches the meshes.** Read back, KF-Q3-dm9.rom holds 426 static meshes, 61572 triangles,
+  and every section covers its whole index stream, ends on its last vertex, and has a bounding sphere
+  that contains its own box. Nothing is truncated by the 16-bit fields.
+- **The game matches the file.** Rasterising the built meshes from the camera of an in-game
+  screenshot reproduces that screenshot's silhouettes - the same corridor, the same arches, the same
+  doorway at the end. Nothing is being culled away.
+
+All four hold, and all four were beside the point: nothing was missing from the GEOMETRY. The holes
+were in the MATERIAL - an alpha channel read as a cut-out that no shader ever asked for (Q3.20) - so
+every check aimed at triangles came back clean while the arches kept their bites. The lesson is the
+check that was not run: when a hole survives a geometry audit, photograph the texture, not the mesh.
+
+### Q3.20 A .tga's alpha channel is not a shader
+`gothic_door/skull_door_a..f` - the skull trim around every archway on q3dm9 and q3dm15 - are `.tga`
+files with an alpha channel and no shader of their own. Quake 3 tests an image's alpha only where a
+shader says to (`alphaFunc`, or a `blendFunc` that reads it), so it draws the whole picture and the
+arch is solid. Cutting it out from the alpha alone bit holes along the top edge of every arch: 135
+faces on q3dm9, 218 on q3dm15.
+
+The rule runs one way only, and `opacityOf(shaderKind, alphaKind)` is now the whole of it:
+
+* a shader that asks for a cut-out of a `.jpg` gets an opaque surface - the image has no alpha to
+  make holes with;
+* a shader that asks for nothing gets an opaque surface, whatever the image carries.
+
+Counted per map, textures drawn solid over an alpha channel nothing asked for: q3dm9 11, q3dm15 12,
+q3dm12 17, q3dm1 14, q3ctf2 8, mpteam2 10 - and 0 on q3dm7 and q3tourney4, the two maps in this set
+that were never reported as holed.

@@ -20,6 +20,16 @@ const collinear = (a, b, c) => {
   return nx * nx + ny * ny + nz * nz <= 1e-6;
 };
 
+// Auto-colour buckets for a textureless model: a triangle is foliage (by material name), a roof or
+// ground (near-horizontal, high vs low), or a wall (near-vertical). Height is a 0..1 fraction of the
+// model's Z extent. The colours themselves live in the .rom writer (gltf/convert.js bucketColor).
+const AUTO_VEG = /grass|foliage|vegetation|bush|tree|plant|leaf|shrub|hedge|fern|flower/i;
+function bucketOf(nzAbs, heightFrac, matName) {
+  if (AUTO_VEG.test(matName || "")) return "foliage";
+  if (nzAbs > 0.55) return heightFrac > 0.4 ? "roof" : "ground";
+  return "wall";
+}
+
 const MAX_TRIS = 19000;                          // KFEd crashes importing a static mesh over ~20000
 const MAX_VERTS = 60000;                         // the index stream is 16-bit
 const CELL = +(process.env.KF_CELL || 2048);     // spatial chunk size in Unreal units; 0 = off
@@ -71,29 +81,60 @@ function buildMeshes(scene, opts) {
       stats.faces++;
       let a = idx[i], b = idx[i + 1], c = idx[i + 2];
       if (REVERSE_WINDING) { const t = b; b = c; c = t; }
-      const va = verts[a], vb = verts[b], vc = verts[c];
+      let va = verts[a], vb = verts[b], vc = verts[c];
       if (!va || !vb || !vc) { stats.skipped++; continue; }
       if (collinear(va.pos, vb.pos, vc.pos)) { stats.flat3++; continue; }
       const mid = [(va.pos[0] + vb.pos[0] + vc.pos[0]) / 3, (va.pos[1] + vb.pos[1] + vc.pos[1]) / 3, (va.pos[2] + vb.pos[2] + vc.pos[2]) / 3];
       if (crop && (Math.abs(mid[0] - crop.cx) > crop.half || Math.abs(mid[1] - crop.cy) > crop.half)) { stats.cropped++; continue; }
-      surfaces.push({ verts: [va, vb, vc], mat: prim.material === undefined ? -1 : prim.material, mid });
+      const mat = prim.material === undefined ? -1 : prim.material;
+      surfaces.push({ verts: [va, vb, vc], mat, mid });
       stats.triangles++;
+      // Ripped models wind their walls and their ground plane inconsistently, so the ground/floor faces
+      // DOWN and single-sided culls it from above ("void underfoot, skybox showing"). Emit a reversed
+      // copy of every near-horizontal triangle so it is visible from both sides - the player is always
+      // above the ground. Walls (near-vertical) stay single-sided, so no z-fighting where it would show.
+      if (opts.groundUp === true) {
+        const ux = vb.pos[0] - va.pos[0], uy = vb.pos[1] - va.pos[1], uz = vb.pos[2] - va.pos[2];
+        const vx = vc.pos[0] - va.pos[0], vy = vc.pos[1] - va.pos[1], vz = vc.pos[2] - va.pos[2];
+        const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+        if (Math.abs(fz) / (Math.hypot(fx, fy, fz) || 1) > 0.6) { surfaces.push({ verts: [va, vc, vb], mat, mid }); stats.triangles++; }
+      }
+    }
+  }
+
+  // Auto-colour: a textureless model (PUBG POI rips) is one flat grey everywhere. With no texture to
+  // sample, classify each triangle by its own geometry - orientation and height - into roof / wall /
+  // ground / foliage buckets and split the mesh by that bucket, so the .rom writer can paint each bucket
+  // a plausible colour. Only flat (imageless) materials are bucketed; textured ones keep their image.
+  if (opts.autoColor) {
+    let zmin = Infinity, zmax = -Infinity;
+    for (const s of surfaces) { if (s.mid[2] < zmin) zmin = s.mid[2]; if (s.mid[2] > zmax) zmax = s.mid[2]; }
+    const zr = (zmax - zmin) || 1;
+    for (const s of surfaces) {
+      const mat = scene.materials[s.mat];
+      if (!mat || mat.imageIndex != null) continue;    // textured material keeps its image
+      const [a, b, c] = s.verts;
+      const ux = b.pos[0] - a.pos[0], uy = b.pos[1] - a.pos[1], uz = b.pos[2] - a.pos[2];
+      const vx = c.pos[0] - a.pos[0], vy = c.pos[1] - a.pos[1], vz = c.pos[2] - a.pos[2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const nzAbs = Math.abs(nz) / (Math.hypot(nx, ny, nz) || 1);
+      s.bucket = bucketOf(nzAbs, (s.mid[2] - zmin) / zr, mat.name);
     }
   }
 
   const cellOf = (s) => (CELL ? Math.floor(s.mid[0] / CELL) + "," + Math.floor(s.mid[1] / CELL) : "all");
   const byGroup = new Map();
   for (const s of surfaces) {
-    const key = cellOf(s) + "|" + s.mat;
+    const key = cellOf(s) + "|" + s.mat + "|" + (s.bucket || "");
     let list = byGroup.get(key);
-    if (!list) { list = { mat: s.mat, tris: [] }; byGroup.set(key, list); }
+    if (!list) { list = { mat: s.mat, bucket: s.bucket || null, tris: [] }; byGroup.set(key, list); }
     list.tris.push(s);
   }
 
   const meshes = [];
   for (const group of byGroup.values()) {
     let cur = null;
-    const start = () => { cur = { mat: group.mat, vertices: [], uvs: [], colors: [], indices: [], sections: [], kind: matKind(group.mat) }; meshes.push(cur); };
+    const start = () => { cur = { mat: group.mat, bucket: group.bucket, vertices: [], uvs: [], colors: [], indices: [], sections: [], kind: matKind(group.mat) }; meshes.push(cur); };
     for (const tri of group.tris) {
       if (!cur || cur.vertices.length + 3 > MAX_VERTS || cur.indices.length / 3 + 1 > MAX_TRIS) start();
       const base = cur.vertices.length;

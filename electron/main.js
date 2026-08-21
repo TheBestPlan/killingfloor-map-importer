@@ -33,7 +33,7 @@ const DEFAULT_SETTINGS = {
   // converter's own - see src/quake3/convert.js for why the scale cannot go above 1.94.
   q3Dir: "",
   q3Scale: 1.8634,
-  q3Patch: 4,          // bezier tessellation level
+  q3Patch: 0,          // bezier tessellation level; 0 = per patch, from its own curvature
   q3Ambient: 40,
   q3Glow: 96,
   q3LightGain: 4,      // Quake 3 lightmaps are dark on purpose; this is what lifts them

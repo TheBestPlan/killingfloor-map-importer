@@ -1230,8 +1230,8 @@ function convert(opts) {
     // prop, one Combiner over its skin, and the prop is lit by exactly the arithmetic the wall
     // beside it is.
     const litProp = new Map();
-    const litPropTex = (texRef, light) => {
-      const key = texRef + "@" + light.join(",");
+    const litPropTex = (texRef, light, masked) => {
+      const key = texRef + "@" + light.join(",") + (masked ? "|m" : "");
       if (litProp.has(key)) return litProp.get(key);
       const colRef = pkg.addExport({
         classRef: refs.ConstantColor, name: "PropLight" + litProp.size, flags: refs.flagsGame,
@@ -1243,7 +1243,7 @@ function convert(opts) {
           return w;
         },
       });
-      const ref = pkg.addExport({
+      let ref = pkg.addExport({
         classRef: refs.Combiner, name: "LitProp" + litProp.size, flags: refs.flagsGame,
         serialize: (p) => {
           const w = new Writer(128);
@@ -1256,6 +1256,26 @@ function convert(opts) {
           return w;
         },
       });
+      // How a material blends is a property of its OUTPUT, and a Combiner has none: wrapping a
+      // cut-out skin in one hands the engine an opaque slab, which is why de_winter_austria's
+      // leaf cards came back as black rectangles the moment the light moved into the material.
+      // Hang the Combiner off a Shader that keeps the masking, the way the world's own cut-out
+      // surfaces are carried (GOTCHAS 5.41).
+      if (masked) {
+        const inner = ref;
+        ref = pkg.addExport({
+          classRef: refs.Shader, name: "LitPropMasked" + litProp.size, flags: refs.flagsGame,
+          serialize: (p) => {
+            const w = new Writer(128);
+            const pr = p.props(w);
+            pr.object("Diffuse", inner);
+            pr.object("Opacity", texRef);            // the skin's own alpha is the cut-out
+            pr.byte("OutputBlending", 1);            // OB_Masked
+            pr.end();
+            return w;
+          },
+        });
+      }
       litProp.set(key, ref);
       return ref;
     };
@@ -1286,7 +1306,9 @@ function convert(opts) {
             }
             // In the lit route the luxel multiplies the skin; every other route lights the mesh
             // some other way and the flat vertex colour below is what it gets.
-            return lightingMode === "lightmap" ? litPropTex(texRefs.get(t.name), lit) : texRefs.get(t.name);
+            return lightingMode === "lightmap"
+              ? litPropTex(texRefs.get(t.name), lit, !!t.masked)
+              : texRefs.get(t.name);
           };
           // The colour stream ADDS to whatever lights the actor, so in the lit route it goes out at
           // zero: the light is already in the material, and a second helping here is a light nobody

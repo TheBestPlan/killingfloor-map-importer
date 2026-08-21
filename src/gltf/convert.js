@@ -56,7 +56,6 @@ function convert(opts) {
   for (const k of Object.keys(DEFAULTS)) if (o[k] === undefined) o[k] = DEFAULTS[k];
   const log = o.log || (() => { });
   const t0 = Date.now();
-  const scale = o.scale;
 
   if (!o.file && !o.scene) throw new Error("give a .glb, .gltf or .obj file (or a pre-built scene)");
   const baseName = o.baseName || (o.file ? path.basename(o.file).replace(/\.(glb|gltf|obj)$/i, "") : "scene");
@@ -64,11 +63,16 @@ function convert(opts) {
   // A pre-built scene (e.g. from the Source BSP route) skips file loading and reuses everything below.
   const scene = o.scene || (/\.obj$/i.test(o.file) ? loadObj(o.file, log) : loadScene(o.file, log));
 
+  // Scale: an explicit number, or auto-fit the pawn to the model's buildings (o.autoScale / --scale auto).
+  let scale = o.scale;
+  if (o.autoScale) { scale = autoScale(scene); log("auto scale: " + scale.toFixed(1) + " (pawn ~ door height vs the model's buildings)"); }
+
   let crop = null;
   if (o.crop) { const [cx, cy, half] = o.crop.split(",").map(Number); crop = { cx: cx * scale, cy: cy * scale, half: half * scale }; log("crop: " + (half * 2) + " uu square at (" + cx + ", " + cy + ")"); }
 
   const meshBuild = buildMeshes(scene, {
     scale, applyMat4: scene.applyMat4, applyMat3: scene.applyMat3, crop, axes: o.axes, flip: o.flip,
+    autoColor: !!o.autoColor, groundUp: o.groundUp === true,
     matKind: (mi) => (scene.materials[mi] && /MASK/i.test(scene.materials[mi].alphaMode)) ? "masked" : null,
   });
   const st = meshBuild.stats;
@@ -102,20 +106,51 @@ function convert(opts) {
   const named = (cls) => { const n = nameCount.get(cls) || 0; nameCount.set(cls, n + 1); return cls + n; };
 
   // --- materials -> textures ----------------------------------------------------------------------
-  const usedMats = new Set();
-  for (const m of meshBuild.meshes) usedMats.add(m.mat);
-  for (const parts of (o.propMeshes || [])) for (const pm of (parts || [])) for (const mi of pm.materialIndices) usedMats.add(mi);
-  const matRef = new Map();
+  // A colour key is `materialIndex|bucket`: bucket is empty for a textured or normally-flat material and
+  // one of roof/wall/ground/foliage when auto-colour split a textureless material by geometry. Each key
+  // becomes one texture; props always carry an empty bucket.
+  const usedKeys = new Set();
+  for (const m of meshBuild.meshes) usedKeys.add(m.mat + "|" + (m.bucket || ""));
+  for (const parts of (o.propMeshes || [])) for (const pm of (parts || [])) for (const mi of pm.materialIndices) usedKeys.add(mi + "|");
+  const matRef = new Map();   // colourKey -> texture ref
   const flatColor = (rgb) => { const side = 8, buf = Buffer.alloc(side * side * 3); for (let i = 0; i < side * side; i++) { buf[i * 3] = rgb[0]; buf[i * 3 + 1] = rgb[1]; buf[i * 3 + 2] = rgb[2]; } return { width: side, height: side, rgb: buf }; };
+  // A noisy fill for the auto-colour buckets: deterministic per-texel brightness variation around the base
+  // colour so a textureless model reads as a rough surface (grass/road/roof) instead of a flat poster.
+  const clamp8 = (v) => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+  const noiseColor = (base) => {
+    const side = 64, buf = Buffer.alloc(side * side * 3), seed = base[0] + base[1] * 3 + base[2] * 7;
+    for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
+      let h = Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263) ^ seed;
+      h = Math.imul(h ^ (h >>> 13), 1274126177); h = (h ^ (h >>> 16)) & 0xff;
+      const n = (h / 255 - 0.5) * 42;                         // +-21 brightness
+      const o = (y * side + x) * 3;
+      buf[o] = clamp8(base[0] + n); buf[o + 1] = clamp8(base[1] + n * 0.92); buf[o + 2] = clamp8(base[2] + n * 0.82);
+    }
+    return { width: side, height: side, rgb: buf };
+  };
+  // Auto-colour palette (calibrated for the model route's texGain 0.7 x the ~2.5x unlit overbright): a
+  // green for foliage, terracotta roofs, beige walls, grey-tan ground.
+  const bucketColor = (b) => ({ foliage: [45, 62, 32], roof: [90, 54, 43], wall: [100, 94, 82], ground: [72, 68, 60] }[b] || [130, 130, 130]);
   // A material draws cut-out when it carries $alphatest/$translucent (Source) or alphaMode MASK/BLEND
   // (glTF); a $nocull / doubleSided one draws two-sided. Both only take effect when the image has an
   // alpha channel to threshold.
   const isMasked = (mat) => !!(mat && (mat.mask || /MASK|BLEND/i.test(mat.alphaMode || "")));
   const isTwoSided = (mat) => !!(mat && (mat.twoSided || mat.doubleSided));
   let textured = 0, flat = 0;
-  for (const mi of usedMats) {
+  for (const key of usedKeys) {
+    const bar = key.indexOf("|");
+    const mi = parseInt(key.slice(0, bar), 10), bucket = key.slice(bar + 1);
     const mat = mi >= 0 ? scene.materials[mi] : null;
-    const nm = "tex_" + (mat && mat.name ? sanitizeName(mat.name) : "m" + (mi + 1));
+    const nm = "tex_" + (bucket ? bucket + "_" : "") + (mat && mat.name ? sanitizeName(mat.name) : "m" + (mi + 1));
+    // Imported models routinely ship one-sided ground/water planes wound the wrong way for KF, so from
+    // above they backface-cull to nothing (the missing terrain). o.twoSided draws both faces - cheap on
+    // a single model and the safe default for the model route.
+    const two = !!(o.twoSided || isTwoSided(mat));
+    if (bucket) {   // auto-colour: paint the geometry bucket (noisy fill), ignore the material's flat grey factor
+      const rec = addRgbTexture(pkg, refs, nm, noiseColor(bucketColor(bucket)), o.texGain, { wrap: true, twoSided: two });
+      matRef.set(key, rec.texRef); flat++;
+      continue;
+    }
     let img = null;
     if (mat && mat.imageIndex !== null && mat.imageIndex !== undefined) {
       try { img = scene.decodeMaterialImage(mat.imageIndex); } catch (e) { log("  texture " + nm + ": " + e.message + " - flat colour"); }
@@ -123,17 +158,17 @@ function convert(opts) {
     if (img) {
       const w = pot(img.width, o.maxTexture), h = pot(img.height, o.maxTexture);
       if (w !== img.width || h !== img.height) img = resample(img, w, h);
-      const mask = isMasked(mat) && img.alpha ? { masked: true, twoSided: isTwoSided(mat) } : null;
-      const rec = addRgbTexture(pkg, refs, nm, { width: img.width, height: img.height, rgb: img.rgb, alpha: mask ? img.alpha : undefined }, o.texGain, Object.assign({ wrap: true }, mask));
-      matRef.set(mi, rec.texRef); textured++;
+      const masked = isMasked(mat) && !!img.alpha;
+      const rec = addRgbTexture(pkg, refs, nm, { width: img.width, height: img.height, rgb: img.rgb, alpha: masked ? img.alpha : undefined }, o.texGain, { wrap: true, masked, twoSided: two });
+      matRef.set(key, rec.texRef); textured++;
     } else {
       const c = mat ? mat.factor.slice(0, 3).map((v) => Math.round(v * 255)) : [160, 160, 160];
-      const rec = addRgbTexture(pkg, refs, nm, flatColor(c), o.texGain, { wrap: true });
-      matRef.set(mi, rec.texRef); flat++;
+      const rec = addRgbTexture(pkg, refs, nm, flatColor(c), o.texGain, { wrap: true, twoSided: two });
+      matRef.set(key, rec.texRef); flat++;
     }
   }
   log("textures: " + textured + " image(s), " + flat + " flat colour(s)");
-  for (const m of meshBuild.meshes) m.materials = [matRef.get(m.mat)];
+  for (const m of meshBuild.meshes) m.materials = [matRef.get(m.mat + "|" + (m.bucket || ""))];
 
   // --- world bounds -------------------------------------------------------------------------------
   const wlo = [Infinity, Infinity, Infinity], whi = [-Infinity, -Infinity, -Infinity];
@@ -192,8 +227,16 @@ function convert(opts) {
   // bClearToFogColor paints everything past the fog that same colour, which also hides the skybox seam
   // and the white far-plane. Off when nothing is being culled; fog colour tracks the flat sky so the
   // horizon blends. `o.fog === false` disables it; fogColor/fogStart/fogEnd override the derivation.
-  const fogEnd = o.fogEnd || (o.fog !== false && o.cullDistance > 0 ? Math.round(o.cullDistance * 0.92) : 0);
-  const fogStart = o.fogStart !== undefined ? o.fogStart : Math.round(fogEnd * 0.45);
+  // Fog end: from the prop cull (Source route) or, for a big model map, a bit inside KF's ~20000 far
+  // plane so the horizon dissolves into sky instead of clipping to the white backbuffer (a model map can
+  // now be up to 30000 wide - past the far plane at the edges).
+  const mapHalf = Math.hypot((box.max[0] - box.min[0]) / 2, (box.max[1] - box.min[1]) / 2);
+  const bigModel = !o.cullDistance && mapHalf > 15000;   // model map wider than the far plane
+  let fogEnd = o.fogEnd;
+  if (fogEnd === undefined) fogEnd = o.cullDistance > 0 ? Math.round(o.cullDistance * 0.92) : (bigModel ? 19000 : 0);
+  // A model-map fog only veils the last stretch before the far plane (start at 0.8x end) so the scene is
+  // not washed out; the cull-paired Source fog keeps its softer 0.5x ramp.
+  const fogStart = o.fogStart !== undefined ? o.fogStart : Math.round(fogEnd * (bigModel ? 0.8 : 0.5));
   const fogColor = o.fogColor || [110, 130, 170];
   const fogOn = o.fog !== false && fogEnd > 0;
   const zoneInfoRef = holder.zoneInfoRef = pkg.addExport({
@@ -263,7 +306,7 @@ function convert(opts) {
   if (o.propMeshes && o.propMeshes.length) {
     // Each model is one or more StaticMesh parts (a big model is split to fit the 16-bit streams).
     const modelParts = o.propMeshes.map((parts, i) => (parts || []).map((pm, j) => {
-      pm.materials = pm.materialIndices.map((mi) => matRef.get(mi));
+      pm.materials = pm.materialIndices.map((mi) => matRef.get(mi + "|"));
       const meshRef = pkg.addExport({ classRef: refs.StaticMesh, name: mapName.replace(/[^A-Za-z0-9_]/g, "") + "_prop" + i + "_" + j, flags: refs.flagsGame, serialize: (p) => buildMeshExport(p, pm) });
       const instRef = pkg.addExport({ classRef: refs.StaticMeshInstance, name: named("StaticMeshInstance"), flags: refs.flagsGame, serialize: (p) => buildMeshInstance(p, pm) });
       return { meshRef, instRef };
@@ -384,7 +427,22 @@ function convert(opts) {
     let places;
     if (at) places = [{ loc: at.slice(0, 3), yaw: at[3] !== undefined ? Math.round((-at[3] / 360) * 65536) & 0xffff : 0 }];
     else if (o.spawns && o.spawns.length) places = o.spawns;
-    else places = [{ loc: [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, whi[2] + 64], yaw: 0 }];
+    else {
+      // Drop the synthetic spawn onto the geometry near the middle of the map, so the player lands on a
+      // central floor/roof instead of falling from the sky (a fall death) or standing on the single
+      // tallest tower. Use the geometry centroid (a POI's mass is often nowhere near its bbox centre);
+      // cast down there, and if that column is a gap, sample a grid and take the surface nearest the
+      // centroid.
+      let gx = 0, gy = 0, gn = 0;
+      for (const m of meshBuild.meshes) { gx += m.origin[0]; gy += m.origin[1]; gn++; }
+      gx = gn ? gx / gn : (box.min[0] + box.max[0]) / 2; gy = gn ? gy / gn : (box.min[1] + box.max[1]) / 2;
+      let pick = null;   // { x, y, z, d2 }
+      const consider = (x, y) => { const z = topSurfaceAt(meshBuild.meshes, x, y); if (z === null) return; const d2 = (x - gx) * (x - gx) + (y - gy) * (y - gy); if (!pick || d2 < pick.d2) pick = { x, y, z, d2 }; };
+      consider(gx, gy);
+      if (!pick) { const N = 9; for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) consider(box.min[0] + (box.max[0] - box.min[0]) * i / N, box.min[1] + (box.max[1] - box.min[1]) * j / N); }
+      places = pick ? [{ loc: [pick.x, pick.y, pick.z + 60], yaw: 0 }] : [{ loc: [gx, gy, whi[2] + 60], yaw: 0 }];
+      log("spawn: " + (pick ? "on surface at z=" + Math.round(pick.z) + " near centre" : "over centre (no surface found)"));
+    }
     for (const pl of places) {
       starts.push(pkg.addExport({
         classRef: refs.PlayerStart, name: named("PlayerStart"), flags: ACTOR,
@@ -415,6 +473,61 @@ function convert(opts) {
   fs.writeFileSync(out, buf);
   log("wrote " + out + "  " + (buf.length / 1048576).toFixed(2) + " MB in " + ((Date.now() - t0) / 1000).toFixed(1) + "s");
   return { out, size: buf.length, mapName, meshes: meshBuild.meshes.length, lights: lightRefs.length, stats: st, model: built.model };
+}
+
+// Pick a scale so the KF pawn stands about door-height against the model's buildings, whatever unit the
+// model was authored in (Sketchfab rips range from metres to a 0.00006 node scale). Method: bucket the
+// matrix-applied vertices into a 60x60 XY grid, take the 85th-percentile column height as the typical
+// BUILDING height (above the flat ground/grass that dominates the lower percentiles), and scale it to
+// ~2.6 pawn heights. Capped so the map still fits inside KF's view distance.
+function autoScale(scene) {
+  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  const pts = [];
+  for (const prim of scene.prims) {
+    const P = prim.pos.data;
+    for (let i = 0; i < prim.pos.count; i++) {
+      const w = scene.applyMat4(prim.matrix, [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+      pts.push(w);
+      for (let k = 0; k < 3; k++) { if (w[k] < lo[k]) lo[k] = w[k]; if (w[k] > hi[k]) hi[k] = w[k]; }
+    }
+  }
+  if (!pts.length) return 1;
+  const up = 1;   // glTF is Y-up; the two horizontal axes are 0 and 2
+  const extH = Math.max(hi[0] - lo[0], hi[2] - lo[2]) || 1;
+  const cell = extH / 60;
+  const cells = new Map();
+  for (const w of pts) { const k = Math.floor(w[0] / cell) + "," + Math.floor(w[2] / cell); let c = cells.get(k); if (!c) { c = [Infinity, -Infinity]; cells.set(k, c); } if (w[up] < c[0]) c[0] = w[up]; if (w[up] > c[1]) c[1] = w[up]; }
+  const hts = [...cells.values()].map((c) => c[1] - c[0]).filter((h) => h > 0).sort((a, b) => a - b);
+  const feat = hts.length ? hts[Math.floor(hts.length * 0.85)] : extH / 40;
+  // Target: a typical building ~8 pawn heights, so the player reads as a small figure among tall
+  // structures (the "player = door height, buildings tower" the maps want). Capped so the map stays
+  // within the enlarged sky/fog distance; a very flat POI (Pochinki) hits the cap and stays a bit small.
+  let scale = (96 * 8) / (feat || 1);
+  const width = extH * scale;
+  if (width > 30000) scale *= 30000 / width;
+  return scale;
+}
+
+// Highest surface Z at world (x,y) across every mesh triangle (barycentric point-in-triangle in XY),
+// or null if nothing covers that column. Used to stand a synthetic spawn on the geometry.
+function topSurfaceAt(meshes, x, y) {
+  let best = -Infinity;
+  for (const m of meshes) {
+    const o = m.origin, V = m.vertices, I = m.indices;
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const A = V[I[t]].pos, B = V[I[t + 1]].pos, C = V[I[t + 2]].pos;
+      const ax = A[0] + o[0], ay = A[1] + o[1], bx = B[0] + o[0], by = B[1] + o[1], cx = C[0] + o[0], cy = C[1] + o[1];
+      const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+      if (Math.abs(d) < 1e-6) continue;
+      const wa = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d;
+      const wb = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d;
+      const wc = 1 - wa - wb;
+      if (wa < -0.001 || wb < -0.001 || wc < -0.001) continue;
+      const z = wa * (A[2] + o[2]) + wb * (B[2] + o[2]) + wc * (C[2] + o[2]);
+      if (z > best) best = z;
+    }
+  }
+  return best === -Infinity ? null : best;
 }
 
 function toKFdir(d) { const u = toKF(d, 1); const len = Math.hypot(u[0], u[1], u[2]) || 1; return [u[0] / len, u[1] / len, u[2] / len]; }
