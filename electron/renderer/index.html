@@ -1,0 +1,675 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Copyright (c) 2026 TheBestPlan -->
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Killing Floor Map Importer</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2a2f3a; --text: #d7dbe3; --dim: #8a92a3;
+    --accent: #d24b34; --ok: #4caf6d; --bad: #e05252; --warn: #d8a13a;
+  }
+  * { box-sizing: border-box; }
+  /* The page itself never scrolls: the sidebar and the log each scroll inside their own box. */
+  body {
+    margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+    height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+  }
+  header { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; flex: none; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+  header span { color: var(--dim); font-size: 12px; }
+  main { display: grid; grid-template-columns: 340px 1fr; flex: 1; min-height: 0; }
+  .side { border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; }
+  .right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin: 0 0 14px; }
+  legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: 0 6px; }
+  label { display: block; margin: 8px 0 3px; color: var(--dim); font-size: 12px; }
+  input[type=text], input[type=number], fieldset select {
+    width: 100%; background: #0f1115; border: 1px solid var(--line); color: var(--text);
+    padding: 6px 8px; border-radius: 4px; font: inherit;
+  }
+  button {
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    padding: 7px 12px; border-radius: 4px; cursor: pointer; font: inherit;
+  }
+  button:hover { border-color: #3c4354; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; padding: 10px; }
+  button.primary:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row input { flex: 1; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 7px 0; color: var(--text); }
+  .drop {
+    border: 1px dashed var(--line); border-radius: 6px; padding: 18px; text-align: center;
+    color: var(--dim); cursor: pointer; margin-bottom: 10px;
+  }
+  .drop.hot { border-color: var(--accent); color: var(--text); }
+  ul.files { list-style: none; margin: 0 0 10px; padding: 0; max-height: 170px; overflow-y: auto; }
+  ul.files li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  ul.files li .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.files li .s { color: var(--dim); font-size: 11px; flex: none; }
+  .s.ok { color: var(--ok); } .s.bad { color: var(--bad); } .s.run { color: var(--warn); }
+  #log {
+    /* pre, not pre-wrap: long paths and class lists get the horizontal scrollbar instead of
+       breaking mid-line, and both scrollbars belong to this box rather than to the window. */
+    flex: 1; min-height: 0; margin: 0; padding: 12px 16px; overflow: auto; white-space: pre;
+    font: 12px/1.55 Consolas, "Cascadia Mono", monospace; color: #b9c0cd;
+  }
+  #intro { white-space: pre-wrap; }  /* the greeting is prose - let it wrap, unlike the log lines */
+  #log .ok { color: var(--ok); } #log .bad { color: var(--bad); } #log .hdr { color: #fff; font-weight: 600; }
+  .bar { flex: none; padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; color: var(--dim); }
+  .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
+  header .lang { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; }
+  header .lang select {
+    background: #0f1115; border: 1px solid var(--line); color: var(--text);
+    padding: 4px 6px; border-radius: 4px; font: inherit;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Killing Floor Map Importer</h1>
+  <span id="sub" data-i18n="head.subCs">Counter-Strike 1.6 &middot; GoldSrc BSP v30 &rarr; Unreal Engine 2.5 .rom</span>
+  <label class="lang"><span data-i18n="ui.language">Language</span><select id="lang"></select></label>
+</header>
+<main>
+  <div class="side">
+    <fieldset>
+      <legend data-i18n="legend.game">Source game</legend>
+      <select id="game">
+        <option value="cs" data-i18n="opt.gameCs">Counter-Strike 1.6 — GoldSrc .bsp</option>
+        <option value="q3" data-i18n="opt.gameQ3">Quake III Arena / Team Arena — client maps</option>
+        <option value="l2" data-i18n="opt.gameL2">Lineage 2 — client world squares</option>
+        <option value="to" data-i18n="opt.gameTO">Tactical Ops: Assault on Terror — client maps</option>
+        <option value="ut99" data-i18n="opt.gameUt99">Unreal Tournament 99 — .unr map files</option>
+        <option value="source" data-i18n="opt.gameSource">Source 1 engine — CS:Source / CS:GO / Garry's Mod / L4D2 .bsp</option>
+        <option value="source2" data-i18n="opt.gameSource2">Source 2 engine — Counter-Strike 2 / Dota 2 .vpk</option>
+        <option value="gta3" data-i18n="opt.gameGta3">Grand Theft Auto III — game folder</option>
+        <option value="vc" data-i18n="opt.gameVc">Grand Theft Auto: Vice City — game folder</option>
+        <option value="savage" data-i18n="opt.gameSavage">Savage: The Battle for Newerth — .s2z map</option>
+        <option value="igi" data-i18n="opt.gameIgi">Project IGI — level models .res</option>
+        <option value="vtmr" data-i18n="opt.gameVtmr">Vampire: The Masquerade — Redemption — Levels.nob / .nil</option>
+        <option value="model" data-i18n="opt.gameModel">3D model — glTF / GLB / OBJ file</option>
+      </select>
+    </fieldset>
+
+    <!-- Counter-Strike: a queue of files dropped or browsed for. -->
+    <div data-game="cs source source2 model ut99 savage igi vtmr">
+      <div class="drop" id="drop" data-i18n-html="drop.text">Drop <b>.bsp</b> files here<br>or click to browse</div>
+      <ul class="files" id="files"></ul>
+      <div class="check"><input type="checkbox" id="veg" checked><span data-i18n="label.veg">Convert vegetation (grass, foliage)</span></div>
+    </div>
+
+    <!-- Source engine brightness / scale / prop culling. Empty field = the route default (placeholder).
+         Shared by Source 1 (.bsp) and Source 2 (.vpk); the fog knob only applies to Source 1. -->
+    <div data-game="source source2">
+      <fieldset>
+        <legend data-i18n="legend.srcConv">Conversion</legend>
+        <label data-i18n="label.srcScale">Scale (Source units → KF)</label>
+        <input type="number" id="srcScale" step="0.0001" min="0.1" max="5" placeholder="1.9165">
+        <label data-i18n="label.srcTexGain">Texture gain (lower = darker)</label>
+        <input type="number" id="srcTexGain" step="0.01" min="0.1" max="2" placeholder="0.57">
+        <label data-i18n="label.srcAmbient">Ambient light</label>
+        <input type="number" id="srcAmbient" step="1" min="0" max="255" placeholder="52">
+        <label data-i18n="label.srcGlow">Actor glow</label>
+        <input type="number" id="srcGlow" step="1" min="0" max="254" placeholder="34">
+        <label data-i18n="label.srcCull">Prop cull distance (0 = never)</label>
+        <input type="number" id="srcCull" step="500" min="0" max="60000" placeholder="8000">
+        <div class="hint" data-i18n="hint.srcCull">Far props stop drawing past this distance — raises FPS on dense maps. 0 draws every prop always.</div>
+        <div class="check"><input type="checkbox" id="srcFog" checked><span data-i18n="label.srcFog">Distance fog (hide culled props)</span></div>
+        <div class="hint" data-i18n="hint.srcFog">Fades distant props into sky-coloured fog just before the cull distance, so nothing pops in/out. Derived from the cull distance above.</div>
+      </fieldset>
+    </div>
+
+    <!-- GTA III / Vice City: pick the game's install folder; one district is cropped out. -->
+    <div data-game="gta3 vc">
+      <fieldset>
+        <legend data-i18n="legend.gtaFolder">Game folder</legend>
+        <div class="row"><input type="text" id="gtaDir" data-i18n-ph="ph.gtaDir" placeholder="…/Grand Theft Auto III" readonly><button id="pickGta" data-i18n="btn.browse">Browse…</button></div>
+        <div class="hint" data-i18n="hint.gta">The whole city is millions of triangles, so the densest district is converted. Set a crop centre below to pick another area.</div>
+        <label data-i18n="label.gtaCrop">Crop centre &amp; radius (metres: cx,cy,half — blank = densest)</label>
+        <input type="text" id="gtaCrop" placeholder="400,-300,350">
+      </fieldset>
+    </div>
+
+    <!-- 3D model route: the same brightness / scale knobs. -->
+    <div data-game="model">
+      <fieldset>
+        <legend data-i18n="legend.mdlConv">Conversion</legend>
+        <label data-i18n="label.mdlScale">Scale (model units → KF)</label>
+        <input type="number" id="mdlScale" step="0.1" min="0.01" max="500" placeholder="1.0">
+        <label data-i18n="label.srcTexGain">Texture gain (lower = darker)</label>
+        <input type="number" id="mdlTexGain" step="0.01" min="0.1" max="2" placeholder="0.7">
+        <label data-i18n="label.srcAmbient">Ambient light</label>
+        <input type="number" id="mdlAmbient" step="1" min="0" max="255" placeholder="64">
+        <label data-i18n="label.srcGlow">Actor glow</label>
+        <input type="number" id="mdlGlow" step="1" min="0" max="254" placeholder="48">
+        <label data-i18n="label.mdlLightGain">Light gain (KHR lights)</label>
+        <input type="number" id="mdlLightGain" step="0.1" min="0.1" max="16" placeholder="0.6">
+        <div class="hint" data-i18n="hint.mdlScale">Sketchfab models are usually metres — try ~40 to fit the KF pawn.</div>
+        <div class="check"><input type="checkbox" id="mdlAutoColor"><span data-i18n="label.mdlAutoColor">Auto-colour a textureless model</span></div>
+        <div class="hint" data-i18n="hint.mdlAutoColor">A model with no textures (grey) is painted by geometry: green foliage, terracotta roofs, beige walls, grey-tan ground.</div>
+        <div class="check"><input type="checkbox" id="mdlAutoScale" checked><span data-i18n="label.mdlAutoScale">Auto-fit the scale (pawn ≈ door height)</span></div>
+        <div class="hint" data-i18n="hint.mdlAutoScale">Sizes the model from its own buildings so the player is about a doorway tall, whatever units it was made in. Overridden by a value in Scale above.</div>
+      </fieldset>
+    </div>
+
+    <!-- Quake 3: a client folder, and the maps its .pk3 archives hold. -->
+    <div data-game="q3">
+      <fieldset>
+        <legend data-i18n="legend.q3">Quake III Arena client</legend>
+        <label data-i18n="label.l2Dir">Client folder</label>
+        <div class="row"><input type="text" id="q3Dir" data-i18n-ph="ph.q3Dir" placeholder="…\Quake III Arena (folder with baseq3\)"><button id="pickQ3">…</button></div>
+        <div class="hint" data-i18n="hint.q3Dir">The folder holding baseq3\, and missionpack\ if Team Arena is installed. The maps and everything they draw are read straight out of the .pk3 archives.</div>
+        <label data-i18n="label.q3Maps">Maps</label>
+        <ul class="files" id="q3maps"></ul>
+        <div class="hint" data-i18n="hint.q3Maps">Click to pick; picked maps convert in order. Team Arena's own maps are marked with the folder they come from.</div>
+      </fieldset>
+      <fieldset>
+        <legend data-i18n="legend.l2Conv">Conversion</legend>
+        <label data-i18n="label.q3Scale">Scale (Quake 3 units &rarr; Killing Floor units)</label>
+        <input type="number" id="q3Scale" step="0.0001" min="0.1" max="1.9444">
+        <div class="hint" data-i18n="hint.q3Scale">The window runs 1.79 to 1.94: below 100/56 the Killing Floor pawn no longer fits a Quake 3 passage, above 35/18 a stock staircase is taller than the engine's step height. 1.8634 is the middle of it.</div>
+        <label data-i18n="label.q3Patch">Curve detail (bezier patches)</label>
+        <input type="number" id="q3Patch" step="1" min="0" max="16">
+        <div class="hint" data-i18n="hint.q3Patch">Every arch, pipe and hill in the game is a patch. 0 gives each one as much detail as its own curvature asks for; a fixed number spends the same on all of them, and a low one leaves a step in the leg of every archway.</div>
+        <label data-i18n="label.q3LightGain">Lightmap gain</label>
+        <input type="number" id="q3LightGain" step="0.5" min="0.5" max="16">
+        <div class="hint" data-i18n="hint.q3LightGain">Quake 3's baked light is dark on purpose — its own renderer doubles it on load and the gamma ramp lifts it again. 4 puts it where this engine wants it.</div>
+        <label data-i18n="label.l2Ambient">Zone ambient (the player and the zeds)</label>
+        <input type="number" id="q3Ambient" step="1" min="0" max="255">
+        <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
+        <input type="number" id="q3Glow" step="1" min="0" max="254">
+        <div class="hint" data-i18n="hint.l2Light">The two add up to what a surface is lit by. Splitting them keeps the world right without the player glowing.</div>
+        <div class="check"><input type="checkbox" id="q3TerrainLayers"><span data-i18n="label.q3Layers">Blend the terrain's second layer</span></div>
+        <div class="hint" data-i18n="hint.q3Layers">Team Arena paints a second rock over the first and blends the two by the vertex alpha; without it a hillside is one flat texture. Costs a second pass over those surfaces only — measured on mpterra1 +3.6% triangles (+0.55 MB) and mpterra2 +6.5% (+0.57 MB); every other map is untouched.</div>
+      </fieldset>
+    </div>
+
+    <!-- Tactical Ops: a client folder, and the .unr maps in it. -->
+    <div data-game="to">
+      <fieldset>
+        <legend data-i18n="legend.to">Tactical Ops client</legend>
+        <label data-i18n="label.l2Dir">Client folder</label>
+        <div class="row"><input type="text" id="toDir" data-i18n-ph="ph.toDir" placeholder="…\Tactical Ops (folder with TacticalOps\Maps\)"><button id="pickTO">…</button></div>
+        <div class="hint" data-i18n="hint.toDir">The folder holding TacticalOps\Maps\. Every texture a map draws is in a .utx beside it, so the whole install is the input.</div>
+        <label data-i18n="label.q3Maps">Maps</label>
+        <ul class="files" id="tomaps"></ul>
+        <div class="hint" data-i18n="hint.toMaps">Click to pick; picked maps convert in order.</div>
+      </fieldset>
+      <fieldset>
+        <legend data-i18n="legend.l2Conv">Conversion</legend>
+        <label data-i18n="label.toScale">Scale (Tactical Ops units &rarr; Killing Floor units)</label>
+        <input type="number" id="toScale" step="0.0001" min="0.1" max="1.4">
+        <div class="hint" data-i18n="hint.toScale">The window runs 1.28 to 1.4: below 100/78 the Killing Floor pawn no longer fits a Tactical Ops passage, above 35/25 a 25-unit step is taller than this engine's stride. 1.3397 is the middle of it.</div>
+        <label data-i18n="label.toLightGain">Light gain</label>
+        <input type="number" id="toLightGain" step="0.5" min="0.5" max="16">
+        <div class="hint" data-i18n="hint.toLightGain">Unreal Engine 1 stores one shadow bit per luxel per light, not a lightmap; the light is rebuilt from the map's own lamps and this is how bright it comes out.</div>
+        <label data-i18n="label.l2Ambient">Zone ambient (the player and the zeds)</label>
+        <input type="number" id="toAmbient" step="1" min="0" max="255">
+        <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
+        <input type="number" id="toGlow" step="1" min="0" max="254">
+        <div class="hint" data-i18n="hint.l2Light">The two add up to what a surface is lit by. Splitting them keeps the world right without the player glowing.</div>
+      </fieldset>
+    </div>
+
+    <!-- Lineage 2: a client folder, and the squares of the world it holds. -->
+    <div data-game="l2">
+      <fieldset>
+        <legend data-i18n="legend.l2">Lineage 2 client</legend>
+        <label data-i18n="label.l2Dir">Client folder</label>
+        <div class="row"><input type="text" id="l2Dir" data-i18n-ph="ph.l2Dir" placeholder="…\Lineage 2 (folder with maps\)"><button id="pickL2">…</button></div>
+        <div class="hint" data-i18n="hint.l2Dir">The folder holding maps\, staticmeshes\ and textures\. Packages are read straight out of it, encryption and all.</div>
+        <label data-i18n="label.square">World squares</label>
+        <ul class="files" id="squares"></ul>
+        <div class="hint" data-i18n="hint.square">One square becomes one map. Click to pick; picked squares convert in order.</div>
+      </fieldset>
+      <fieldset>
+        <legend data-i18n="legend.l2Conv">Conversion</legend>
+        <label data-i18n="label.l2Scale">Scale (Lineage 2 units &rarr; Killing Floor units)</label>
+        <input type="number" id="l2Scale" step="0.1" min="0.1">
+        <div class="hint" data-i18n="hint.l2Scale">2 puts a Killing Floor pawn next to a Lineage 2 door the way a Lineage 2 character stands next to it.</div>
+        <label data-i18n="label.terrainStep">Terrain detail (1 = every vertex)</label>
+        <input type="number" id="terrainStep" step="1" min="1" max="8">
+        <div class="hint" data-i18n="hint.terrainStep">A square is 255×255 quads. 2 quarters the triangles and softens the ground.</div>
+        <div class="check"><input type="checkbox" id="l2Carve"><span data-i18n="label.l2Carve">Open the doorways and cave mouths</span></div>
+        <div class="hint" data-i18n="hint.l2Carve">A doorway is not modelled: the wall is one brush and the hole through it is a subtractive brush the client's compiler cut away. Without this they all come across filled in. Costs nothing — no polygon is ever deleted, only cut.</div>
+        <div class="check"><input type="checkbox" id="l2Blend"><span data-i18n="label.l2Blend">Blend the terrain layers</span></div>
+        <div class="hint" data-i18n="hint.l2Blend">The client's own per-layer blend, as a pass per layer. Without it the ground is one texture per quad and the seams show as squares. Costs about 3× the ground's triangles (19_21: 128k → 373k, +33 MB).</div>
+        <div class="check"><input type="checkbox" id="l2Grass"><span data-i18n="label.l2Grass">Carry the grass across</span></div>
+        <div class="hint" data-i18n="hint.l2Grass">The square's own decoration layers, scattered to their own density. Tens of thousands of plants (19_21: 32k plants, 240k triangles, +41 MB) — the heaviest single thing on the map.</div>
+        <label data-i18n="label.l2Ambient">Zone ambient (the player and the zeds)</label>
+        <input type="number" id="l2Ambient" step="1" min="0" max="255">
+        <label data-i18n="label.l2Glow">World glow (the ground and the buildings)</label>
+        <input type="number" id="l2Glow" step="1" min="0" max="254">
+        <div class="hint" data-i18n="hint.l2Light">The two add up to what a surface is lit by. Splitting them keeps the world right without the player glowing.</div>
+      </fieldset>
+    </div>
+
+    <fieldset>
+      <legend data-i18n="legend.output">Output</legend>
+      <label data-i18n="label.outDir">Folder for the .rom files</label>
+      <div class="row"><input type="text" id="outDir" data-i18n-ph="ph.outDir" placeholder="next to the .bsp"><button id="pickOut">…</button></div>
+      <div class="hint" data-i18n="hint.outDir">Point this at KillingFloor\Maps to test straight away.</div>
+    </fieldset>
+
+    <fieldset data-game="cs">
+      <legend data-i18n="legend.resources">Resources</legend>
+      <label data-i18n="label.csDir">Counter-Strike 1.6 client folder</label>
+      <div class="row"><input type="text" id="csDir" data-i18n-ph="ph.csDir" placeholder="…\Counter-Strike 1.6 (folder with cstrike\)"><button id="pickCs">…</button></div>
+      <div class="hint" data-i18n="hint.csDir">Where the stock .wad files and the gfx\env skyboxes live. A downloaded map
+        ships as the .bsp alone and needs them, otherwise its textures come out magenta and it has no sky.</div>
+      <label data-i18n="label.extraDirs">Extra folders to search</label>
+      <div class="row"><input type="text" id="wadDir" data-i18n-ph="ph.wadDir" placeholder="…\some map pack\cstrike"><button id="pickWad">+</button></div>
+      <ul class="files" id="wads"></ul>
+      <div class="hint" data-i18n="hint.extraDirs">The map's own folder and the two above it are searched automatically.</div>
+    </fieldset>
+
+    <fieldset data-game="cs">
+      <legend data-i18n="legend.conversion">Conversion</legend>
+      <label data-i18n="label.scale">Scale (Half-Life units &rarr; Unreal units ~ 1.9165)</label>
+      <input type="number" id="scale" step="0.05" min="0.1">
+      <label data-i18n="label.lms">Lightmap luxel size (Unreal units)</label>
+      <input type="number" id="lms" step="1" min="4">
+      <div class="hint" data-i18n="hint.lms">32 lines the luxels up 1:1 with GoldSrc at scale 2.</div>
+      <label data-i18n="label.lighting">Lighting</label>
+      <select id="lighting">
+        <option value="lightmap" data-i18n="opt.lightLm">Lightmap — the original baked light, as it was</option>
+        <option value="ambient" data-i18n="opt.lightAmbient">Zone ambient — plays as converted</option>
+        <option value="sunlight" data-i18n="opt.lightSun">Sunlight — needs Build Lighting in KFEd</option>
+        <option value="dynamic" data-i18n="opt.lightDyn">Dynamic — the map's own lights, live</option>
+      </select>
+      <div class="hint" data-i18n="hint.lighting">Sunlight puts a real sun in the level and leaves the light to the editor: closer to the original, but dark until the map is built.</div>
+      <label data-i18n="label.lightScale">Light brightness multiplier</label>
+      <input type="number" id="lightScale" step="0.1" min="0.05">
+      <label data-i18n="label.health">Breakable health multiplier</label>
+      <input type="number" id="health" step="0.5" min="0.1">
+      <div class="hint" data-i18n="hint.health">1.0 keeps what the map says. CS walls often have 10 HP, which is one shot here.</div>
+      <div class="check"><input type="checkbox" id="spawns"><span data-i18n="chk.spawns">Convert player starts</span></div>
+      <div class="check"><input type="checkbox" id="ase"><span data-i18n="chk.ase">Also write .ase / .t3d (backend B)</span></div>
+    </fieldset>
+
+    <button class="primary" id="go" data-i18n="btn.convert">Convert</button>
+  </div>
+
+  <div class="right">
+    <!-- the intro sits in its own span: log lines are appended after it, so a language switch
+         rewrites the intro without touching what has already been logged. -->
+    <div id="log"><span id="intro" data-i18n-html="log.intro"><span class="hdr">Ready.</span>
+Drop one or more Counter-Strike 1.6 .bsp files on the left, pick an output folder, press Convert.
+Every produced .rom is read back and checked before it is reported as done.</span></div>
+    <div class="bar"><span id="status" data-i18n="status.idle">idle</span><span style="flex:1"></span><button id="reveal" disabled data-i18n="btn.reveal">Show last output</button></div>
+  </div>
+</main>
+
+<script src="i18n.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+// i18n.js owns the dictionaries; t() reads the active one, apply() repaints the window.
+const I18N = window.KFI18N;
+const t = (k, v) => I18N.t(k, v);
+let files = [];        // { path, name, stateKey }
+let squares = [];      // { name, x, y, picked, stateKey } - Lineage 2 world squares
+let q3maps = [];       // { name, mod, picked, stateKey }  - Quake 3 maps inside the client's .pk3s
+let tomaps = [];       // { name, picked, stateKey }        - Tactical Ops maps in the client
+let settings = null;
+let lastOut = null;
+
+const game = () => (settings && settings.game) || "cs";
+const isL2 = () => game() === "l2";
+const isQ3 = () => game() === "q3";
+const isTO = () => game() === "to";
+// Two of the three games have no files to drop: their queue is a list of names picked out of a
+// client folder, and the picked rows ARE the queue.
+const picks = () => (isL2() ? squares : isQ3() ? q3maps : isTO() ? tomaps : null);
+const queued = () => (picks() ? picks().filter((s) => s.picked) : files);
+
+function renderFiles() {
+  $("files").innerHTML = files.map((f, i) =>
+    `<li><span class="n" title="${f.path}">${f.name}</span><span class="s ${f.cls || ""}">${t(f.stateKey || "state.queued")}</span></li>`).join("");
+  $("go").disabled = !queued().length || busy;
+}
+
+// The picked list doubles as the queue: clicking a row picks it, and the same status column the
+// file list uses reports what happened to it.
+function renderPicks(elId, arr, attr) {
+  const el = $(elId);
+  if (!el) return;
+  el.innerHTML = arr.map((s, i) =>
+    `<li data-${attr}="${i}" style="cursor:pointer${s.picked ? ";color:var(--text)" : ""}">` +
+    `<span class="n">${s.picked ? "&#9679; " : "&#9675; "}${s.name}${s.mod && s.mod !== "baseq3" ? " (" + s.mod + ")" : ""}</span>` +
+    `<span class="s ${s.cls || ""}">${s.stateKey ? t(s.stateKey) : ""}</span></li>`).join("");
+  el.querySelectorAll("[data-" + attr + "]").forEach((n) => {
+    n.onclick = () => { const s = arr[+n.dataset[attr]]; s.picked = !s.picked; renderPicks(elId, arr, attr); renderFiles(); };
+  });
+  $("go").disabled = !queued().length || busy;
+}
+const renderSquares = () => renderPicks("squares", squares, "sq");
+const renderQ3Maps = () => renderPicks("q3maps", q3maps, "q3");
+const renderTOMaps = () => renderPicks("tomaps", tomaps, "to");
+
+// Only the blocks belonging to the chosen game stay in the window.
+function applyGame() {
+  const g = game();
+  document.querySelectorAll("[data-game]").forEach((n) => { n.style.display = n.dataset.game.split(" ").includes(g) ? "" : "none"; });
+  // The header and the greeting name the game as well - a window that says "GoldSrc BSP" while it
+  // is reading a Lineage 2 client is a window telling the user something false.
+  I18N.setText("sub", g === "l2" ? "head.subL2" : g === "q3" ? "head.subQ3" : g === "to" ? "head.subTO" : g === "ut99" ? "head.subUt99" : g === "source" ? "head.subSource" : g === "source2" ? "head.subSource2" : g === "gta3" ? "head.subGta3" : g === "vc" ? "head.subVc" : g === "savage" ? "head.subSavage" : g === "igi" ? "head.subIgi" : g === "vtmr" ? "head.subVtmr" : g === "model" ? "head.subModel" : "head.subCs");
+  // The greeting carries markup, so it goes through data-i18n-html rather than setText.
+  const intro = $("intro");
+  if (intro) {
+    intro.dataset.i18nHtml = g === "l2" ? "log.introL2" : g === "q3" ? "log.introQ3" : g === "to" ? "log.introTO" : g === "ut99" ? "log.introUt99" : g === "source" ? "log.introSource" : g === "source2" ? "log.introSource2" : g === "gta3" || g === "vc" ? "log.introGta" : g === "savage" ? "log.introSavage" : g === "igi" ? "log.introIgi" : g === "vtmr" ? "log.introVtmr" : g === "model" ? "log.introModel" : "log.intro";
+    intro.innerHTML = t(intro.dataset.i18nHtml);
+  }
+  renderFiles();
+}
+
+async function loadSquares() {
+  const dir = $("l2Dir").value.trim();
+  squares = [];
+  if (dir) {
+    const list = await window.api.listSquares(dir);
+    squares = list.map((s) => ({ ...s, picked: false }));
+  }
+  renderSquares();
+}
+
+async function loadQ3Maps() {
+  const dir = $("q3Dir").value.trim();
+  q3maps = [];
+  if (dir) {
+    const list = await window.api.listQ3Maps(dir);
+    q3maps = list.map((s) => ({ ...s, picked: false }));
+  }
+  renderQ3Maps();
+}
+async function loadTOMaps() {
+  const dir = $("toDir").value.trim();
+  tomaps = [];
+  if (dir) {
+    const list = await window.api.listTOMaps(dir);
+    tomaps = list.map((s) => ({ ...s, picked: false }));
+  }
+  renderTOMaps();
+}
+function renderWads() {
+  $("wads").innerHTML = (settings.wadDirs || []).map((d, i) =>
+    `<li><span class="n" title="${d}">${d}</span><span class="s" data-rm="${i}" style="cursor:pointer">${t("act.remove")}</span></li>`).join("");
+  $("wads").querySelectorAll("[data-rm]").forEach((el) => el.onclick = () => {
+    settings.wadDirs.splice(+el.dataset.rm, 1); save(); renderWads();
+  });
+}
+function log(text, cls) {
+  const el = $("log");
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text + "\n";
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+function save() {
+  settings.game = $("game").value;
+  settings.l2Dir = $("l2Dir").value.trim();
+  settings.terrainStep = parseInt($("terrainStep").value, 10) || 1;
+  settings.l2Scale = parseFloat($("l2Scale").value) || 2;
+  settings.l2Grass = $("l2Grass").checked;
+  settings.l2Blend = $("l2Blend").checked;
+  settings.l2Carve = $("l2Carve").checked;
+  settings.l2Ambient = parseInt($("l2Ambient").value, 10);
+  settings.l2Glow = parseInt($("l2Glow").value, 10);
+  settings.q3Dir = $("q3Dir").value.trim();
+  settings.q3Scale = parseFloat($("q3Scale").value) || 1.8634;
+  settings.q3Patch = Math.max(0, parseInt($("q3Patch").value, 10) || 0);   // 0: per patch
+  settings.q3LightGain = parseFloat($("q3LightGain").value) || 4;
+  settings.q3Ambient = parseInt($("q3Ambient").value, 10);
+  settings.q3Glow = parseInt($("q3Glow").value, 10);
+  settings.q3TerrainLayers = $("q3TerrainLayers").checked;
+  settings.veg = $("veg").checked;
+  settings.srcFog = $("srcFog").checked;
+  settings.mdlAutoColor = $("mdlAutoColor").checked;
+  settings.mdlAutoScale = $("mdlAutoScale").checked;
+  settings.toDir = $("toDir").value.trim();
+  settings.toScale = parseFloat($("toScale").value) || 1.3397;
+  settings.toLightGain = parseFloat($("toLightGain").value) || 3;
+  settings.toAmbient = parseInt($("toAmbient").value, 10);
+  settings.toGlow = parseInt($("toGlow").value, 10);
+  settings.outDir = $("outDir").value.trim();
+  settings.csDir = $("csDir").value.trim();
+  settings.scale = parseFloat($("scale").value) || 2;
+  settings.lightMapScale = parseFloat($("lms").value) || 32;
+  settings.healthScale = parseFloat($("health").value) || 1;
+  settings.lighting = $("lighting").value;
+  settings.lightScale = parseFloat($("lightScale").value) || 1;
+  // Source / model brightness knobs are kept as the raw field text: empty means "use the route default"
+  // (shown as the input's placeholder), so an untouched field never overrides the converter's own value.
+  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain", "gtaCrop"]) settings[id] = $(id).value;
+  settings.emitAse = $("ase").checked;
+  settings.emitPlayerStarts = $("spawns").checked;
+  window.api.setSettings(settings);
+}
+
+let busy = false;
+
+// Language picker: every locale the README is translated into. Switching repaints the window at
+// once and is remembered in settings.json; default is English.
+I18N.LANGS.forEach(([code, label]) => {
+  const o = document.createElement("option");
+  o.value = code; o.textContent = label;
+  $("lang").appendChild(o);
+});
+$("lang").addEventListener("change", () => { I18N.apply($("lang").value); settings.lang = $("lang").value; save(); });
+// Lists are rebuilt from state, not from the DOM, so a language switch re-renders them too.
+I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMaps(); if (settings) renderWads(); });
+
+(async function init() {
+  settings = await window.api.getSettings();
+  $("lang").value = settings.lang || "en";
+  I18N.apply($("lang").value);
+  $("outDir").value = settings.outDir || "";
+  $("csDir").value = settings.csDir || "";
+  $("scale").value = settings.scale;
+  $("lms").value = settings.lightMapScale;
+  $("health").value = settings.healthScale === undefined ? 1 : settings.healthScale;
+  $("lighting").value = settings.lighting || "lightmap";
+  $("lightScale").value = settings.lightScale === undefined ? 1 : settings.lightScale;
+  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain", "gtaCrop"]) if (settings[id] != null) $(id).value = settings[id];
+  $("gtaDir").value = settings.gtaDir || "";
+  $("ase").checked = !!settings.emitAse;
+  $("spawns").checked = settings.emitPlayerStarts !== false;
+  $("game").value = settings.game || "cs";
+  $("l2Dir").value = settings.l2Dir || "";
+  $("terrainStep").value = settings.terrainStep === undefined ? 1 : settings.terrainStep;
+  $("l2Scale").value = settings.l2Scale === undefined ? 2 : settings.l2Scale;
+  $("veg").checked = settings.veg !== false;
+  $("srcFog").checked = settings.srcFog !== false;
+  $("mdlAutoColor").checked = !!settings.mdlAutoColor;
+  $("mdlAutoScale").checked = settings.mdlAutoScale !== false;
+  $("l2Grass").checked = settings.l2Grass !== false;
+  $("l2Blend").checked = settings.l2Blend !== false;
+  $("l2Carve").checked = settings.l2Carve === true;
+  $("l2Ambient").value = settings.l2Ambient === undefined ? 32 : settings.l2Ambient;
+  $("l2Glow").value = settings.l2Glow === undefined ? 40 : settings.l2Glow;
+  $("q3Dir").value = settings.q3Dir || "";
+  $("q3Scale").value = settings.q3Scale === undefined ? 1.8634 : settings.q3Scale;
+  $("q3Patch").value = settings.q3Patch === undefined ? 0 : settings.q3Patch;
+  $("q3LightGain").value = settings.q3LightGain === undefined ? 4 : settings.q3LightGain;
+  $("q3Ambient").value = settings.q3Ambient === undefined ? 40 : settings.q3Ambient;
+  $("q3Glow").value = settings.q3Glow === undefined ? 96 : settings.q3Glow;
+  $("q3TerrainLayers").checked = settings.q3TerrainLayers !== false;
+  $("toDir").value = settings.toDir || "";
+  $("toScale").value = settings.toScale === undefined ? 1.3397 : settings.toScale;
+  $("toLightGain").value = settings.toLightGain === undefined ? 3 : settings.toLightGain;
+  $("toAmbient").value = settings.toAmbient === undefined ? 32 : settings.toAmbient;
+  $("toGlow").value = settings.toGlow === undefined ? 64 : settings.toGlow;
+  renderWads(); applyGame(); renderSquares(); renderQ3Maps(); renderTOMaps();
+  if (settings.l2Dir) loadSquares();
+  if (settings.q3Dir) loadQ3Maps();
+  if (settings.toDir) loadTOMaps();
+  for (const el of ["outDir", "csDir", "scale", "lms", "health", "lighting", "lightScale",
+    "terrainStep", "l2Scale", "l2Ambient", "l2Glow",
+    "q3Scale", "q3Patch", "q3LightGain", "q3Ambient", "q3Glow",
+    "toScale", "toLightGain", "toAmbient", "toGlow"]) $(el).addEventListener("change", save);
+  $("q3TerrainLayers").addEventListener("change", save);
+  $("l2Grass").addEventListener("change", save);
+  $("l2Blend").addEventListener("change", save);
+  $("l2Carve").addEventListener("change", save);
+  for (const el of ["ase", "spawns"]) $(el).addEventListener("change", save);
+  $("game").addEventListener("change", () => { save(); applyGame(); });
+  $("l2Dir").addEventListener("change", () => { save(); loadSquares(); });
+  $("q3Dir").addEventListener("change", () => { save(); loadQ3Maps(); });
+  $("toDir").addEventListener("change", () => { save(); loadTOMaps(); });
+})();
+
+function addFiles(paths) {
+  // Each file-based game accepts its own extension.
+  const g = game();
+  const accept = g === "model" ? /\.(glb|gltf|obj)$/i : g === "source2" ? /\.vpk$/i : g === "ut99" ? /\.unr$/i : g === "savage" ? /\.s2z$/i : g === "igi" ? /\.res$/i : g === "vtmr" ? /\.(nob|nil)$/i : /\.bsp$/i;
+  for (const p of paths) {
+    if (!accept.test(p)) continue;
+    if (files.some((f) => f.path === p)) continue;
+    files.push({ path: p, name: p.split(/[\\/]/).pop(), stateKey: "state.queued" });
+  }
+  renderFiles();
+}
+
+$("drop").onclick = async () => addFiles(await window.api.pickBsp(t("dlg.pickBsp")));
+$("drop").ondragover = (e) => { e.preventDefault(); $("drop").classList.add("hot"); };
+$("drop").ondragleave = () => $("drop").classList.remove("hot");
+const droppedPaths = (e) => [...e.dataTransfer.files].map((f) => window.api.droppedPath(f)).filter(Boolean);
+$("drop").ondrop = (e) => {
+  e.preventDefault(); $("drop").classList.remove("hot");
+  addFiles(droppedPaths(e));
+};
+document.body.ondragover = (e) => e.preventDefault();
+document.body.ondrop = (e) => { e.preventDefault(); addFiles(droppedPaths(e)); };
+
+$("pickOut").onclick = async () => { const d = await window.api.pickDir(t("dlg.outDir")); if (d) { $("outDir").value = d; save(); } };
+$("pickL2").onclick = async () => { const d = await window.api.pickDir(t("dlg.l2Dir")); if (d) { $("l2Dir").value = d; save(); loadSquares(); } };
+$("pickQ3").onclick = async () => { const d = await window.api.pickDir(t("dlg.q3Dir")); if (d) { $("q3Dir").value = d; save(); loadQ3Maps(); } };
+$("pickTO").onclick = async () => { const d = await window.api.pickDir(t("dlg.toDir")); if (d) { $("toDir").value = d; save(); loadTOMaps(); } };
+$("pickCs").onclick = async () => { const d = await window.api.pickDir(t("dlg.csDir")); if (d) { $("csDir").value = d; save(); } };
+$("pickWad").onclick = async () => {
+  const typed = $("wadDir").value.trim();
+  const d = typed || await window.api.pickDir(t("dlg.wadDir"));
+  if (d) { settings.wadDirs = settings.wadDirs || []; if (!settings.wadDirs.includes(d)) settings.wadDirs.push(d); $("wadDir").value = ""; save(); renderWads(); }
+};
+$("pickGta").onclick = async () => {
+  const d = await window.api.pickDir(t("dlg.gtaDir"));
+  if (!d) return;
+  $("gtaDir").value = d; settings.gtaDir = d; save();
+  files.length = 0; files.push({ path: d, name: d.split(/[\\/]/).pop(), stateKey: "state.queued" }); renderFiles();
+};
+$("reveal").onclick = () => lastOut && window.api.reveal(lastOut);
+
+window.api.onProgress((m) => log("  " + m.text, m.type === "err" ? "bad" : (/^\s*ok\s/.test(m.text) ? "ok" : (/FAIL|ERROR/.test(m.text) ? "bad" : ""))));
+
+$("go").onclick = async () => {
+  save();
+  const jobs = queued();
+  const redraw = () => { if (isL2()) renderSquares(); else if (isQ3()) renderQ3Maps(); else if (isTO()) renderTOMaps(); else renderFiles(); };
+  busy = true; redraw();
+  let okCount = 0;
+  for (const f of jobs) {
+    const label = f.name;
+    f.stateKey = "state.converting"; f.cls = "run"; redraw();
+    I18N.setText("status", "status.converting", { name: label });
+    log("");
+    log("== " + label, "hdr");
+    const numV = (v) => { const n = parseFloat(v); return isNaN(n) ? undefined : n; };
+    const intV = (v) => { const n = parseInt(v, 10); return isNaN(n) ? undefined : n; };
+    const job = isTO()
+      ? {
+        game: "to", clientDir: settings.toDir, map: f.name,
+        outDir: settings.outDir || null,
+        toScale: settings.toScale, lightGain: settings.toLightGain,
+        ambient: settings.toAmbient, glow: settings.toGlow,
+        emitPlayerStarts: settings.emitPlayerStarts,
+      }
+      : isQ3()
+      ? {
+        game: "q3", clientDir: settings.q3Dir, map: f.name, mod: f.mod,
+        outDir: settings.outDir || null,
+        q3Scale: settings.q3Scale, patchLevel: settings.q3Patch, lightGain: settings.q3LightGain,
+        ambient: settings.q3Ambient, glow: settings.q3Glow,
+        terrainLayers: settings.q3TerrainLayers !== false,
+        emitPlayerStarts: settings.emitPlayerStarts,
+      }
+      : isL2()
+      ? {
+        game: "l2", clientDir: settings.l2Dir, square: f.name,
+        outDir: settings.outDir || null,
+        terrainStep: settings.terrainStep, ambient: settings.l2Ambient, glow: settings.l2Glow,
+        l2Scale: settings.l2Scale, grass: settings.l2Grass !== false, blend: settings.l2Blend !== false,
+        carve: settings.l2Carve === true,
+      }
+      : game() === "ut99"
+      ? { game: "ut99", mapFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      : game() === "savage"
+      ? { game: "savage", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      : game() === "igi"
+      ? { game: "igi", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      : game() === "vtmr"
+      ? { game: "vtmr", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
+      : game() === "gta3" || game() === "vc"
+      ? { game: game(), clientDir: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, crop: (settings.gtaCrop || "").trim() || null }
+      : game() === "source"
+      ? { game: "source", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
+        sourceScale: numV(settings.srcScale), texGain: numV(settings.srcTexGain), ambient: intV(settings.srcAmbient), glow: intV(settings.srcGlow), cullDistance: intV(settings.srcCull), fog: settings.srcFog !== false }
+      : game() === "source2"
+      ? { game: "source2", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts,
+        sourceScale: numV(settings.srcScale), texGain: numV(settings.srcTexGain), ambient: intV(settings.srcAmbient), glow: intV(settings.srcGlow), cullDistance: intV(settings.srcCull) }
+      : game() === "model"
+      ? { game: "model", file: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
+        modelScale: numV(settings.mdlScale), texGain: numV(settings.mdlTexGain), ambient: intV(settings.mdlAmbient), glow: intV(settings.mdlGlow), lightGain: numV(settings.mdlLightGain), autoColor: settings.mdlAutoColor === true, autoScale: settings.mdlAutoScale !== false && numV(settings.mdlScale) === undefined }
+      : {
+        bspFile: f.path,
+        outDir: settings.outDir || null, csDir: settings.csDir || null,
+        scale: settings.scale, lightMapScale: settings.lightMapScale, healthScale: settings.healthScale,
+        lighting: settings.lighting, lightScale: settings.lightScale,
+        wadDirs: settings.wadDirs || [], emitAse: settings.emitAse,
+        emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
+      };
+    const res = await window.api.convert(job);
+    if (res.ok) {
+      okCount++;
+      f.stateKey = "state.done"; f.cls = "ok";
+      lastOut = res.out; $("reveal").disabled = false;
+      log(res.terrain
+        ? t("log.l2Done", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          grid: res.terrain.width + "×" + res.terrain.height,
+          meshes: res.terrain.meshes, triangles: res.terrain.triangles,
+        })
+        : res.tacticalops
+        ? t("log.toDone", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          triangles: res.tacticalops.triangles, meshes: res.tacticalops.meshes, pages: res.tacticalops.pages,
+        })
+        : res.quake3
+        ? t("log.q3Done", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          triangles: res.quake3.triangles, meshes: res.quake3.meshes, pages: res.quake3.pages,
+        })
+        : res.mesh
+        ? t("log.meshDone", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2),
+          triangles: res.mesh.triangles || 0, meshes: res.mesh.meshes || 0, lights: res.mesh.lights || 0,
+        })
+        : t("log.mapDone", {
+          name: res.mapName, size: (res.size / 1048576).toFixed(2), surfs: res.surfs,
+          lightmaps: res.lightMaps, atlases: res.atlases, textures: res.textures,
+          missing: res.missingTextures ? t("log.missing", { n: res.missingTextures }) : "",
+        }), "ok");
+    } else {
+      f.stateKey = "state.failed"; f.cls = "bad";
+      log(t("log.failed", { error: res.error || t("err.verify") }), "bad");
+    }
+    redraw();
+  }
+  busy = false; redraw();
+  I18N.setText("status", "status.done", { ok: okCount, total: jobs.length });
+};
+</script>
+</body>
+</html>

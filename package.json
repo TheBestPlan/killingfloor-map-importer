@@ -1,0 +1,99 @@
+{
+  "name": "killingfloor-map-importer",
+  "productName": "Killing Floor Map Importer",
+  "version": "0.1.0",
+  "description": "Converts maps from other games into Killing Floor 1 levels (.rom, Unreal Engine 2.5)",
+  "author": "TheBestPlan (https://github.com/TheBestPlan)",
+  "license": "GPL-3.0-or-later",
+  "packageManager": "pnpm@11.13.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheBestPlan/killingfloor-map-importer.git"
+  },
+  "funding": [
+    "https://buymeacoffee.com/TheBestPlan",
+    "https://ko-fi.com/TheBestPlan",
+    "https://liberapay.com/TheBestPlan"
+  ],
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "convert": "node src/cli.js",
+    "test": "node test/selfcheck.js && node test/i18n.test.js && node test/gltf.test.js && node test/lzma.test.js && node test/source.test.js && node test/source2.test.js && node test/gta.test.js && node test/savage.test.js && node test/igi.test.js && node test/vtmr.test.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "release": "electron-builder --publish always",
+    "bump": "commit-and-tag-version",
+    "prepare": "husky"
+  },
+  "build": {
+    "appId": "com.thebestplan.killingfloormapimporter",
+    "productName": "Killing Floor Map Importer",
+    "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "LICENSE"
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "KillingFloor-Map-Importer-${version}-${os}-${arch}-portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Game",
+      "icon": "build/icon.png",
+      "maintainer": "TheBestPlan"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TheBestPlan",
+        "repo": "killingfloor-map-importer"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
+    "commit-and-tag-version": "12.7.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3",
+    "husky": "9.1.7"
+  }
+}
