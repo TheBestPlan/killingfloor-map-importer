@@ -26,7 +26,11 @@ const { readTxd, readTxdNames } = require("./txd");
 const { readIde, readIpl, findDataFiles } = require("./placement");
 const gltf = require("../gltf/convert");
 
-const SCALE = 40;             // GTA metres -> KF units. 52 made the player look dwarfed by the world; 40 (~1.3x smaller world) makes the KF pawn read larger, per in-game feedback
+// GTA metres -> KF units, by character parity (same principle as Lineage2's 100/46 and CS): the GTA player
+// ped mesh is 1.665 m tall (player.dff bbox Z; other peds 1.63-1.71) and KFHumanPawn is 100 uu, so
+// 100 / 1.665 = 60.06 stands the KF pawn in the world at a real ped's height. The earlier 40 left the pawn
+// oversized against the world. --scale overrides.
+const SCALE = 60.06;
 const TILE_METERS = 400;      // default --tile square size: a ~400 m block matches the old default district (~160k tris), which stays whole without decimation
 const TILE_OVERLAP_FRAC = 0.12; // how far past the square edge to pull neighbouring instances, so seam objects keep their context
 const MIN_TILE_INSTANCES = 12;  // a square with fewer instance origins than this is open water / empty - skip it
@@ -83,6 +87,22 @@ function loadGtaCommon(root, log) {
     if (data) { try { geos = readDff(data).geometries; } catch (e) { geos = null; } }
     dffCache.set(name, geos);
     return geos;
+  };
+
+  // Longest bbox edge of an instance's model, in GTA metres. The tile overlap uses it to tell small street
+  // furniture (lamps, signs, benches - keep their seam context) from large structures (terrain, buildings,
+  // the elevated railway - assign strictly by origin so a neighbour tile's piece is not dragged in).
+  const sizeCache = new Map();
+  const sizeOf = (inst) => {
+    const def = idToModel.get(inst.id); const name = def ? def.model : inst.model;
+    if (sizeCache.has(name)) return sizeCache.get(name);
+    const geos = getModel(name); let d = 0;
+    if (geos) {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const g of geos) { if (!g.verts) continue; for (let i = 0; i < g.verts.length; i += 3) for (let c = 0; c < 3; c++) { const v = g.verts[i + c]; if (v < lo[c]) lo[c] = v; if (v > hi[c]) hi[c] = v; } }
+      d = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    }
+    sizeCache.set(name, d); return d;
   };
 
   // Textures: each model names a .txd in its .ide; the .dff materials name a raster inside it.
@@ -162,7 +182,7 @@ function loadGtaCommon(root, log) {
     };
   };
 
-  return { instances, buildScene };
+  return { instances, buildScene, sizeOf };
 }
 
 // The densest 100 m grid cell (a built-up area, never open water), for the default single-district crop.
@@ -182,7 +202,7 @@ function densestDistrict(instances, o, log) {
 
 // Assign every instance to its <size>-metre square by ORIGIN (whole model, no mid-mesh cut). Returns the
 // populated squares (>= minInst origins) in row-major order, each with the instance subset that renders it
-// - which includes an overlap margin so seam objects keep the geometry they lean on.
+// - which includes an overlap margin so a seam object keeps the neighbouring geometry it leans on.
 function tileInstances(instances, size, overlap, minInst) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const i of instances) { const x = i.pos[0], y = i.pos[1]; if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; }

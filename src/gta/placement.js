@@ -67,9 +67,43 @@ function readIpl(files) {
   return inst;
 }
 
-// Every .ide / .ipl under a game's root (data\ and data\maps\ hold them).
+// Resolve a game-relative path from a .dat line (backslashed, arbitrary case like "DATA\MAPS\x.ipl")
+// against the real filesystem, segment by segment and case-insensitively - the files on disk are lowercase
+// or mixed-case, the .dat is uppercase.
+function resolveGamePath(root, rel) {
+  const parts = rel.replace(/^[\\/]+/, "").split(/[\\/]/);
+  let dir = root;
+  for (const seg of parts) {
+    let names; try { names = fs.readdirSync(dir); } catch (e) { return null; }
+    const hit = names.find((n) => n.toLowerCase() === seg.toLowerCase());
+    if (!hit) return null;
+    dir = path.join(dir, hit);
+  }
+  return dir;
+}
+
+// The IDE (item-def) and IPL (placement) files the game actually loads. The engine reads exactly the list in
+// its level .dat (gta3.dat for III, gta_vc.dat for VC), after the shared default.dat - NOT every file on disk.
+// A real install usually also carries stray FLAT copies of each map beside its canonical subfolder version
+// (data\maps\comNtop.ipl next to data\maps\comNtop\comNtop.ipl) plus never-loaded dev maps (making,
+// temppart, suburb, *roads); a blind tree walk reads those too and places roughly half the world twice -
+// doubled, z-fighting, floating geometry. Follow the .dat. Fall back to the walk only if no .dat resolves.
 function findDataFiles(root) {
   const ide = [], ipl = [];
+  const dataDir = path.join(root, "data");
+  const dats = ["default.dat", "gta3.dat", "gta_vc.dat"].map((n) => path.join(dataDir, n)).filter(fs.existsSync);
+  for (const dat of dats) {
+    let text; try { text = fs.readFileSync(dat, "latin1"); } catch (e) { continue; }
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(/^\s*(IDE|IPL)\s+(.+?)\s*$/i);
+      if (!m) continue;
+      const p = resolveGamePath(root, m[2]);
+      if (p) (m[1].toUpperCase() === "IDE" ? ide : ipl).push(p);
+    }
+  }
+  if (ide.length || ipl.length) return { ide, ipl };
+
+  // No level .dat found (or nothing in it resolved): walk data\ and take every .ide/.ipl.
   const walk = (dir, depth) => {
     if (depth > 3) return;
     let names; try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
@@ -80,7 +114,7 @@ function findDataFiles(root) {
       else if (/\.ipl$/i.test(d.name)) ipl.push(p);
     }
   };
-  walk(path.join(root, "data"), 0);
+  walk(dataDir, 0);
   return { ide, ipl };
 }
 

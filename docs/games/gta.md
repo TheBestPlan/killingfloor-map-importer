@@ -27,8 +27,10 @@ model at a position / scale / rotation. The models live in the game's **IMG arch
    triangles to the glTF route's builder — the same KF skeleton, auto-colour, spawn-drop and `--verify`
    path.
 
-GTA is Z-up and metre-scaled, so it feeds axes `[0,1,2]` with a Y flip; the default scale is 40
-(metres → KF units, roughly human-proportioned).
+GTA is Z-up and metre-scaled, so it feeds axes `[0,1,2]` with a Y flip; the default scale is **60.06**
+(metres → KF units) — character parity, the same rule the other routes use: the GTA player ped is 1.665 m
+tall and `KFHumanPawn` is 100 uu, so `100 / 1.665` stands the KF pawn in the world at a real ped's height.
+`--scale <n>` overrides.
 
 ## Sizing the map: district, crop, or tiles
 

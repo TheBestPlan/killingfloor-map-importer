@@ -130,6 +130,8 @@
         <div class="hint" data-i18n="hint.gta">The whole city is millions of triangles, so the densest district is converted. Set a crop centre below to pick another area.</div>
         <label data-i18n="label.gtaCrop">Crop centre &amp; radius (metres: cx,cy,half — blank = densest)</label>
         <input type="text" id="gtaCrop" placeholder="400,-300,350">
+        <label data-i18n="label.gtaScale">Scale (metres → KF units — blank = 60.06, pawn ≈ a ped)</label>
+        <input type="number" id="gtaScale" step="0.01" min="1" max="500" placeholder="60.06">
       </fieldset>
     </div>
 
@@ -443,7 +445,7 @@ function save() {
   settings.lightScale = parseFloat($("lightScale").value) || 1;
   // Source / model brightness knobs are kept as the raw field text: empty means "use the route default"
   // (shown as the input's placeholder), so an untouched field never overrides the converter's own value.
-  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain", "gtaCrop"]) settings[id] = $(id).value;
+  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain", "gtaCrop", "gtaScale"]) settings[id] = $(id).value;
   settings.emitAse = $("ase").checked;
   settings.emitPlayerStarts = $("spawns").checked;
   window.api.setSettings(settings);
@@ -473,7 +475,7 @@ I18N.onChange(() => { renderFiles(); renderSquares(); renderQ3Maps(); renderTOMa
   $("health").value = settings.healthScale === undefined ? 1 : settings.healthScale;
   $("lighting").value = settings.lighting || "lightmap";
   $("lightScale").value = settings.lightScale === undefined ? 1 : settings.lightScale;
-  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain", "gtaCrop"]) if (settings[id] != null) $(id).value = settings[id];
+  for (const id of ["srcScale", "srcTexGain", "srcAmbient", "srcGlow", "srcCull", "mdlScale", "mdlTexGain", "mdlAmbient", "mdlGlow", "mdlLightGain", "gtaCrop", "gtaScale"]) if (settings[id] != null) $(id).value = settings[id];
   $("gtaDir").value = settings.gtaDir || "";
   $("ase").checked = !!settings.emitAse;
   $("spawns").checked = settings.emitPlayerStarts !== false;
@@ -612,7 +614,7 @@ $("go").onclick = async () => {
       : game() === "vtmr"
       ? { game: "vtmr", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts }
       : game() === "gta3" || game() === "vc"
-      ? { game: game(), clientDir: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, crop: (settings.gtaCrop || "").trim() || null }
+      ? { game: game(), clientDir: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, crop: (settings.gtaCrop || "").trim() || null, gtaScale: numV(settings.gtaScale) }
       : game() === "source"
       ? { game: "source", bspFile: f.path, outDir: settings.outDir || null, emitPlayerStarts: settings.emitPlayerStarts, grass: settings.veg !== false,
         sourceScale: numV(settings.srcScale), texGain: numV(settings.srcTexGain), ambient: intV(settings.srcAmbient), glow: intV(settings.srcGlow), cullDistance: intV(settings.srcCull), fog: settings.srcFog !== false }
