@@ -1,0 +1,13 @@
+# pnpm blocks dependency build scripts unless allowed here. electron-winstaller
+# (pulled in by electron-builder) runs one to pick its 7-Zip arch; allow it so
+# `pnpm install` exits clean. electron itself has no build script — it fetches its
+# binary lazily on first run — but is listed for clarity.
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+
+# Disable pnpm 11's minimum-release-age supply-chain gate for this repo. CI runs
+# `pnpm install --frozen-lockfile`, which installs the exact integrity-hashed
+# versions from pnpm-lock.yaml with no fresh resolution — the age gate only blocks
+# our own pinned electron (freshly published) without adding security here.
+minimumReleaseAge: 0
